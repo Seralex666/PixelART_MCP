@@ -38,7 +38,10 @@ impl Rgba {
             let v = a as i32 - b as i32;
             (v * v) as u32
         };
-        d(self.r, other.r) * 3 + d(self.g, other.g) * 4 + d(self.b, other.b) * 2 + d(self.a, other.a) * 3
+        d(self.r, other.r) * 3
+            + d(self.g, other.g) * 4
+            + d(self.b, other.b) * 2
+            + d(self.a, other.a) * 3
     }
 
     /// Normal-Blending (Quelle über Ziel), ganzzahlig.
@@ -53,7 +56,12 @@ impl Rgba {
         let da = below.a as u32 * (255 - sa) / 255;
         let out_a = sa + da;
         let mix = |s: u8, d: u8| ((s as u32 * sa + d as u32 * da) / out_a) as u8;
-        Rgba::new(mix(self.r, below.r), mix(self.g, below.g), mix(self.b, below.b), out_a as u8)
+        Rgba::new(
+            mix(self.r, below.r),
+            mix(self.g, below.g),
+            mix(self.b, below.b),
+            out_a as u8,
+        )
     }
 
     /// Reduziert die Farbe auf RGB565 (16 Bit). Alpha wird auf 0 oder 255 gesetzt,
@@ -78,7 +86,11 @@ impl fmt::Display for Rgba {
         if self.a == 255 {
             write!(f, "#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
         } else {
-            write!(f, "#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
+            write!(
+                f,
+                "#{:02x}{:02x}{:02x}{:02x}",
+                self.r, self.g, self.b, self.a
+            )
         }
     }
 }
@@ -130,6 +142,18 @@ impl ColorDepth {
             ColorDepth::Indexed8 => 8,
             ColorDepth::Rgb565 => 16,
             ColorDepth::Rgba32 => 32,
+        }
+    }
+
+    /// Bringt eine Farbe in den Wertebereich dieser Farbtiefe (ohne Palette):
+    /// 8 Bit kennt nur deckend oder transparent, 16 Bit zusätzlich nur RGB565-Werte.
+    pub fn conform(self, c: Rgba) -> Rgba {
+        match self {
+            ColorDepth::Indexed8 if c.a < 128 => Rgba::TRANSPARENT,
+            ColorDepth::Indexed8 => Rgba { a: 255, ..c },
+            ColorDepth::Rgb565 => c.to_rgb565(),
+            ColorDepth::Rgba32 if c.a == 0 => Rgba::TRANSPARENT,
+            ColorDepth::Rgba32 => c,
         }
     }
 

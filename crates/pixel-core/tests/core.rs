@@ -35,12 +35,17 @@ fn rgba32_keeps_color_exactly() {
 #[test]
 fn rgb565_quantizes_and_is_idempotent() {
     let mut s = Sprite::new(4, 4, ColorDepth::Rgb565, Palette::default()).unwrap();
-    let got = s.set_pixel(0, 0, 0, 0, Rgba::new(13, 77, 201, 200)).unwrap();
+    let got = s
+        .set_pixel(0, 0, 0, 0, Rgba::new(13, 77, 201, 200))
+        .unwrap();
     assert_eq!(got.a, 255);
     assert_eq!(got.to_rgb565(), got);
     assert_eq!(Rgba::WHITE.to_rgb565(), Rgba::WHITE);
     assert_eq!(Rgba::BLACK.to_rgb565(), Rgba::BLACK);
-    assert_eq!(s.set_pixel(0, 0, 1, 0, Rgba::new(255, 0, 0, 40)).unwrap(), Rgba::TRANSPARENT);
+    assert_eq!(
+        s.set_pixel(0, 0, 1, 0, Rgba::new(255, 0, 0, 40)).unwrap(),
+        Rgba::TRANSPARENT
+    );
 }
 
 #[test]
@@ -60,7 +65,10 @@ fn indexed8_grows_palette_then_snaps() {
 fn locked_palette_never_gains_colors() {
     let mut ch = Character::new("Held", 16, 24, ColorDepth::Rgba32, Palette::default_16()).unwrap();
     let before = ch.palette().colors.clone();
-    let got = ch.base.set_pixel(0, 0, 3, 3, Rgba::rgb(250, 250, 250)).unwrap();
+    let got = ch
+        .base
+        .set_pixel(0, 0, 3, 3, Rgba::rgb(250, 250, 250))
+        .unwrap();
     assert_eq!(got, c("#f4f4f4"));
     assert_eq!(ch.palette().colors, before);
 }
@@ -76,7 +84,15 @@ fn drawing_tools_are_pixel_exact() {
 
     let mut s = Sprite::new(8, 8, ColorDepth::Rgba32, Palette::default()).unwrap();
     draw::rect(&mut s, T, 1, 1, 6, 6, red, false).unwrap();
-    assert_eq!(s.layer(0, 0).unwrap().pixels().iter().filter(|p| **p == red).count(), 20);
+    assert_eq!(
+        s.layer(0, 0)
+            .unwrap()
+            .pixels()
+            .iter()
+            .filter(|p| **p == red)
+            .count(),
+        20
+    );
     // Innenfläche füllen, der Rand hält die Füllung auf.
     let blue = Rgba::rgb(0, 0, 255);
     assert_eq!(draw::flood_fill(&mut s, T, 3, 3, blue).unwrap(), 16);
@@ -98,14 +114,26 @@ fn ellipse_is_symmetric_and_closed() {
         for y in 0..h as i64 {
             for x in 0..w as i64 {
                 let a = l.get(2 + x, 2 + y).unwrap();
-                assert_eq!(a, l.get(2 + w as i64 - 1 - x, 2 + y).unwrap(), "h-sym {w}x{h}");
-                assert_eq!(a, l.get(2 + x, 2 + h as i64 - 1 - y).unwrap(), "v-sym {w}x{h}");
+                assert_eq!(
+                    a,
+                    l.get(2 + w as i64 - 1 - x, 2 + y).unwrap(),
+                    "h-sym {w}x{h}"
+                );
+                assert_eq!(
+                    a,
+                    l.get(2 + x, 2 + h as i64 - 1 - y).unwrap(),
+                    "v-sym {w}x{h}"
+                );
             }
         }
         // Geschlossen: Füllen von außen erreicht die Mitte nicht.
         if w >= 5 && h >= 5 {
             draw::flood_fill(&mut s, T, 0, 0, Rgba::rgb(1, 2, 3)).unwrap();
-            let mid = s.layer(0, 0).unwrap().get(2 + w as i64 / 2, 2 + h as i64 / 2).unwrap();
+            let mid = s
+                .layer(0, 0)
+                .unwrap()
+                .get(2 + w as i64 / 2, 2 + h as i64 / 2)
+                .unwrap();
             assert_eq!(mid, Rgba::TRANSPARENT, "Umriss {w}x{h} ist offen");
         }
     }
@@ -130,7 +158,8 @@ fn layers_and_frames_stay_in_sync() {
 }
 
 fn hero() -> Character {
-    let mut ch = Character::new("Held", 16, 24, ColorDepth::Indexed8, Palette::default_16()).unwrap();
+    let mut ch =
+        Character::new("Held", 16, 24, ColorDepth::Indexed8, Palette::default_16()).unwrap();
     draw::rect(&mut ch.base, T, 5, 2, 6, 6, c("#ffcd75"), true).unwrap();
     draw::rect(&mut ch.base, T, 4, 8, 8, 10, c("#3b5dc9"), true).unwrap();
     draw::rect(&mut ch.base, T, 5, 18, 2, 6, c("#333c57"), true).unwrap();
@@ -156,13 +185,22 @@ fn animations_start_from_base_pose_and_validate() {
 
     // Zeichnen in der Animation kann die Palette nicht verlassen.
     let a = p.animations[0].id;
-    let got = p.animation_mut(a).unwrap().sprite.set_pixel(1, 0, 0, 0, Rgba::rgb(1, 200, 3)).unwrap();
+    let got = p
+        .animation_mut(a)
+        .unwrap()
+        .sprite
+        .set_pixel(1, 0, 0, 0, Rgba::rgb(1, 200, 3))
+        .unwrap();
     assert!(p.character(id).unwrap().palette().contains(got));
     assert!(p.validate().is_empty());
 
     // Wer die Sperre umgeht, wird von validate() erwischt.
     let anim = p.animation_mut(a).unwrap();
-    anim.sprite.layer_mut(0, 0).unwrap().set(0, 0, Rgba::rgb(1, 200, 3)).unwrap();
+    anim.sprite
+        .layer_mut(0, 0)
+        .unwrap()
+        .set(0, 0, Rgba::rgb(1, 200, 3))
+        .unwrap();
     let issues = p.validate();
     assert_eq!(issues.len(), 1);
     assert!(issues[0].message.contains("#01c803"));
@@ -184,18 +222,25 @@ fn project_roundtrip_and_character_transfer() {
     p.save(&path).unwrap();
     let loaded = Project::load(&path).unwrap();
     assert_eq!(loaded, p);
-    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "keine Temp-Dateien übrig");
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        1,
+        "keine Temp-Dateien übrig"
+    );
 
     // Figur in ein zweites Projekt übernehmen: Pixel für Pixel identisch.
     let bundle_path = dir.join("held.pxchar");
     p.export_character(id).unwrap().save(&bundle_path).unwrap();
     let mut q = Project::new("Spiel B");
-    let imported = q.import_character(CharacterBundle::load(&bundle_path).unwrap()).unwrap();
+    let imported = q
+        .import_character(CharacterBundle::load(&bundle_path).unwrap())
+        .unwrap();
     assert_eq!(imported, id);
     assert_eq!(q.character(id).unwrap(), p.character(id).unwrap());
     assert_eq!(q.animations_of(id).count(), 1);
     // Erneuter Import ersetzt statt zu verdoppeln.
-    q.import_character(CharacterBundle::load(&bundle_path).unwrap()).unwrap();
+    q.import_character(CharacterBundle::load(&bundle_path).unwrap())
+        .unwrap();
     assert_eq!(q.characters.len(), 1);
     assert_eq!(q.animations.len(), 1);
 
@@ -205,9 +250,14 @@ fn project_roundtrip_and_character_transfer() {
 #[test]
 fn rejects_corrupt_and_future_files() {
     let mut p = Project::new("X");
-    p.add_image("b", Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default()).unwrap());
+    p.add_image(
+        "b",
+        Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default()).unwrap(),
+    );
     let json = p.to_json().unwrap();
-    assert!(Project::from_json(&json.replace("\"format_version\":1", "\"format_version\":99")).is_err());
+    assert!(
+        Project::from_json(&json.replace("\"format_version\":1", "\"format_version\":99")).is_err()
+    );
     // Breite manipuliert: Pixelzahl passt nicht mehr.
     assert!(Project::from_json(&json.replace("\"width\":4", "\"width\":5")).is_err());
     assert!(Project::from_json("{").is_err());
@@ -230,7 +280,10 @@ fn export_scales_without_smoothing() {
     let jpg = export::frame_jpeg(&s, 0, 4, Rgba::WHITE, 95).unwrap();
     let (w, h, px) = export::decode(&jpg).unwrap();
     assert_eq!((w, h), (8, 8));
-    assert!(px[4 * 8].r > 240 && px[4 * 8].a == 255, "Transparenz liegt auf Weiß");
+    assert!(
+        px[4 * 8].r > 240 && px[4 * 8].a == 255,
+        "Transparenz liegt auf Weiß"
+    );
 }
 
 #[test]
@@ -238,7 +291,8 @@ fn spritesheet_layout_and_metadata() {
     let mut s = Sprite::new(4, 6, ColorDepth::Rgba32, Palette::default()).unwrap();
     for i in 1..5 {
         s.add_frame();
-        s.set_pixel(i, 0, 0, 0, Rgba::rgb(i as u8 * 50, 0, 0)).unwrap();
+        s.set_pixel(i, 0, 0, 0, Rgba::rgb(i as u8 * 50, 0, 0))
+            .unwrap();
     }
     let (png, meta) = export::sheet_png(&s, 3, 2).unwrap();
     assert_eq!((meta.columns, meta.rows), (3, 2));
@@ -259,4 +313,141 @@ fn templates_are_valid() {
         assert!(Sprite::new(t.width, t.height, ColorDepth::Rgba32, Palette::default()).is_ok());
     }
     assert_eq!(template::find("art-1024").unwrap().width, 1024);
+}
+
+#[test]
+fn from_sprite_locks_a_palette_that_covers_every_pixel() {
+    // 32-Bit-Sprites tragen ihre Farben nicht in die Palette ein. Beim Umwandeln
+    // in eine Figur müssen sie trotzdem alle in der gesperrten Palette landen.
+    let mut s = Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+    let odd = Rgba::rgb(12, 34, 56);
+    s.set_pixel(0, 0, 0, 0, odd).unwrap();
+    let ch = Character::from_sprite("X", s).unwrap();
+    assert!(ch.palette().locked && ch.palette().contains(odd));
+
+    let mut p = Project::new("T");
+    let id = p.add_character(ch);
+    let a = p.add_animation(id, AnimationKind::Idle, None).unwrap();
+    assert!(p.validate().is_empty());
+    // Dieselbe Farbe erneut malen ändert sie nicht.
+    let got = p
+        .animation_mut(a)
+        .unwrap()
+        .sprite
+        .set_pixel(0, 0, 1, 1, odd)
+        .unwrap();
+    assert_eq!(got, odd);
+
+    // Zu viele Farben für eine Palette: klare Absage statt stiller Verfälschung.
+    let mut big = Sprite::new(32, 32, ColorDepth::Rgba32, Palette::new("leer", vec![])).unwrap();
+    for i in 0..300u32 {
+        big.set_pixel(
+            0,
+            0,
+            (i % 32) as i64,
+            (i / 32) as i64,
+            Rgba::rgb(i as u8, (i >> 8) as u8, 7),
+        )
+        .unwrap();
+    }
+    assert!(Character::from_sprite("Bunt", big).is_err());
+}
+
+#[test]
+fn locked_palette_respects_color_depth() {
+    let mut ch = Character::new("R", 4, 4, ColorDepth::Rgb565, Palette::default_16()).unwrap();
+    for &c in &ch.palette().colors {
+        assert_eq!(c.to_rgb565(), c, "Palettenfarbe {c} liegt nicht in RGB565");
+    }
+    let got = ch.base.set_pixel(0, 0, 0, 0, c("#1a1c2c")).unwrap();
+    assert_eq!(got.to_rgb565(), got);
+    assert!(ch.palette().contains(got));
+
+    // Wechsel der Farbtiefe normalisiert Palette und Pixel gemeinsam.
+    let mut s = Sprite::new(2, 2, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+    s.set_pixel(0, 0, 0, 0, c("#1a1c2c")).unwrap();
+    s.palette.locked = true;
+    s.set_depth(ColorDepth::Rgb565);
+    let px = s.layer(0, 0).unwrap().get(0, 0).unwrap();
+    assert_eq!(px.to_rgb565(), px);
+    assert!(s.palette.contains(px));
+}
+
+#[test]
+fn empty_palette_cannot_hold_colors() {
+    assert!(Character::new(
+        "Leer",
+        4,
+        4,
+        ColorDepth::Indexed8,
+        Palette::new("leer", vec![])
+    )
+    .is_err());
+    assert_eq!(
+        Palette::new("leer", vec![]).nearest(Rgba::WHITE),
+        Rgba::TRANSPARENT
+    );
+    let mut s = Sprite::new(2, 2, ColorDepth::Indexed8, Palette::new("leer", vec![])).unwrap();
+    s.palette.locked = true;
+    assert_eq!(
+        s.set_pixel(0, 0, 0, 0, Rgba::WHITE).unwrap(),
+        Rgba::TRANSPARENT
+    );
+    assert!(s.used_colors().is_empty());
+}
+
+#[test]
+fn huge_shapes_are_bounded() {
+    let mut s = Sprite::new(8, 8, ColorDepth::Rgba32, Palette::default()).unwrap();
+    let red = Rgba::rgb(255, 0, 0);
+    let start = std::time::Instant::now();
+    // Weit jenseits der Grenze: sofortige Absage, keine Milliarden Schleifendurchläufe.
+    assert!(draw::line(&mut s, T, (0, 0), (1_000_000_000, 0), red).is_err());
+    assert!(draw::ellipse(&mut s, T, 0, 0, 8, u32::MAX, red, true).is_err());
+    assert!(draw::rect(&mut s, T, i64::MAX, 0, u32::MAX, 1, red, true).is_err());
+    assert!(s.used_colors().is_empty());
+    // Innerhalb der Grenze, aber viel größer als das Bild: schnell und korrekt.
+    let big = draw::COORD_LIMIT as u32;
+    draw::ellipse(
+        &mut s,
+        T,
+        -(big as i64) / 2,
+        -(big as i64) / 2,
+        big,
+        big,
+        red,
+        true,
+    )
+    .unwrap();
+    assert!(s.layer(0, 0).unwrap().pixels().iter().all(|p| *p == red));
+    draw::ellipse(&mut s, T, 100, 100, big, big, Rgba::WHITE, false).unwrap();
+    draw::line(
+        &mut s,
+        T,
+        (-draw::COORD_LIMIT, 3),
+        (draw::COORD_LIMIT, 3),
+        Rgba::WHITE,
+    )
+    .unwrap();
+    assert!((0..8).all(|x| s.layer(0, 0).unwrap().get(x, 3).unwrap() == Rgba::WHITE));
+    draw::shift(&mut s, T, i64::MAX, i64::MIN).unwrap();
+    assert!(
+        start.elapsed().as_secs() < 2,
+        "zu langsam: {:?}",
+        start.elapsed()
+    );
+}
+
+#[test]
+fn oversized_layer_dimensions_in_a_file_are_an_error_not_a_panic() {
+    let mut p = Project::new("X");
+    p.add_image(
+        "b",
+        Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default()).unwrap(),
+    );
+    let mut v: serde_json::Value = serde_json::from_str(&p.to_json().unwrap()).unwrap();
+    let layer = &mut v["images"][0]["sprite"]["frames"][0]["layers"][0];
+    layer["width"] = 65536.into();
+    layer["height"] = 65536.into();
+    assert!(Project::from_json(&v.to_string()).is_err());
 }

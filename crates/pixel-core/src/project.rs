@@ -72,20 +72,32 @@ impl Project {
     }
 
     pub fn character(&self, id: Uuid) -> Result<&Character> {
-        self.characters.iter().find(|c| c.id == id).ok_or_else(|| not_found("Figur", id))
+        self.characters
+            .iter()
+            .find(|c| c.id == id)
+            .ok_or_else(|| not_found("Figur", id))
     }
 
     pub fn character_mut(&mut self, id: Uuid) -> Result<&mut Character> {
-        self.characters.iter_mut().find(|c| c.id == id).ok_or_else(|| not_found("Figur", id))
+        self.characters
+            .iter_mut()
+            .find(|c| c.id == id)
+            .ok_or_else(|| not_found("Figur", id))
     }
 
     pub fn character_by_name(&self, name: &str) -> Option<&Character> {
-        self.characters.iter().find(|c| c.name.eq_ignore_ascii_case(name))
+        self.characters
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(name))
     }
 
     /// Entfernt eine Figur samt ihrer Animationen.
     pub fn remove_character(&mut self, id: Uuid) -> Result<Character> {
-        let i = self.characters.iter().position(|c| c.id == id).ok_or_else(|| not_found("Figur", id))?;
+        let i = self
+            .characters
+            .iter()
+            .position(|c| c.id == id)
+            .ok_or_else(|| not_found("Figur", id))?;
         self.animations.retain(|a| a.character_id != id);
         Ok(self.characters.remove(i))
     }
@@ -93,7 +105,12 @@ impl Project {
     // ---- Animationen ----
 
     /// Legt für eine Figur eine Animation an, deren Frames mit der Grundpose starten.
-    pub fn add_animation(&mut self, character_id: Uuid, kind: AnimationKind, frames: Option<usize>) -> Result<Uuid> {
+    pub fn add_animation(
+        &mut self,
+        character_id: Uuid,
+        kind: AnimationKind,
+        frames: Option<usize>,
+    ) -> Result<Uuid> {
         let anim = Animation::from_character(self.character(character_id)?, kind, frames)?;
         let id = anim.id;
         self.animations.push(anim);
@@ -101,19 +118,31 @@ impl Project {
     }
 
     pub fn animation(&self, id: Uuid) -> Result<&Animation> {
-        self.animations.iter().find(|a| a.id == id).ok_or_else(|| not_found("Animation", id))
+        self.animations
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or_else(|| not_found("Animation", id))
     }
 
     pub fn animation_mut(&mut self, id: Uuid) -> Result<&mut Animation> {
-        self.animations.iter_mut().find(|a| a.id == id).ok_or_else(|| not_found("Animation", id))
+        self.animations
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or_else(|| not_found("Animation", id))
     }
 
     pub fn animations_of(&self, character_id: Uuid) -> impl Iterator<Item = &Animation> {
-        self.animations.iter().filter(move |a| a.character_id == character_id)
+        self.animations
+            .iter()
+            .filter(move |a| a.character_id == character_id)
     }
 
     pub fn remove_animation(&mut self, id: Uuid) -> Result<Animation> {
-        let i = self.animations.iter().position(|a| a.id == id).ok_or_else(|| not_found("Animation", id))?;
+        let i = self
+            .animations
+            .iter()
+            .position(|a| a.id == id)
+            .ok_or_else(|| not_found("Animation", id))?;
         Ok(self.animations.remove(i))
     }
 
@@ -121,16 +150,26 @@ impl Project {
 
     pub fn add_image(&mut self, name: impl Into<String>, sprite: Sprite) -> Uuid {
         let id = Uuid::new_v4();
-        self.images.push(Image { id, name: name.into(), sprite });
+        self.images.push(Image {
+            id,
+            name: name.into(),
+            sprite,
+        });
         id
     }
 
     pub fn image(&self, id: Uuid) -> Result<&Image> {
-        self.images.iter().find(|i| i.id == id).ok_or_else(|| not_found("Bild", id))
+        self.images
+            .iter()
+            .find(|i| i.id == id)
+            .ok_or_else(|| not_found("Bild", id))
     }
 
     pub fn image_mut(&mut self, id: Uuid) -> Result<&mut Image> {
-        self.images.iter_mut().find(|i| i.id == id).ok_or_else(|| not_found("Bild", id))
+        self.images
+            .iter_mut()
+            .find(|i| i.id == id)
+            .ok_or_else(|| not_found("Bild", id))
     }
 
     // ---- Konstanz ----
@@ -140,7 +179,12 @@ impl Project {
     pub fn validate(&self) -> Vec<ValidationIssue> {
         let mut issues = Vec::new();
         for a in &self.animations {
-            let mut issue = |message: String| issues.push(ValidationIssue { animation: a.name.clone(), message });
+            let mut issue = |message: String| {
+                issues.push(ValidationIssue {
+                    animation: a.name.clone(),
+                    message,
+                })
+            };
             let Ok(c) = self.character(a.character_id) else {
                 issue("Die zugehörige Figur fehlt im Projekt.".into());
                 continue;
@@ -240,7 +284,12 @@ impl Project {
             self.remove_character(id)?;
         }
         self.characters.push(bundle.character);
-        self.animations.extend(bundle.animations.into_iter().filter(|a| a.character_id == id));
+        self.animations.extend(
+            bundle
+                .animations
+                .into_iter()
+                .filter(|a| a.character_id == id),
+        );
         Ok(id)
     }
 }
@@ -256,7 +305,10 @@ impl CharacterBundle {
 }
 
 fn not_found(kind: &'static str, id: Uuid) -> Error {
-    Error::NotFound { kind, id: id.to_string() }
+    Error::NotFound {
+        kind,
+        id: id.to_string(),
+    }
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {

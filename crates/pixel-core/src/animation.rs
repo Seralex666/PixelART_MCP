@@ -69,7 +69,10 @@ impl AnimationKind {
     }
 
     pub fn loops_by_default(&self) -> bool {
-        matches!(self, AnimationKind::Idle | AnimationKind::Walk | AnimationKind::Run)
+        matches!(
+            self,
+            AnimationKind::Idle | AnimationKind::Walk | AnimationKind::Run
+        )
     }
 
     /// Kurze Beschreibung der typischen Bewegung, als Hilfe für Claude und im Editor.
@@ -114,7 +117,11 @@ pub struct Animation {
 impl Animation {
     /// Legt eine Animation an. Jeder Frame startet als Kopie der Grundpose,
     /// damit die Figur von Anfang an exakt dieselbe ist.
-    pub fn from_character(character: &Character, kind: AnimationKind, frames: Option<usize>) -> Result<Self> {
+    pub fn from_character(
+        character: &Character,
+        kind: AnimationKind,
+        frames: Option<usize>,
+    ) -> Result<Self> {
         let n = frames.unwrap_or_else(|| kind.default_frames()).max(1);
         let mut sprite = character.base.clone();
         // Nur den ersten Frame der Grundpose als Startbild verwenden.

@@ -18,7 +18,10 @@ fn to_image(px: &[Rgba], width: u32, height: u32, scale: u32) -> Result<RgbaImag
     let scale = scale.clamp(1, MAX_SCALE);
     let (ow, oh) = (width * scale, height * scale);
     if ow > MAX_EXPORT_SIZE || oh > MAX_EXPORT_SIZE {
-        return Err(Error::InvalidSize { width: ow, height: oh });
+        return Err(Error::InvalidSize {
+            width: ow,
+            height: oh,
+        });
     }
     Ok(RgbaImage::from_fn(ow, oh, |x, y| {
         image::Rgba(px[((y / scale) * width + x / scale) as usize].to_array())
@@ -37,9 +40,18 @@ pub fn frame_png(s: &Sprite, frame: usize, scale: u32) -> Result<Vec<u8>> {
 
 /// Ein Frame als JPEG-Bytes. JPEG kennt keine Transparenz, deshalb wird
 /// das Bild auf `background` gelegt. `quality` liegt zwischen 1 und 100.
-pub fn frame_jpeg(s: &Sprite, frame: usize, scale: u32, background: Rgba, quality: u8) -> Result<Vec<u8>> {
+pub fn frame_jpeg(
+    s: &Sprite,
+    frame: usize,
+    scale: u32,
+    background: Rgba,
+    quality: u8,
+) -> Result<Vec<u8>> {
     let img = frame_image(s, frame, scale)?;
-    let bg = Rgba { a: 255, ..background };
+    let bg = Rgba {
+        a: 255,
+        ..background
+    };
     let rgb = RgbImage::from_fn(img.width(), img.height(), |x, y| {
         let p = img.get_pixel(x, y).0;
         let c = Rgba::new(p[0], p[1], p[2], p[3]).over(bg);
@@ -90,7 +102,10 @@ pub fn sheet_image(s: &Sprite, columns: u32, scale: u32) -> Result<(RgbaImage, S
     let (fw, fh) = (s.width() * scale, s.height() * scale);
     let (iw, ih) = (fw as u64 * columns as u64, fh as u64 * rows as u64);
     if iw > MAX_EXPORT_SIZE as u64 || ih > MAX_EXPORT_SIZE as u64 {
-        return Err(Error::InvalidSize { width: iw.min(u32::MAX as u64) as u32, height: ih.min(u32::MAX as u64) as u32 });
+        return Err(Error::InvalidSize {
+            width: iw.min(u32::MAX as u64) as u32,
+            height: ih.min(u32::MAX as u64) as u32,
+        });
     }
     let mut sheet = RgbaImage::new(iw as u32, ih as u32);
     let mut frames = Vec::with_capacity(n as usize);
@@ -98,7 +113,14 @@ pub fn sheet_image(s: &Sprite, columns: u32, scale: u32) -> Result<(RgbaImage, S
         let (x, y) = ((i as u32 % columns) * fw, (i as u32 / columns) * fh);
         let img = frame_image(s, i, scale)?;
         image::imageops::replace(&mut sheet, &img, x as i64, y as i64);
-        frames.push(SheetFrame { index: i, x, y, w: fw, h: fh, duration_ms: f.duration_ms });
+        frames.push(SheetFrame {
+            index: i,
+            x,
+            y,
+            w: fw,
+            h: fh,
+            duration_ms: f.duration_ms,
+        });
     }
     let meta = SheetMeta {
         image_width: iw as u32,
@@ -120,16 +142,27 @@ pub fn sheet_png(s: &Sprite, columns: u32, scale: u32) -> Result<(Vec<u8>, Sheet
 }
 
 /// Schreibt ein Spritesheet als `<pfad>.png` und die Metadaten als `<pfad>.json`.
-pub fn save_sheet(s: &Sprite, path_without_ext: &Path, columns: u32, scale: u32) -> Result<SheetMeta> {
+pub fn save_sheet(
+    s: &Sprite,
+    path_without_ext: &Path,
+    columns: u32,
+    scale: u32,
+) -> Result<SheetMeta> {
     let (png, meta) = sheet_png(s, columns, scale)?;
     std::fs::write(path_without_ext.with_extension("png"), png)?;
-    std::fs::write(path_without_ext.with_extension("json"), serde_json::to_vec_pretty(&meta)?)?;
+    std::fs::write(
+        path_without_ext.with_extension("json"),
+        serde_json::to_vec_pretty(&meta)?,
+    )?;
     Ok(meta)
 }
 
 /// Liest ein PNG oder JPEG als Pixel ein (z. B. um ein vorhandenes Bild zu importieren).
 pub fn decode(bytes: &[u8]) -> Result<(u32, u32, Vec<Rgba>)> {
     let img = image::load_from_memory(bytes)?.to_rgba8();
-    let px = img.pixels().map(|p| Rgba::new(p.0[0], p.0[1], p.0[2], p.0[3])).collect();
+    let px = img
+        .pixels()
+        .map(|p| Rgba::new(p.0[0], p.0[1], p.0[2], p.0[3]))
+        .collect();
     Ok((img.width(), img.height(), px))
 }

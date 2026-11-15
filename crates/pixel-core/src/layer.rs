@@ -55,7 +55,12 @@ impl Layer {
 
     fn index(&self, x: i64, y: i64) -> Result<usize> {
         if !self.in_bounds(x, y) {
-            return Err(Error::OutOfBounds { x, y, width: self.width, height: self.height });
+            return Err(Error::OutOfBounds {
+                x,
+                y,
+                width: self.width,
+                height: self.height,
+            });
         }
         Ok(y as usize * self.width as usize + x as usize)
     }
@@ -109,12 +114,12 @@ impl Layer {
     }
 
     pub(crate) fn check_consistent(&self) -> Result<()> {
-        if self.pixels.len() != (self.width * self.height) as usize {
+        if self.pixels.len() as u64 != self.width as u64 * self.height as u64 {
             return Err(Error::InvalidPixelData(format!(
                 "Ebene '{}' hat {} Pixel, erwartet {}",
                 self.name,
                 self.pixels.len(),
-                self.width * self.height
+                self.width as u64 * self.height as u64
             )));
         }
         Ok(())
@@ -124,19 +129,29 @@ impl Layer {
 mod pixel_data {
     use super::*;
 
-    pub fn serialize<S: serde::Serializer>(px: &[Rgba], s: S) -> std::result::Result<S::Ok, S::Error> {
+    pub fn serialize<S: serde::Serializer>(
+        px: &[Rgba],
+        s: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         let bytes: Vec<u8> = px.iter().flat_map(|p| p.to_array()).collect();
         s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
     }
 
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<Rgba>, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> std::result::Result<Vec<Rgba>, D::Error> {
         let s = String::deserialize(d)?;
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         if bytes.len() % 4 != 0 {
-            return Err(serde::de::Error::custom("Pixeldaten sind kein Vielfaches von 4 Bytes"));
+            return Err(serde::de::Error::custom(
+                "Pixeldaten sind kein Vielfaches von 4 Bytes",
+            ));
         }
-        Ok(bytes.chunks_exact(4).map(|c| Rgba::new(c[0], c[1], c[2], c[3])).collect())
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|c| Rgba::new(c[0], c[1], c[2], c[3]))
+            .collect())
     }
 }

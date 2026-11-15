@@ -71,11 +71,17 @@ impl Sprite {
     }
 
     pub fn layer(&self, frame: usize, layer: usize) -> Result<&Layer> {
-        self.frame(frame)?.layers.get(layer).ok_or(Error::NoSuchLayer(layer))
+        self.frame(frame)?
+            .layers
+            .get(layer)
+            .ok_or(Error::NoSuchLayer(layer))
     }
 
     pub fn layer_mut(&mut self, frame: usize, layer: usize) -> Result<&mut Layer> {
-        self.frame_mut(frame)?.layers.get_mut(layer).ok_or(Error::NoSuchLayer(layer))
+        self.frame_mut(frame)?
+            .layers
+            .get_mut(layer)
+            .ok_or(Error::NoSuchLayer(layer))
     }
 
     /// Bringt eine Farbe auf die Farbtiefe des Sprites.
@@ -85,32 +91,32 @@ impl Sprite {
     /// - 16 Bit: Reduktion auf RGB565.
     /// - 32 Bit: unverändert.
     ///
-    /// Bei gesperrter Palette (Figuren) wird in jeder Farbtiefe die nächste Palettenfarbe genommen.
+    /// Bei gesperrter Palette (Figuren) wird in jeder Farbtiefe die nächste Palettenfarbe
+    /// genommen. Die Farben einer gesperrten Palette liegen selbst in der Farbtiefe
+    /// (siehe [`Palette::conform_to`]), das Ergebnis erfüllt also beide Bedingungen.
     pub fn conform(&mut self, c: Rgba) -> Rgba {
+        let c = self.depth.conform(c);
         if c.is_transparent() {
             return Rgba::TRANSPARENT;
         }
         if self.palette.locked {
             return self.palette.nearest(c);
         }
-        match self.depth {
-            ColorDepth::Indexed8 => {
-                let c = if c.a < 128 { Rgba::TRANSPARENT } else { Rgba { a: 255, ..c } };
-                if c.is_transparent() {
-                    return c;
-                }
-                match self.palette.add(c) {
-                    Ok(_) => c,
-                    Err(_) => self.palette.nearest(c),
-                }
-            }
-            ColorDepth::Rgb565 => c.to_rgb565(),
-            ColorDepth::Rgba32 => c,
+        if self.depth == ColorDepth::Indexed8 && self.palette.add(c).is_err() {
+            return self.palette.nearest(c);
         }
+        c
     }
 
     /// Setzt einen Pixel mit Farbtiefen-Anpassung.
-    pub fn set_pixel(&mut self, frame: usize, layer: usize, x: i64, y: i64, c: Rgba) -> Result<Rgba> {
+    pub fn set_pixel(
+        &mut self,
+        frame: usize,
+        layer: usize,
+        x: i64,
+        y: i64,
+        c: Rgba,
+    ) -> Result<Rgba> {
         let c = self.conform(c);
         self.layer_mut(frame, layer)?.set(x, y, c)?;
         Ok(c)
@@ -120,7 +126,8 @@ impl Sprite {
     pub fn add_layer(&mut self, name: impl Into<String>) -> usize {
         let name = name.into();
         for f in &mut self.frames {
-            f.layers.push(Layer::new(name.clone(), self.width, self.height));
+            f.layers
+                .push(Layer::new(name.clone(), self.width, self.height));
         }
         self.layer_count() - 1
     }
@@ -153,7 +160,10 @@ impl Sprite {
             .into_iter()
             .map(|n| Layer::new(n, self.width, self.height))
             .collect();
-        self.frames.push(Frame { duration_ms: Self::DEFAULT_FRAME_MS, layers });
+        self.frames.push(Frame {
+            duration_ms: Self::DEFAULT_FRAME_MS,
+            layers,
+        });
         self.frames.len() - 1
     }
 
@@ -172,9 +182,10 @@ impl Sprite {
         Ok(())
     }
 
-    /// Stellt die Farbtiefe um und passt alle vorhandenen Pixel an.
+    /// Stellt die Farbtiefe um und passt die Palette und alle vorhandenen Pixel an.
     pub fn set_depth(&mut self, depth: ColorDepth) {
         self.depth = depth;
+        self.palette.conform_to(depth);
         let mut frames = std::mem::take(&mut self.frames);
         for f in &mut frames {
             for l in &mut f.layers {
@@ -182,6 +193,22 @@ impl Sprite {
             }
         }
         self.frames = frames;
+    }
+
+    /// Alle Farben, die tatsächlich in irgendeiner Ebene vorkommen (ohne Transparenz).
+    pub fn used_colors(&self) -> Vec<Rgba> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for f in &self.frames {
+            for l in &f.layers {
+                for &p in l.pixels() {
+                    if !p.is_transparent() && seen.insert(p) {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Alle Pixel eines Frames, Ebenen von unten nach oben verrechnet.
@@ -196,7 +223,10 @@ impl Sprite {
                 let src = if l.opacity == 255 {
                     src
                 } else {
-                    Rgba { a: (src.a as u32 * l.opacity as u32 / 255) as u8, ..src }
+                    Rgba {
+                        a: (src.a as u32 * l.opacity as u32 / 255) as u8,
+                        ..src
+                    }
                 };
                 *dst = src.over(*dst);
             }
@@ -213,10 +243,13 @@ impl Sprite {
         let names = self.layer_names();
         for f in &self.frames {
             if f.layers.len() != names.len() {
-                return Err(Error::InvalidPixelData("Frames haben unterschiedlich viele Ebenen".into()));
+                return Err(Error::InvalidPixelData(
+                    "Frames haben unterschiedlich viele Ebenen".into(),
+                ));
             }
             for l in &f.layers {
-                l.check_consistent()?;
+                // Erst die Maße prüfen: sie stammen aus der Datei und dürfen die
+                // Pixelzahl-Prüfung nicht mit Riesenwerten füttern.
                 if l.width() != self.width || l.height() != self.height {
                     return Err(Error::SizeMismatch {
                         expected_w: self.width,
@@ -225,6 +258,7 @@ impl Sprite {
                         got_h: l.height(),
                     });
                 }
+                l.check_consistent()?;
             }
         }
         Ok(())

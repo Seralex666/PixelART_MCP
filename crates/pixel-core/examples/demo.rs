@@ -19,7 +19,11 @@ fn main() -> Result<()> {
     s.rename_layer(0, "Beine")?;
     let body = s.add_layer("Körper");
     let head = s.add_layer("Kopf");
-    let (legs, body, head) = (Target::new(0, 0), Target::new(0, body), Target::new(0, head));
+    let (legs, body, head) = (
+        Target::new(0, 0),
+        Target::new(0, body),
+        Target::new(0, head),
+    );
 
     draw::rect(s, legs, 5, 17, 2, 6, c("#333c57"), true)?;
     draw::rect(s, legs, 9, 17, 2, 6, c("#333c57"), true)?;
@@ -34,7 +38,12 @@ fn main() -> Result<()> {
 
     draw::ellipse(s, head, 4, 1, 8, 8, c("#ffcd75"), true)?;
     draw::rect(s, head, 4, 1, 8, 3, c("#5d275d"), true)?;
-    draw::pixels(s, head, &[(4, 4), (11, 4), (5, 0), (6, 0), (9, 0), (10, 0)], c("#5d275d"))?;
+    draw::pixels(
+        s,
+        head,
+        &[(4, 4), (11, 4), (5, 0), (6, 0), (9, 0), (10, 0)],
+        c("#5d275d"),
+    )?;
     draw::pixels(s, head, &[(6, 5), (9, 5)], c("#1a1c2c"))?;
     draw::pixels(s, head, &[(7, 7), (8, 7)], c("#b13e53"))?;
 
@@ -48,11 +57,28 @@ fn main() -> Result<()> {
         draw::shift(sprite, Target::new(frame, head.layer), 0, 1)?;
     }
 
-    assert!(project.validate().is_empty(), "Animation weicht von der Figur ab");
+    assert!(
+        project.validate().is_empty(),
+        "Animation weicht von der Figur ab"
+    );
 
     project.save(&out.join("demo.pxproj"))?;
-    std::fs::write(out.join("held.png"), export::frame_png(&project.character(hero_id)?.base, 0, 8)?)?;
-    let meta = export::save_sheet(&project.animation(idle)?.sprite, &out.join("held-idle"), 0, 8)?;
-    println!("Gespeichert in {}: {} Frames, Sheet {}×{}", out.display(), meta.frames.len(), meta.image_width, meta.image_height);
+    std::fs::write(
+        out.join("held.png"),
+        export::frame_png(&project.character(hero_id)?.base, 0, 8)?,
+    )?;
+    let meta = export::save_sheet(
+        &project.animation(idle)?.sprite,
+        &out.join("held-idle"),
+        0,
+        8,
+    )?;
+    println!(
+        "Gespeichert in {}: {} Frames, Sheet {}×{}",
+        out.display(),
+        meta.frames.len(),
+        meta.image_width,
+        meta.image_height
+    );
     Ok(())
 }
