@@ -45,7 +45,7 @@ oder Claude Code als MCP-Server eintragen, danach kann Claude Projekte anlegen, 
 animieren und exportieren.
 
 Die fertige Windows-exe liegt unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
-Ein Tag wie `v0.1.0` baut sie automatisch auf GitHub. Selbst bauen: `cargo build --release -p pixel-mcp`.
+Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.1.0` pushen). Selbst bauen: `cargo build --release -p pixel-mcp`.
 
 ## Ausprobieren
 
