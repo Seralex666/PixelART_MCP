@@ -305,6 +305,194 @@ fn spritesheet_layout_and_metadata() {
     assert_eq!((one_row.columns, one_row.rows), (5, 1));
 }
 
+fn png_header(bytes: &[u8]) -> (png::ColorType, png::BitDepth) {
+    let reader = png::Decoder::new(std::io::Cursor::new(bytes))
+        .read_info()
+        .unwrap();
+    (reader.info().color_type, reader.info().bit_depth)
+}
+
+#[test]
+fn indexed_png_has_the_same_pixels_in_the_smallest_table() {
+    // Ungerade Breite: Zeilen enden mitten im Byte.
+    let mut s = Sprite::new(3, 2, ColorDepth::Rgba32, Palette::default()).unwrap();
+    s.set_pixel(0, 0, 0, 0, Rgba::rgb(255, 0, 0)).unwrap();
+    for scale in [1, 3] {
+        let indexed = export::frame_png_indexed(&s, 0, scale).unwrap();
+        assert_eq!(
+            png_header(&indexed),
+            (png::ColorType::Indexed, png::BitDepth::One),
+            "zwei Farben brauchen ein Bit"
+        );
+        assert_eq!(
+            export::decode(&indexed).unwrap(),
+            export::decode(&export::frame_png(&s, 0, scale).unwrap()).unwrap()
+        );
+    }
+
+    s.set_pixel(0, 0, 1, 0, Rgba::rgb(0, 255, 0)).unwrap();
+    s.set_pixel(0, 0, 2, 0, Rgba::rgb(0, 0, 255)).unwrap();
+    s.set_pixel(0, 0, 0, 1, Rgba::new(10, 20, 30, 128)).unwrap();
+    s.set_pixel(0, 0, 2, 1, Rgba::rgb(1, 2, 3)).unwrap();
+    let indexed = export::frame_png_indexed(&s, 0, 5).unwrap();
+    assert_eq!(
+        png_header(&indexed),
+        (png::ColorType::Indexed, png::BitDepth::Four),
+        "sechs Farben brauchen vier Bit"
+    );
+    let (w, h, px) = export::decode(&indexed).unwrap();
+    assert_eq!((w, h), (15, 10));
+    assert_eq!(
+        px,
+        export::decode(&export::frame_png(&s, 0, 5).unwrap())
+            .unwrap()
+            .2
+    );
+    assert_eq!(px[5 * 15], Rgba::new(10, 20, 30, 128), "halbtransparent");
+    assert_eq!(px[5 * 15 + 5], Rgba::TRANSPARENT);
+    assert!(indexed.len() < export::frame_png(&s, 0, 5).unwrap().len());
+
+    let mut many = Sprite::new(20, 20, ColorDepth::Rgba32, Palette::default()).unwrap();
+    for i in 0..400i64 {
+        let c = Rgba::rgb((i % 256) as u8, (i / 256) as u8, 7);
+        many.set_pixel(0, 0, i % 20, i / 20, c).unwrap();
+    }
+    assert!(matches!(
+        export::frame_png_indexed(&many, 0, 1),
+        Err(Error::TooManyColors {
+            found: 400,
+            max: 256
+        })
+    ));
+}
+
+/// Liest ein GIF zurück: Größe, Wiederholung und je Frame Dauer und Pixel.
+fn read_gif(bytes: &[u8]) -> (u16, u16, gif::Repeat, Vec<(u16, Vec<Rgba>)>) {
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options.read_info(std::io::Cursor::new(bytes)).unwrap();
+    let mut frames = Vec::new();
+    while let Some(frame) = decoder.read_next_frame().unwrap() {
+        let px = frame
+            .buffer
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| Rgba::new(c[0], c[1], c[2], c[3]))
+            .collect();
+        frames.push((frame.delay, px));
+    }
+    (decoder.width(), decoder.height(), decoder.repeat(), frames)
+}
+
+#[test]
+fn gif_keeps_colors_transparency_and_timing() {
+    let mut s = Sprite::new(3, 2, ColorDepth::Rgba32, Palette::default()).unwrap();
+    s.add_frame();
+    s.set_pixel(0, 0, 0, 0, Rgba::rgb(255, 0, 0)).unwrap();
+    s.set_pixel(0, 0, 1, 0, Rgba::new(0, 0, 255, 200)).unwrap();
+    s.set_pixel(0, 0, 2, 0, Rgba::new(0, 255, 0, 60)).unwrap();
+    s.set_pixel(1, 0, 2, 1, Rgba::rgb(0, 0, 1)).unwrap();
+    s.frame_mut(0).unwrap().duration_ms = 100;
+    s.frame_mut(1).unwrap().duration_ms = 255;
+
+    let (bytes, info) = export::animation_gif(&s, 2, true).unwrap();
+    assert_eq!(
+        info,
+        export::GifInfo {
+            colors: 3,
+            exact: true
+        }
+    );
+    let (w, h, repeat, frames) = read_gif(&bytes);
+    assert_eq!((w, h), (6, 4));
+    assert!(matches!(repeat, gif::Repeat::Infinite));
+    assert_eq!(frames.len(), 2);
+    assert_eq!((frames[0].0, frames[1].0), (10, 26), "Hundertstelsekunden");
+    let first = &frames[0].1;
+    assert_eq!(first[0], Rgba::rgb(255, 0, 0));
+    assert_eq!(first[7], Rgba::rgb(255, 0, 0), "vergrößert ohne Glättung");
+    assert_eq!(first[2], Rgba::rgb(0, 0, 255), "über halb deckend: deckend");
+    assert_eq!(first[4].a, 0, "unter halb deckend: durchsichtig");
+    assert_eq!(first[12].a, 0);
+    let second = &frames[1].1;
+    assert_eq!(second[0].a, 0, "das vorige Bild scheint nicht durch");
+    assert_eq!(second[3 * 6 + 5], Rgba::rgb(0, 0, 1), "fast schwarz bleibt");
+
+    let (once, _) = export::animation_gif(&s, 1, false).unwrap();
+    assert!(matches!(read_gif(&once).2, gif::Repeat::Finite(0)));
+
+    assert_eq!(export::gif_delay(5), 2, "zu kurze Frames spielt niemand ab");
+    assert_eq!(export::gif_delay(16), 2);
+    assert_eq!(export::gif_delay(1000), 100);
+}
+
+#[test]
+fn gif_reduces_colors_only_when_there_are_too_many() {
+    // Genau 255 Farben und Transparenz passen noch exakt.
+    let mut s = Sprite::new(16, 16, ColorDepth::Rgba32, Palette::default()).unwrap();
+    for i in 0..255i64 {
+        let c = Rgba::rgb(i as u8, 255 - i as u8, 9);
+        s.set_pixel(0, 0, i % 16, i / 16, c).unwrap();
+    }
+    let (bytes, info) = export::animation_gif(&s, 1, true).unwrap();
+    assert_eq!((info.colors, info.exact), (255, true));
+    let px = &read_gif(&bytes).3[0].1;
+    assert_eq!(px[254], Rgba::rgb(254, 1, 9));
+    assert_eq!(px[255].a, 0);
+
+    // Ein Farbverlauf mit 1024 Farben muss reduziert werden.
+    let mut s = Sprite::new(32, 32, ColorDepth::Rgba32, Palette::default()).unwrap();
+    for y in 0..32i64 {
+        for x in 0..32i64 {
+            if (x, y) != (0, 0) {
+                let c = Rgba::rgb((x * 8) as u8, (y * 8) as u8, ((x + y) * 4) as u8);
+                s.set_pixel(0, 0, x, y, c).unwrap();
+            }
+        }
+    }
+    let (bytes, info) = export::animation_gif(&s, 1, true).unwrap();
+    assert!(!info.exact);
+    assert!(info.colors <= 255);
+    let px = &read_gif(&bytes).3[0].1;
+    assert_eq!(px[0].a, 0, "Transparenz bleibt Transparenz");
+    let original = s.composite(0).unwrap();
+    for (got, want) in px.iter().zip(&original).skip(1) {
+        assert_eq!(got.a, 255);
+        assert!(
+            got.distance_sq(*want) < 9 * 12 * 12,
+            "{got} ist zu weit weg von {want}"
+        );
+    }
+}
+
+#[test]
+fn video_frames_follow_the_frame_durations() {
+    use pixel_core::video::{ffmpeg_args, VideoPlan};
+    let plan = VideoPlan::new(&[100, 100, 100]);
+    assert_eq!(
+        (plan.tick_ms, plan.repeats.as_slice()),
+        (100, &[1, 1, 1][..])
+    );
+    let plan = VideoPlan::new(&[100, 250, 400]);
+    assert_eq!(
+        (plan.tick_ms, plan.repeats.as_slice()),
+        (50, &[2, 5, 8][..])
+    );
+    assert_eq!(plan.total_frames(), 15);
+    let plan = VideoPlan::new(&[33, 4]);
+    assert_eq!((plan.tick_ms, plan.repeats.as_slice()), (10, &[3, 1][..]));
+
+    let args = ffmpeg_args(64, 32, 50, true);
+    let has = |pair: [&str; 2]| args.windows(2).any(|w| w == pair);
+    assert!(has(["-s", "64x32"]) && has(["-r", "1000/50"]) && has(["-i", "-"]));
+    assert!(has(["-lossless", "1"]) && has(["-auto-alt-ref", "0"]));
+    assert!(args.iter().any(|a| a.ends_with("format=yuva420p")));
+    let opaque = ffmpeg_args(64, 32, 50, false);
+    assert!(opaque.iter().any(|a| a.ends_with("format=yuv420p")));
+    assert!(!opaque.contains(&"-auto-alt-ref".to_string()));
+}
+
 #[test]
 fn templates_are_valid() {
     let mut ids = std::collections::HashSet::new();
@@ -679,6 +867,48 @@ mod workspace {
         assert!(ws
             .export("../x", "Held 1", &s, ExportFormat::Png, None, 1)
             .is_err());
+    }
+
+    #[test]
+    fn export_writes_gif_indexed_png_and_webm() {
+        let ws = temp();
+        ws.create("Spiel").unwrap();
+        let mut s = Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+        s.add_frame();
+        s.set_pixel(0, 0, 0, 0, Rgba::rgb(200, 30, 30)).unwrap();
+        s.set_pixel(1, 0, 3, 3, Rgba::rgb(30, 30, 200)).unwrap();
+        let dir = ws.exports_dir("Spiel");
+
+        let gif = ExportFormat::Gif { looping: true };
+        let gif = ws.export("Spiel", "Held 1", &s, gif, None, 4).unwrap();
+        assert_eq!(gif.files, [dir.join("Held_1@4x.gif")]);
+        assert!(gif.gif.unwrap().exact);
+        assert!(std::fs::read(&gif.files[0]).unwrap().starts_with(b"GIF89a"));
+
+        let indexed = ExportFormat::PngIndexed;
+        let indexed = ws.export("Spiel", "Held 1", &s, indexed, None, 1).unwrap();
+        assert_eq!(
+            indexed.files,
+            [dir.join("Held_1-00.png"), dir.join("Held_1-01.png")]
+        );
+        assert!(indexed.gif.is_none());
+
+        // Ungerade Vergrößerung macht im Video unscharfe Kanten.
+        let odd = ws.export("Spiel", "Held 1", &s, ExportFormat::WebM, None, 3);
+        assert!(matches!(odd, Err(pixel_core::Error::OddVideoScale)));
+        // Der eigentliche Export braucht ffmpeg und läuft nur, wo es das gibt.
+        match ws.export("Spiel", "Held 1", &s, ExportFormat::WebM, None, 4) {
+            Ok(webm) => {
+                assert_eq!(webm.files, [dir.join("Held_1@4x.webm")]);
+                let bytes = std::fs::read(&webm.files[0]).unwrap();
+                assert!(bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]), "WebM-Kopf");
+            }
+            Err(pixel_core::Error::FfmpegMissing) => {
+                assert!(pixel_core::video::find_ffmpeg().is_none());
+                assert!(!dir.join("Held_1@4x.webm").exists());
+            }
+            Err(other) => panic!("{other}"),
+        }
     }
 
     #[test]

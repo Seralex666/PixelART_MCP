@@ -122,8 +122,18 @@ impl NewAnimation {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ExportKind {
     Png,
+    PngIndexed,
     Jpg,
     Sheet,
+    Gif,
+    WebM,
+}
+
+impl ExportKind {
+    /// Formate, die jeden Frame als eigene Datei schreiben.
+    fn is_single_frames(self) -> bool {
+        matches!(self, Self::Png | Self::PngIndexed | Self::Jpg)
+    }
 }
 
 pub struct ExportForm {
@@ -135,6 +145,10 @@ pub struct ExportForm {
     pub quality: u8,
     /// Ergebnis des letzten Exports.
     pub written: Vec<PathBuf>,
+    /// Hinweis zum letzten Export, etwa zu reduzierten Farben.
+    pub note: Option<String>,
+    /// Ob ffmpeg für WebM da ist. Wird erst gesucht, wenn WebM gewählt ist.
+    pub ffmpeg: Option<bool>,
 }
 
 impl Default for ExportForm {
@@ -147,6 +161,8 @@ impl Default for ExportForm {
             background: [255, 255, 255],
             quality: 95,
             written: Vec::new(),
+            note: None,
+            ffmpeg: None,
         }
     }
 }
@@ -539,20 +555,50 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     ui.heading(format!("„{name}“ exportieren"));
 
     section(ui, "Format");
-    ui.horizontal(|ui| {
-        ui.radio_value(&mut f.kind, ExportKind::Png, "PNG")
-            .on_hover_text("Verlustfrei, mit Transparenz");
-        ui.radio_value(&mut f.kind, ExportKind::Jpg, "JPG")
-            .on_hover_text("Ohne Transparenz, leicht verlustbehaftet");
-        ui.radio_value(&mut f.kind, ExportKind::Sheet, "Spritesheet")
-            .on_hover_text("Alle Frames in einem PNG, dazu eine JSON-Datei mit den Positionen");
-    });
+    egui::Grid::new("export-formats")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.weak("Einzelbilder");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut f.kind, ExportKind::Png, "PNG")
+                    .on_hover_text("Verlustfrei, mit Transparenz");
+                ui.radio_value(&mut f.kind, ExportKind::PngIndexed, "PNG mit Palette")
+                    .on_hover_text(
+                        "Dieselben Pixel, aber mit Farbtabelle gespeichert (PNG-8). Kleinere Datei, höchstens 256 Farben.",
+                    );
+                ui.radio_value(&mut f.kind, ExportKind::Jpg, "JPG")
+                    .on_hover_text("Ohne Transparenz, leicht verlustbehaftet");
+            });
+            ui.end_row();
+            ui.weak("Animation");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut f.kind, ExportKind::Sheet, "Spritesheet")
+                    .on_hover_text(
+                        "Alle Frames in einem PNG, dazu eine JSON-Datei mit den Positionen",
+                    );
+                ui.radio_value(&mut f.kind, ExportKind::Gif, "GIF")
+                    .on_hover_text(
+                        "Animiertes Bild, das überall abspielt. Bis 255 Farben bleiben exakt.",
+                    );
+                ui.radio_value(&mut f.kind, ExportKind::WebM, "WebM")
+                    .on_hover_text("Video mit Transparenz, braucht das Programm ffmpeg");
+            });
+            ui.end_row();
+        });
 
+    // Ein Video speichert Farbe nur für Blöcke aus 2×2 Bildpunkten. Bei gerader
+    // Vergrößerung deckt sich jeder Block mit einem Pixel.
+    let even_only = f.kind == ExportKind::WebM;
+    if even_only && !f.scale.is_multiple_of(2) {
+        f.scale = (f.scale + 1).min(MAX_SCALE);
+    }
     section(ui, "Vergrößerung");
     ui.horizontal(|ui| {
+        let lowest = if even_only { 2 } else { 1 };
         ui.add(
             egui::DragValue::new(&mut f.scale)
-                .range(1..=MAX_SCALE)
+                .range(lowest..=MAX_SCALE)
                 .suffix("×"),
         );
         ui.weak(format!(
@@ -561,7 +607,24 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
             h * f.scale
         ));
     });
+    if even_only && !f.scale.is_multiple_of(2) {
+        // Beim Ziehen am Feld kann eine ungerade Zahl entstehen.
+        f.scale = (f.scale + 1).min(MAX_SCALE);
+    }
 
+    let looping = doc.looping(id).unwrap_or(true);
+    // Ein Video kennt keine Schleife, das entscheidet das Abspielprogramm.
+    let timing = |ui: &mut egui::Ui, mentions_loop: bool| {
+        ui.weak(if frames < 2 {
+            "Das Asset hat nur einen Frame, es entsteht ein Standbild."
+        } else if !mentions_loop {
+            "Spielt mit den Frame-Dauern aus der Zeitleiste."
+        } else if looping {
+            "Spielt mit den Frame-Dauern aus der Zeitleiste, in Schleife."
+        } else {
+            "Spielt mit den Frame-Dauern aus der Zeitleiste, einmal bis zum Ende."
+        });
+    };
     match f.kind {
         ExportKind::Sheet => {
             section(ui, "Spalten");
@@ -570,7 +633,7 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
                 ui.weak("0 legt alle Frames in eine Zeile");
             });
         }
-        ExportKind::Png | ExportKind::Jpg => {
+        ExportKind::Png | ExportKind::PngIndexed | ExportKind::Jpg => {
             if frames > 1 {
                 section(ui, "Frames");
                 ui.horizontal(|ui| {
@@ -581,6 +644,32 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
                         format!("nur Frame {}", app.frame + 1),
                     );
                 });
+            }
+        }
+        ExportKind::Gif => {
+            section(ui, "GIF");
+            timing(ui, true);
+            ui.weak("GIF kennt nur ganz deckend oder ganz durchsichtig. Halbtransparente Pixel werden zu einem von beiden.");
+        }
+        ExportKind::WebM => {
+            section(ui, "WebM");
+            timing(ui, false);
+            ui.weak("Video-Kompression kann Farben um ein bis zwei Stufen verschieben. Für exakte Pixel nimm Spritesheet, PNG oder GIF.");
+            let found = *f
+                .ffmpeg
+                .get_or_insert_with(|| pixel_core::video::find_ffmpeg().is_some());
+            if !found {
+                ui.add_space(4.0);
+                ui.colored_label(
+                    ui.visuals().warn_fg_color,
+                    format!(
+                        "ffmpeg wurde nicht gefunden. {}",
+                        pixel_core::video::FFMPEG_HELP
+                    ),
+                );
+                if ui.button("Erneut suchen").clicked() {
+                    f.ffmpeg = None;
+                }
             }
         }
     }
@@ -597,6 +686,10 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
         });
     }
 
+    if let Some(note) = &f.note {
+        ui.add_space(8.0);
+        ui.colored_label(ui.visuals().warn_fg_color, note);
+    }
     if !f.written.is_empty() {
         ui.add_space(8.0);
         ui.label(RichText::new("Exportiert:").strong());
@@ -632,12 +725,24 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
                 quality: f.quality,
             },
             ExportKind::Sheet => ExportFormat::Sheet { columns: f.columns },
+            ExportKind::PngIndexed => ExportFormat::PngIndexed,
+            ExportKind::Gif => ExportFormat::Gif { looping },
+            ExportKind::WebM => ExportFormat::WebM,
         };
-        let frame =
-            (f.kind != ExportKind::Sheet && !f.all_frames && frames > 1).then_some(app.frame);
+        let frame = (f.kind.is_single_frames() && !f.all_frames && frames > 1).then_some(app.frame);
+        // Nach einer Installation von ffmpeg soll der nächste Versuch neu suchen.
+        f.ffmpeg = None;
+        f.note = None;
+        f.written.clear();
         match doc.export(id, format, frame, f.scale) {
             Ok(out) => {
                 app.dialog_error = None;
+                if let Some(info) = out.gif.filter(|info| !info.exact) {
+                    f.note = Some(format!(
+                        "Das Bild hat mehr Farben, als ein GIF fasst. Sie wurden auf {} ähnliche Farben reduziert. Exakt bleiben Spritesheet und PNG.",
+                        info.colors
+                    ));
+                }
                 let n = out.files.len();
                 f.written = out.files;
                 app.info(if n == 1 {

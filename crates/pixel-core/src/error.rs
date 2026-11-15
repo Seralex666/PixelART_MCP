@@ -42,6 +42,16 @@ pub enum Error {
     InvalidPixelData(String),
     #[error("{0}")]
     InvalidName(String),
+    #[error("das Bild hat {found} Farben, erlaubt sind hier höchstens {max}")]
+    TooManyColors { found: usize, max: usize },
+    #[error("Fehler beim Schreiben der Bilddatei: {0}")]
+    Encode(String),
+    #[error("{0}")]
+    Video(String),
+    #[error("WebM braucht eine gerade Vergrößerung (2, 4, 6 … bis {max}), damit die Pixel scharf bleiben", max = crate::export::MAX_SCALE)]
+    OddVideoScale,
+    #[error("ffmpeg wurde nicht gefunden. {help}", help = crate::video::FFMPEG_HELP)]
+    FfmpegMissing,
     #[error("nicht unterstützte Projektversion {0}")]
     UnsupportedVersion(u32),
     #[error("E/A-Fehler: {0}")]

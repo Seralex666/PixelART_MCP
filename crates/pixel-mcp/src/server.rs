@@ -18,7 +18,7 @@ Typical workflow:
 3. draw on it. Prefer the `grid` op: text rows plus a legend give exact control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations.
 4. Every draw call returns a preview image. Look at it and correct mistakes before continuing. Use get_pixels to read exact pixels back as text.
 5. create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves in each frame (shift op on one layer, small grid patches).
-6. export as png, jpg or sheet (sprite sheet with JSON metadata).
+6. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
 
 Consistency rules:
 - A character's palette is locked when it is created. Colors drawn on the character or its animations snap to the nearest palette color, so choose the full palette up front (skin, hair, clothes, outline, shadows, highlights). add_character_colors appends colors later without changing existing ones.
@@ -254,9 +254,9 @@ pub struct Export {
     project: String,
     /// Name or id of a character, animation or image.
     asset: String,
-    /// "png", "jpg" or "sheet" (sprite sheet PNG plus JSON metadata with frame positions and durations).
+    /// "png", "png8" (indexed PNG with a color table, at most 256 colors, same pixels, smaller file), "jpg", "sheet" (sprite sheet PNG plus JSON metadata with frame positions and durations), "gif" (animated, exact colors up to 255 plus transparency, uses the frame durations and the animation's loop setting) or "webm" (video with transparency, needs ffmpeg on the computer and an even scale).
     format: String,
-    /// Frame index for png/jpg. Omit to export every frame as its own file.
+    /// Frame index for png/png8/jpg. Omit to export every frame as its own file.
     frame: Option<usize>,
     /// Integer enlargement factor, 1 to 64, without smoothing. Default 1 (true size).
     scale: Option<u32>,
@@ -458,7 +458,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Export an asset to files in the workspace's exports folder: single frames as PNG or JPG, or a sprite sheet with JSON metadata. Returns the file paths.",
+        description = "Export an asset to files in the workspace's exports folder: single frames as PNG or JPG, a sprite sheet with JSON metadata, or the whole animation as GIF or WebM. Returns the file paths.",
         annotations(title = "Export", destructive_hint = false)
     )]
     fn export(&self, Parameters(a): Parameters<Export>) -> CallToolResult {

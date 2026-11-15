@@ -307,7 +307,13 @@ fn export_writes_files_inside_the_workspace() {
         json!({"project": "Export", "asset": "Tile", "action": "duplicate", "frame": 0}),
     );
 
-    for (format, count) in [("png", 2), ("jpg", 2), ("sheet", 2)] {
+    for (format, count) in [
+        ("png", 2),
+        ("jpg", 2),
+        ("sheet", 2),
+        ("png8", 2),
+        ("gif", 1),
+    ] {
         let r: Value = serde_json::from_str(
             &c.ok(
                 "export",
@@ -331,13 +337,40 @@ fn export_writes_files_inside_the_workspace() {
             assert_eq!(r["sheet"]["image_width"], 128);
             assert_eq!(r["sheet"]["frames"].as_array().unwrap().len(), 2);
         }
+        if format == "gif" {
+            assert_eq!(r["gif"], json!({"colors": 1, "exact": true}));
+            assert!(r.get("note").is_none(), "exact colors need no warning");
+        }
     }
     assert!(c
         .err(
             "export",
             json!({"project": "Export", "asset": "Tile", "format": "bmp"})
         )
-        .contains("png, jpg or sheet"));
+        .contains("png, png8, jpg, sheet, gif or webm"));
+    assert!(c
+        .err(
+            "export",
+            json!({"project": "Export", "asset": "Tile", "format": "gif", "frame": 0})
+        )
+        .contains("omit `frame`"));
+    assert!(c
+        .err(
+            "export",
+            json!({"project": "Export", "asset": "Tile", "format": "webm", "scale": 3})
+        )
+        .contains("even scale"));
+    // WebM needs ffmpeg: with it a video comes out, without it a hint how to get it.
+    let webm = json!({"project": "Export", "asset": "Tile", "format": "webm", "scale": 4});
+    if pixel_core::video::find_ffmpeg().is_some() {
+        let r: Value = serde_json::from_str(&c.ok("export", webm).text).unwrap();
+        let path = PathBuf::from(r["files"][0].as_str().unwrap());
+        assert_eq!(path, c.home.join("exports/Export/Tile@4x.webm"));
+        assert!(std::fs::metadata(&path).unwrap().len() > 0);
+        assert!(r["note"].as_str().unwrap().contains("exact pixels"));
+    } else {
+        assert!(c.err("export", webm).contains("winget install"));
+    }
 }
 
 #[test]

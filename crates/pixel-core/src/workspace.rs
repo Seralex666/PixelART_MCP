@@ -1,9 +1,9 @@
 //! Der Arbeitsordner: hier liegen die Projektdateien und die Exporte.
 //! Editor und MCP-Server benutzen denselben Ordner und dieselben Regeln.
 
-use crate::export::{self, SheetMeta};
+use crate::export::{self, GifInfo, SheetMeta};
 use crate::project::PROJECT_EXT;
-use crate::{Error, Project, Result, Rgba, Sprite};
+use crate::{video, Error, Project, Result, Rgba, Sprite};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -39,12 +39,29 @@ pub enum ExportFormat {
     Sheet {
         columns: u32,
     },
+    /// PNG mit Farbtabelle statt Vollfarbe, höchstens 256 Farben.
+    PngIndexed,
+    /// Alle Frames als animiertes GIF. `looping = false` spielt einmal ab.
+    Gif {
+        looping: bool,
+    },
+    /// Alle Frames als WebM-Video. Braucht ffmpeg und eine gerade Vergrößerung.
+    WebM,
+}
+
+impl ExportFormat {
+    /// Diese Formate enthalten immer alle Frames in einer Datei.
+    pub fn is_whole_animation(self) -> bool {
+        matches!(self, Self::Sheet { .. } | Self::Gif { .. } | Self::WebM)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Exported {
     pub files: Vec<PathBuf>,
     pub sheet: Option<SheetMeta>,
+    /// Nur bei GIF: wie viele Farben die Datei hat und ob sie exakt sind.
+    pub gif: Option<GifInfo>,
 }
 
 /// Warum ein Asset-Name nicht vergeben werden kann.
@@ -238,6 +255,7 @@ impl Workspace {
         };
         let mut files = Vec::new();
         let mut sheet = None;
+        let mut gif = None;
         match format {
             ExportFormat::Png => {
                 for &f in &frames {
@@ -263,8 +281,37 @@ impl Workspace {
                 files.push(with_ext(&stem, "png"));
                 files.push(with_ext(&stem, "json"));
             }
+            ExportFormat::PngIndexed => {
+                // Erst alles berechnen: Hat ein Frame zu viele Farben, soll
+                // kein halber Export im Ordner liegen.
+                let mut images = Vec::with_capacity(frames.len());
+                for &f in &frames {
+                    images.push(export::frame_png_indexed(sprite, f, scale)?);
+                }
+                for (&f, bytes) in frames.iter().zip(images) {
+                    let path = file(f, "png");
+                    std::fs::write(&path, bytes)?;
+                    files.push(path);
+                }
+            }
+            ExportFormat::Gif { looping } => {
+                let (bytes, info) = export::animation_gif(sprite, scale, looping)?;
+                let path = dir.join(format!("{base}{suffix}.gif"));
+                std::fs::write(&path, bytes)?;
+                files.push(path);
+                gif = Some(info);
+            }
+            ExportFormat::WebM => {
+                if !scale.is_multiple_of(2) {
+                    return Err(Error::OddVideoScale);
+                }
+                let ffmpeg = video::find_ffmpeg().ok_or(Error::FfmpegMissing)?;
+                let path = dir.join(format!("{base}{suffix}.webm"));
+                video::animation_webm(sprite, scale, &path, &ffmpeg)?;
+                files.push(path);
+            }
         }
-        Ok(Exported { files, sheet })
+        Ok(Exported { files, sheet, gif })
     }
 }
 
