@@ -37,9 +37,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      - run: cargo build --release -p pixel-mcp
+      - run: cargo build --release -p pixel-mcp -p pixel-editor
       - uses: actions/upload-artifact@v4
         with:
-          name: pixelart-mcp-windows
-          path: target/release/pixelart-mcp.exe
+          name: pixelart-studio-windows
+          path: |
+            target/release/pixelart-studio.exe
+            target/release/pixelart-mcp.exe
           if-no-files-found: error

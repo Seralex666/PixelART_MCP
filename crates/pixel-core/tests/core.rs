@@ -558,3 +558,126 @@ fn extreme_coordinates_are_rejected_without_overflow() {
     }
     assert!(s.used_colors().is_empty());
 }
+
+mod workspace {
+    use pixel_core::workspace::{
+        check_asset_name, check_project_name, file_safe, ExportFormat, NameClash, ProjectNameError,
+        Workspace,
+    };
+    use pixel_core::{ColorDepth, Palette, Rgba, Sprite};
+
+    fn temp() -> Workspace {
+        let dir = std::env::temp_dir().join(format!("pixelart-core-test-{}", uuid::Uuid::new_v4()));
+        Workspace::open(dir).unwrap()
+    }
+
+    #[test]
+    fn project_names_cannot_leave_the_workspace() {
+        let ws = temp();
+        for bad in [
+            "",
+            "  ",
+            "../evil",
+            "a/b",
+            "a\\b",
+            "x.pxproj",
+            &"a".repeat(65),
+        ] {
+            assert_eq!(
+                check_project_name(bad),
+                Err(ProjectNameError::Invalid),
+                "{bad}"
+            );
+            assert!(ws.project_path(bad).is_err());
+        }
+        assert_eq!(check_project_name("NUL"), Err(ProjectNameError::Reserved));
+        let path = ws.project_path("  Mein Spiel-2 ").unwrap();
+        assert_eq!(path, ws.home().join("Mein Spiel-2.pxproj"));
+    }
+
+    #[test]
+    fn create_list_load_roundtrip() {
+        let ws = temp();
+        assert!(ws.project_names().is_empty());
+        ws.create("beta").unwrap();
+        ws.create("Alpha").unwrap();
+        assert!(ws.create("beta").is_err());
+        assert_eq!(ws.project_names(), ["Alpha", "beta"]);
+        assert!(ws.exists("Alpha") && !ws.exists("Gamma"));
+        assert_eq!(ws.load("Alpha").unwrap().name, "Alpha");
+        assert!(ws.modified("Alpha").is_some());
+        assert!(ws.modified("Gamma").is_none());
+    }
+
+    #[test]
+    fn asset_names_clash_when_they_export_to_the_same_file() {
+        let taken = vec!["Tile A".to_string()];
+        assert_eq!(
+            check_asset_name(&taken, "tile a"),
+            Err(NameClash::Same("Tile A".into()))
+        );
+        assert_eq!(
+            check_asset_name(&taken, "Tile_A"),
+            Err(NameClash::Similar("Tile A".into()))
+        );
+        assert_eq!(check_asset_name(&taken, "Tile B"), Ok(()));
+        assert_eq!(file_safe("con"), "con_");
+        assert_eq!(file_safe("a/b:c"), "a_b_c");
+    }
+
+    #[test]
+    fn export_names_files_by_asset_frame_and_scale() {
+        let ws = temp();
+        ws.create("Spiel").unwrap();
+        let mut s = Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+        s.add_frame();
+        let dir = ws.exports_dir("Spiel");
+
+        let png = ws
+            .export("Spiel", "Held 1", &s, ExportFormat::Png, None, 1)
+            .unwrap();
+        assert_eq!(
+            png.files,
+            [dir.join("Held_1-00.png"), dir.join("Held_1-01.png")]
+        );
+        let one = ws
+            .export("Spiel", "Held 1", &s, ExportFormat::Png, Some(1), 2)
+            .unwrap();
+        assert_eq!(one.files, [dir.join("Held_1-01@2x.png")]);
+        let jpg = ExportFormat::Jpg {
+            background: Rgba::WHITE,
+            quality: 90,
+        };
+        let jpg = ws.export("Spiel", "Held 1", &s, jpg, Some(0), 1).unwrap();
+        assert_eq!(jpg.files, [dir.join("Held_1-00.jpg")]);
+        let sheet = ExportFormat::Sheet { columns: 0 };
+        let sheet = ws.export("Spiel", "Held 1", &s, sheet, None, 3).unwrap();
+        assert_eq!(
+            sheet.files,
+            [
+                dir.join("Held_1-sheet@3x.png"),
+                dir.join("Held_1-sheet@3x.json")
+            ]
+        );
+        assert_eq!(sheet.sheet.unwrap().frames.len(), 2);
+        for f in png
+            .files
+            .iter()
+            .chain(&one.files)
+            .chain(&jpg.files)
+            .chain(&sheet.files)
+        {
+            assert!(f.is_file(), "{}", f.display());
+        }
+
+        assert!(ws
+            .export("Spiel", "Held 1", &s, ExportFormat::Png, Some(2), 1)
+            .is_err());
+        assert!(ws
+            .export("Spiel", "Held 1", &s, ExportFormat::Png, None, 0)
+            .is_err());
+        assert!(ws
+            .export("../x", "Held 1", &s, ExportFormat::Png, None, 1)
+            .is_err());
+    }
+}

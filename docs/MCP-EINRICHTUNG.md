@@ -3,14 +3,22 @@
 Der MCP-Server ist eine einzelne Datei: `pixelart-mcp.exe` (Windows) bzw. `pixelart-mcp` (Linux, macOS).
 Er braucht keine Installation. Claude startet ihn selbst, sobald er eingetragen ist.
 
+**Am einfachsten:** Im Editor (`pixelart-studio.exe`) unter **Hilfe → Mit Claude verbinden…** stehen
+alle Angaben schon mit den Pfaden deines Rechners, jeweils mit einem Knopf zum Kopieren. Dort gibt es
+auch einen fertigen Prompt, mit dem Claude die Verbindung selbst einrichtet. Diese Seite beschreibt
+dasselbe zum Nachlesen.
+
 In den Beispielen liegt die exe in `C:\Users\DEINNAME\Desktop\PixelArt Studio`. Ersetze `DEINNAME`
 durch deinen Windows-Benutzernamen.
 
 ## Wo liegen meine Projekte?
 
 Im Arbeitsordner. Dort legt der Server pro Projekt eine Datei `<Name>.pxproj` an und schreibt
-Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne Angabe ist es
-`Dokumente\PixelArt Studio`.
+Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne Angabe gilt: Liegt neben
+dem Programm ein Ordner `Projekte`, wird er genommen, sonst `Dokumente\PixelArt Studio`.
+
+Editor und MCP-Server müssen denselben Arbeitsordner benutzen, damit du im Editor siehst, was Claude
+zeichnet. Liegen beide Programme im selben Ordner, passt das von selbst.
 
 ## Claude Desktop
 
@@ -37,8 +45,20 @@ Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne An
 ## Claude Code
 
 ```sh
-claude mcp add pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Studio\pixelart-mcp.exe" --home "C:\Users\DEINNAME\Desktop\PixelArt Studio\Projekte"
+claude mcp add --scope user pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Studio\pixelart-mcp.exe" --home "C:\Users\DEINNAME\Desktop\PixelArt Studio\Projekte"
 ```
+
+`--scope user` trägt den Server für alle Ordner ein, nicht nur für den, in dem du den Befehl ausführst.
+
+## Claude richtet es selbst ein
+
+Wo Claude auf deinem Rechner Befehle ausführen oder Dateien bearbeiten darf (zum Beispiel in Claude
+Code), kannst du die Einrichtung abgeben: Im Editor unter **Hilfe → Mit Claude verbinden…** den Prompt
+aus Abschnitt 1 kopieren und an Claude schicken. Er nennt Programm, Argumente, den Befehl für Claude
+Code, den Eintrag für Claude Desktop und wie Claude das Ergebnis prüft.
+
+Abschnitt 5 im selben Dialog enthält einen zweiten Prompt für den Anfang eines Gesprächs. Er erklärt
+einem verbundenen Claude, wie es mit dem Studio arbeitet.
 
 ## Andere MCP-Clients
 

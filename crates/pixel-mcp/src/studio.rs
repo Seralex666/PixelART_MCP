@@ -5,7 +5,8 @@
 //! und nach einem Absturz geht nichts verloren.
 
 use pixel_core::draw::{self, Target};
-use pixel_core::project::{CharacterBundle, PROJECT_EXT};
+use pixel_core::project::CharacterBundle;
+use pixel_core::workspace::{self, ExportFormat, NameClash, ProjectNameError, Workspace};
 use pixel_core::{
     export, template, Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba,
     Sprite, TEMPLATES,
@@ -54,7 +55,7 @@ const MAX_FRAMES: usize = 256;
 const MAX_LAYERS: usize = 64;
 
 pub struct Studio {
-    home: PathBuf,
+    ws: Workspace,
 }
 
 /// Verweis auf ein Asset im Projekt.
@@ -139,36 +140,28 @@ pub enum DrawOp {
 
 impl Studio {
     pub fn new(home: PathBuf) -> Res<Self> {
-        std::fs::create_dir_all(&home)
+        let ws = Workspace::open(&home)
             .map_err(|err| format!("cannot create workspace {}: {err}", home.display()))?;
-        Ok(Self { home })
+        Ok(Self { ws })
     }
 
     pub fn home(&self) -> &Path {
-        &self.home
+        self.ws.home()
     }
 
     // ---------------------------------------------------------------- Dateien
 
     fn project_path(&self, name: &str) -> Res<PathBuf> {
         let name = name.trim();
-        let ok = !name.is_empty()
-            && name.len() <= 64
-            && name
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
-            && !name.starts_with(' ');
-        if !ok {
-            return Err(format!(
+        match workspace::check_project_name(name) {
+            Ok(()) => self.ws.project_path(name).map_err(e),
+            Err(ProjectNameError::Invalid) => Err(format!(
                 "invalid project name '{name}': use 1 to 64 letters, digits, spaces, '-' or '_'"
-            ));
-        }
-        if is_reserved_file_name(name) {
-            return Err(format!(
+            )),
+            Err(ProjectNameError::Reserved) => Err(format!(
                 "invalid project name '{name}': this name is reserved by Windows"
-            ));
+            )),
         }
-        Ok(self.home.join(format!("{name}.{PROJECT_EXT}")))
     }
 
     fn load(&self, name: &str) -> Res<Project> {
@@ -176,7 +169,7 @@ impl Studio {
         if !path.exists() {
             return Err(format!(
                 "project '{name}' does not exist. Existing projects: {}. Use create_project to make a new one.",
-                self.project_names().join(", ")
+                self.ws.project_names().join(", ")
             ));
         }
         Project::load(&path).map_err(e)
@@ -186,27 +179,12 @@ impl Studio {
         p.save(&self.project_path(name)?).map_err(e)
     }
 
-    fn project_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = std::fs::read_dir(&self.home)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|entry| {
-                let path = entry.path();
-                (path.extension()?.to_str()? == PROJECT_EXT)
-                    .then(|| path.file_stem()?.to_str().map(String::from))?
-            })
-            .collect();
-        names.sort();
-        names
-    }
-
     // ---------------------------------------------------------------- Infos
 
     pub fn studio_info(&self) -> Res {
         Ok(Reply::json(json!({
-            "workspace": self.home,
-            "projects": self.project_names(),
+            "workspace": self.ws.home(),
+            "projects": self.ws.project_names(),
             "max_size": pixel_core::MAX_SIZE,
             "color_depths": {
                 "8": "indexed: only palette colors (max 256) plus transparency",
@@ -346,15 +324,14 @@ impl Studio {
     /// Ein Name ist frei, wenn kein vorhandenes Asset gleich heißt und auch keines
     /// denselben Dateinamen beim Export ergäbe (z. B. "Tile A" und "Tile_A").
     fn check_name_free(taken: &[String], name: &str) -> Res<()> {
-        let key = name_key(name);
-        match taken.iter().find(|t| name_key(t) == key) {
-            Some(t) if t.eq_ignore_ascii_case(name) => {
+        match workspace::check_asset_name(taken, name) {
+            Ok(()) => Ok(()),
+            Err(NameClash::Same(t)) => {
                 Err(format!("an asset named '{t}' already exists in this project"))
             }
-            Some(t) => Err(format!(
+            Err(NameClash::Similar(t)) => Err(format!(
                 "the name '{name}' is too similar to the existing asset '{t}': both would export to the same file name"
             )),
-            None => Ok(()),
         }
     }
 
@@ -1071,64 +1048,38 @@ impl Studio {
         if !(1..=export::MAX_SCALE).contains(&scale) {
             return Err(format!("scale must be 1 to {}", export::MAX_SCALE));
         }
-        // Der Projektname ist als Dateiname geprüft und eindeutig, er dient
-        // unverändert als Ordnername.
-        let dir = self.home.join("exports").join(project.trim());
-        std::fs::create_dir_all(&dir).map_err(e)?;
-        let base = file_safe(&Self::asset_name(&p, r));
-        let suffix = if scale > 1 {
-            format!("@{scale}x")
-        } else {
-            String::new()
+        let frame = match frame {
+            Some(_) => Some(Self::frame_index(s, frame)?),
+            None => None,
         };
-        let frames: Vec<usize> = match frame {
-            Some(_) => vec![Self::frame_index(s, frame)?],
-            None => (0..s.frames().len()).collect(),
-        };
-        let numbered = s.frames().len() > 1;
-        let file = |f: usize, ext: &str| {
-            if numbered {
-                dir.join(format!("{base}-{f:02}{suffix}.{ext}"))
-            } else {
-                dir.join(format!("{base}{suffix}.{ext}"))
-            }
-        };
-        let mut written: Vec<PathBuf> = Vec::new();
-        match format.to_ascii_lowercase().as_str() {
-            "png" => {
-                for &f in &frames {
-                    let path = file(f, "png");
-                    std::fs::write(&path, export::frame_png(s, f, scale).map_err(e)?).map_err(e)?;
-                    written.push(path);
-                }
-            }
-            "jpg" | "jpeg" => {
-                let bg = match background {
+        let format = match format.to_ascii_lowercase().as_str() {
+            "png" => ExportFormat::Png,
+            "jpg" | "jpeg" => ExportFormat::Jpg {
+                background: match background {
                     Some(c) => parse_color(c)?,
                     None => Rgba::WHITE,
-                };
-                for &f in &frames {
-                    let path = file(f, "jpg");
-                    let bytes =
-                        export::frame_jpeg(s, f, scale, bg, quality.unwrap_or(95)).map_err(e)?;
-                    std::fs::write(&path, bytes).map_err(e)?;
-                    written.push(path);
-                }
-            }
+                },
+                quality: quality.unwrap_or(95),
+            },
             "sheet" | "spritesheet" => {
                 if frame.is_some() {
                     return Err("a sheet always contains all frames, omit `frame`".into());
                 }
-                let stem = dir.join(format!("{base}-sheet{suffix}"));
-                let meta = export::save_sheet(s, &stem, columns.unwrap_or(0), scale).map_err(e)?;
-                return Ok(Reply::json(json!({
-                    "files": [stem.with_extension("png"), stem.with_extension("json")],
-                    "sheet": meta,
-                })));
+                ExportFormat::Sheet {
+                    columns: columns.unwrap_or(0),
+                }
             }
             other => return Err(format!("unknown format '{other}', use png, jpg or sheet")),
-        }
-        Ok(Reply::json(json!({ "files": written })))
+        };
+        let name = Self::asset_name(&p, r);
+        let out = self
+            .ws
+            .export(project, &name, s, format, frame, scale)
+            .map_err(e)?;
+        Ok(match out.sheet {
+            Some(meta) => Reply::json(json!({ "files": out.files, "sheet": meta })),
+            None => Reply::json(json!({ "files": out.files })),
+        })
     }
 }
 
@@ -1142,42 +1093,6 @@ pub fn parse_color(s: &str) -> Res<Rgba> {
     }
     t.parse::<Rgba>()
         .map_err(|_| format!("invalid color '{s}': use #RRGGBB, #RRGGBBAA or \"transparent\""))
-}
-
-/// Vergleichsschlüssel für Namen: gleich, wenn beim Export derselbe Dateiname
-/// entstünde. Kleinschreibung, weil Windows Dateinamen so vergleicht.
-fn name_key(name: &str) -> String {
-    file_safe(name).to_lowercase()
-}
-
-fn file_safe(name: &str) -> String {
-    let s: String = name
-        .trim()
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || matches!(c, '-' | '_') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if s.is_empty() {
-        "unnamed".into()
-    } else if is_reserved_file_name(&s) {
-        format!("{s}_")
-    } else {
-        s
-    }
-}
-
-/// Gerätenamen wie CON oder NUL lassen sich unter Windows nicht als Datei anlegen.
-fn is_reserved_file_name(name: &str) -> bool {
-    const RESERVED: [&str; 22] = [
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-    ];
-    RESERVED.contains(&name.to_ascii_lowercase().as_str())
 }
 
 fn note_snap(s: &mut Sprite, wanted: Rgba, snapped: &mut BTreeMap<String, String>) -> Rgba {

@@ -25,6 +25,7 @@ pub mod palette;
 pub mod project;
 pub mod sprite;
 pub mod template;
+pub mod workspace;
 
 pub use animation::{Animation, AnimationKind};
 pub use character::Character;
@@ -35,6 +36,7 @@ pub use palette::Palette;
 pub use project::{Project, ValidationIssue};
 pub use sprite::{Frame, Sprite};
 pub use template::{CanvasTemplate, TEMPLATES};
+pub use workspace::Workspace;
 
 /// Größte erlaubte Kantenlänge eines Bildes in Pixeln.
 pub const MAX_SIZE: u32 = 1024;
