@@ -25,8 +25,8 @@ Claude (oder eine andere KI) über MCP steuern kann.
 ```
 crates/
   pixel-core/   Gemeinsamer Kern für Editor und MCP-Server
-  pixel-mcp/    MCP-Server (Programm `pixelart-mcp`)
-  pixel-editor/ Editor (Programm `pixelart-studio`)
+  pixel-mcp/    MCP-Server, als Bibliothek im Editor eingebaut und als eigenes Programm `pixelart-mcp`
+  pixel-editor/ Editor (Programm `pixelart-studio`), mit `--mcp` zugleich der MCP-Server
 docs/
   MCP-EINRICHTUNG.md   So verbindest du Claude mit dem Studio
 ```
@@ -71,9 +71,10 @@ deckend. Hat eine Animation mehr als 255 Farben, werden sie auf ähnliche Farben
 sagt das dazu.
 
 WebM schreibt das kostenlose Programm [ffmpeg](https://ffmpeg.org). Ist es nicht installiert, funktioniert
-alles andere weiter. Unter Windows genügt `winget install Gyan.FFmpeg` in der Eingabeaufforderung, oder du
-legst `ffmpeg.exe` neben die beiden Programme. Gesucht wird in dieser Reihenfolge: Umgebungsvariable
-`PIXELART_FFMPEG`, Ordner des Programms, Suchpfad des Systems. WebM braucht eine gerade Vergrößerung
+alles andere weiter. Unter Windows installiert es der Editor auf Knopfdruck: im Export-Dialog „WebM“ wählen
+und „ffmpeg jetzt installieren“ anklicken. Dahinter steckt `winget install Gyan.FFmpeg`; das geht auch von
+Hand, oder du legst `ffmpeg.exe` neben das Programm. Gesucht wird in dieser Reihenfolge: Umgebungsvariable
+`PIXELART_FFMPEG`, Ordner des Programms, Suchpfad des Systems, Ablageort von winget. WebM braucht eine gerade Vergrößerung
 (2×, 4×, …), damit die Pixelkanten scharf bleiben.
 
 ## Mit Claude verbinden
@@ -82,9 +83,9 @@ Im Editor unter **Hilfe → Mit Claude verbinden…** stehen alle Angaben mit de
 dazu ein fertiger Prompt, mit dem Claude die Verbindung selbst einrichtet. Dieselbe Anleitung zum
 Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 
-Die fertigen Windows-Programme liegen unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
-Lege `pixelart-studio.exe` und `pixelart-mcp.exe` in denselben Ordner.
-Gebaut werden sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.3.0` pushen).
+Das fertige Windows-Programm liegt unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
+Es ist eine einzige Datei, `pixelart-studio.exe`: per Doppelklick der Editor, mit `--mcp` der MCP-Server.
+Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.4.0` pushen).
 Selbst bauen: `cargo build --release`.
 
 ## Ausprobieren

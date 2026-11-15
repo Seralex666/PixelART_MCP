@@ -67,6 +67,8 @@ pub struct App {
     /// Zelle unter dem Mauszeiger, für die Statusleiste.
     pub hover_cell: Option<(i64, i64)>,
     duration_edit: Option<u32>,
+    /// Läuft gerade eine Installation von ffmpeg, kommt hier ihr Ergebnis an.
+    ffmpeg_install: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     shot: Option<Shot>,
 }
 
@@ -112,6 +114,7 @@ impl App {
             last_poll: 0.0,
             hover_cell: None,
             duration_edit: None,
+            ffmpeg_install: None,
             shot: std::env::var_os("PIXELART_SHOT").map(|p| Shot {
                 path: p.into(),
                 frames: 0,
@@ -266,6 +269,57 @@ impl App {
         self.view.fit = false;
     }
 
+    // ------------------------------------------------------------ ffmpeg
+
+    pub fn installing_ffmpeg(&self) -> bool {
+        self.ffmpeg_install.is_some()
+    }
+
+    /// Installiert ffmpeg im Hintergrund, damit das Fenster bedienbar bleibt.
+    pub fn install_ffmpeg(&mut self, ctx: &egui::Context) {
+        if self.ffmpeg_install.is_some() {
+            return;
+        }
+        let (result, receiver) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let outcome = pixel_core::video::install_ffmpeg().map_err(|err| err.to_string());
+            let _ = result.send(outcome);
+            ctx.request_repaint();
+        });
+        self.ffmpeg_install = Some(receiver);
+        self.dialog_error = None;
+        self.info("ffmpeg wird installiert …");
+    }
+
+    fn poll_ffmpeg_install(&mut self) {
+        use std::sync::mpsc::TryRecvError;
+        let Some(receiver) = &self.ffmpeg_install else {
+            return;
+        };
+        let outcome = match receiver.try_recv() {
+            Ok(outcome) => outcome,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                Err("Die Installation von ffmpeg wurde unerwartet beendet.".to_string())
+            }
+        };
+        self.ffmpeg_install = None;
+        // Der Export-Dialog soll danach neu nachsehen, ob ffmpeg da ist.
+        if let Dialog::Export(form) = &mut self.dialog {
+            form.ffmpeg = None;
+        }
+        match outcome {
+            Ok(path) => self.info(format!("ffmpeg ist installiert: {}", path.display())),
+            Err(err) => {
+                if matches!(self.dialog, Dialog::Export(_)) {
+                    self.dialog_error = Some(err.clone());
+                }
+                self.error(err);
+            }
+        }
+    }
+
     // ------------------------------------------------------------ Takt
 
     fn tick(&mut self, ctx: &egui::Context) {
@@ -281,6 +335,7 @@ impl App {
             }
         }
         ctx.request_repaint_after_secs(POLL_SECONDS as f32);
+        self.poll_ffmpeg_install();
         if let Some(notice) = self.doc.as_mut().and_then(|d| d.take_notice()) {
             self.error(notice);
         }

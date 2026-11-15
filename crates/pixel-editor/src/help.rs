@@ -7,16 +7,18 @@ use std::path::{Path, PathBuf};
 pub const SERVER_NAME: &str = "pixelart";
 
 #[cfg(windows)]
-const SERVER_FILE: &str = "pixelart-mcp.exe";
+const PROGRAM_FILE: &str = "pixelart-studio.exe";
 #[cfg(not(windows))]
-const SERVER_FILE: &str = "pixelart-mcp";
+const PROGRAM_FILE: &str = "pixelart-studio";
+
+/// Mit dieser Angabe läuft das Programm als MCP-Server statt als Editor.
+pub const MCP_FLAG: &str = "--mcp";
 
 /// Alles, was ein MCP-Client für die Verbindung wissen muss.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConnectInfo {
-    /// Der MCP-Server. Er wird neben dem Editor erwartet.
+    /// Der MCP-Server: dieses Programm selbst, gestartet mit `--mcp`.
     pub server: PathBuf,
-    pub server_found: bool,
     /// Arbeitsordner des Editors. Der Server bekommt denselben, damit beide
     /// dieselben Projekte sehen.
     pub home: PathBuf,
@@ -26,12 +28,8 @@ pub struct ConnectInfo {
 
 impl ConnectInfo {
     pub fn detect(home: &Path, project: Option<&str>) -> Self {
-        let server = std::env::current_exe()
-            .ok()
-            .and_then(|exe| Some(exe.parent()?.join(SERVER_FILE)))
-            .unwrap_or_else(|| PathBuf::from(SERVER_FILE));
+        let server = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(PROGRAM_FILE));
         Self {
-            server_found: server.is_file(),
             server,
             home: home.to_path_buf(),
             project: project.map(String::from),
@@ -53,7 +51,7 @@ impl ConnectInfo {
             "mcpServers": {
                 SERVER_NAME: {
                     "command": self.server_str(),
-                    "args": ["--home", self.home_str()],
+                    "args": [MCP_FLAG, "--home", self.home_str()],
                 }
             }
         });
@@ -63,7 +61,7 @@ impl ConnectInfo {
     /// Befehl für Claude Code. `--scope user` trägt den Server für alle Ordner ein.
     pub fn claude_code_command(&self) -> String {
         format!(
-            "claude mcp add --scope user {SERVER_NAME} -- \"{}\" --home \"{}\"",
+            "claude mcp add --scope user {SERVER_NAME} -- \"{}\" {MCP_FLAG} --home \"{}\"",
             self.server_str(),
             self.home_str()
         )
@@ -78,8 +76,9 @@ impl ConnectInfo {
 Angaben zum Server:
 - Name: {name}
 - Programm: {server}
-- Argumente: --home "{home}"
+- Argumente: {flag} --home "{home}"
 - Übertragung: stdio (lokales Programm, kein Netzwerk, keine Zugangsdaten)
+- Hinweis: Es ist dieselbe Datei wie der Editor. Mit {flag} öffnet sie kein Fenster, sondern spricht MCP über stdin/stdout.
 
 So richtest du ihn ein, je nachdem wo du läufst:
 
@@ -93,11 +92,12 @@ So richtest du ihn ein, je nachdem wo du läufst:
 3. Anderer MCP-Client: Trage einen lokalen stdio-Server mit dem Programm und den Argumenten von oben ein.
 
 Prüfen:
-- "{server}" --version muss "pixelart-mcp" und eine Versionsnummer ausgeben.
+- "{server}" --version muss "pixelart-studio" und eine Versionsnummer ausgeben.
 - Sobald der Server verbunden ist, rufe das Werkzeug get_studio_info auf und nenne mir den Arbeitsordner. Er muss {home} sein.
 
 Wenn etwas davon nicht geht, sag mir genau, welcher Schritt und welche Fehlermeldung."#,
             name = SERVER_NAME,
+            flag = MCP_FLAG,
             server = self.server_str(),
             home = self.home_str(),
             command = self.claude_code_command(),
@@ -123,7 +123,7 @@ So arbeitest du damit:
 4. Freie Bilder wie Tiles, Items oder Szenen legst du mit create_image an (höchstens 1024×1024, Farbtiefe 8, 16 oder 32 Bit).
 5. Gezeichnet wird mit draw. Sieh dir das Ergebnis danach mit view an und lies bei Bedarf exakte Pixel mit get_pixels.
 6. Braucht eine Figur eine weitere Farbe, nimm sie mit add_character_colors in ihre Palette auf.
-7. Mit export schreibst du PNG, JPG oder ein Spritesheet in den Ordner "exports" im Arbeitsordner.
+7. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             name = SERVER_NAME,
@@ -149,8 +149,9 @@ mod tests {
 
     fn info() -> ConnectInfo {
         ConnectInfo {
-            server: PathBuf::from(r"C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-mcp.exe"),
-            server_found: true,
+            server: PathBuf::from(
+                r"C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-studio.exe",
+            ),
             home: PathBuf::from(r"C:\Users\Max Muster\Desktop\PixelArt Studio\Projekte"),
             project: Some("Mein Spiel".into()),
         }
@@ -166,11 +167,12 @@ mod tests {
         let entry = &v["mcpServers"]["pixelart"];
         assert_eq!(
             entry["command"],
-            r"C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-mcp.exe"
+            r"C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-studio.exe"
         );
-        assert_eq!(entry["args"][0], "--home");
+        assert_eq!(entry["args"][0], "--mcp");
+        assert_eq!(entry["args"][1], "--home");
         assert_eq!(
-            entry["args"][1],
+            entry["args"][2],
             r"C:\Users\Max Muster\Desktop\PixelArt Studio\Projekte"
         );
     }
@@ -179,7 +181,7 @@ mod tests {
     fn command_quotes_paths_with_spaces() {
         assert_eq!(
             info().claude_code_command(),
-            r#"claude mcp add --scope user pixelart -- "C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-mcp.exe" --home "C:\Users\Max Muster\Desktop\PixelArt Studio\Projekte""#
+            r#"claude mcp add --scope user pixelart -- "C:\Users\Max Muster\Desktop\PixelArt Studio\pixelart-studio.exe" --mcp --home "C:\Users\Max Muster\Desktop\PixelArt Studio\Projekte""#
         );
     }
 

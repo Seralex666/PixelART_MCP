@@ -1,9 +1,10 @@
 # MCP-Server einrichten
 
-Der MCP-Server ist eine einzelne Datei: `pixelart-mcp.exe` (Windows) bzw. `pixelart-mcp` (Linux, macOS).
-Er braucht keine Installation. Claude startet ihn selbst, sobald er eingetragen ist.
+Editor und MCP-Server sind dieselbe Datei: `pixelart-studio.exe`. Per Doppelklick öffnet sie den Editor.
+Mit der Angabe `--mcp` gestartet, öffnet sie kein Fenster, sondern arbeitet als MCP-Server für Claude.
+Sie braucht keine Installation. Claude startet sie so von selbst, sobald sie eingetragen ist.
 
-**Am einfachsten:** Im Editor (`pixelart-studio.exe`) unter **Hilfe → Mit Claude verbinden…** stehen
+**Am einfachsten:** Im Editor unter **Hilfe → Mit Claude verbinden…** stehen
 alle Angaben schon mit den Pfaden deines Rechners, jeweils mit einem Knopf zum Kopieren. Dort gibt es
 auch einen fertigen Prompt, mit dem Claude die Verbindung selbst einrichtet. Diese Seite beschreibt
 dasselbe zum Nachlesen.
@@ -18,7 +19,7 @@ Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne An
 dem Programm ein Ordner `Projekte`, wird er genommen, sonst `Dokumente\PixelArt Studio`.
 
 Editor und MCP-Server müssen denselben Arbeitsordner benutzen, damit du im Editor siehst, was Claude
-zeichnet. Liegen beide Programme im selben Ordner, passt das von selbst.
+zeichnet. Weil beide dieselbe Datei sind, passt das von selbst.
 
 ## Claude Desktop
 
@@ -31,8 +32,8 @@ zeichnet. Liegen beide Programme im selben Ordner, passt das von selbst.
 {
   "mcpServers": {
     "pixelart": {
-      "command": "C:\\Users\\DEINNAME\\Desktop\\PixelArt Studio\\pixelart-mcp.exe",
-      "args": ["--home", "C:\\Users\\DEINNAME\\Desktop\\PixelArt Studio\\Projekte"]
+      "command": "C:\\Users\\DEINNAME\\Desktop\\PixelArt Studio\\pixelart-studio.exe",
+      "args": ["--mcp", "--home", "C:\\Users\\DEINNAME\\Desktop\\PixelArt Studio\\Projekte"]
     }
   }
 }
@@ -45,7 +46,7 @@ zeichnet. Liegen beide Programme im selben Ordner, passt das von selbst.
 ## Claude Code
 
 ```sh
-claude mcp add --scope user pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Studio\pixelart-mcp.exe" --home "C:\Users\DEINNAME\Desktop\PixelArt Studio\Projekte"
+claude mcp add --scope user pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Studio\pixelart-studio.exe" --mcp --home "C:\Users\DEINNAME\Desktop\PixelArt Studio\Projekte"
 ```
 
 `--scope user` trägt den Server für alle Ordner ein, nicht nur für den, in dem du den Befehl ausführst.
@@ -63,7 +64,10 @@ einem verbundenen Claude, wie es mit dem Studio arbeitet.
 ## Andere MCP-Clients
 
 Jeder Client, der lokale MCP-Server über stdio starten kann, funktioniert. Einzutragen sind immer
-dieselben zwei Angaben: das Programm (`pixelart-mcp.exe`) und die Argumente (`--home <Ordner>`).
+dieselben zwei Angaben: das Programm (`pixelart-studio.exe`) und die Argumente (`--mcp --home <Ordner>`).
+
+Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Programm bauen:
+`cargo build --release -p pixel-mcp` ergibt `pixelart-mcp`, das ohne `--mcp` auskommt.
 
 ## Werkzeuge
 
@@ -89,7 +93,10 @@ dieselben zwei Angaben: das Programm (`pixelart-mcp.exe`) und die Argumente (`--
   Claude Desktop schreibt Fehler nach `%APPDATA%\Claude\logs\`.
 - **Windows warnt vor der exe:** Die Datei ist nicht signiert. Über „Weitere Informationen → Trotzdem
   ausführen“ lässt sie sich starten.
-- **WebM-Export meldet, ffmpeg fehle:** In der Eingabeaufforderung `winget install Gyan.FFmpeg` ausführen
-  und Claude neu starten, oder `ffmpeg.exe` neben `pixelart-mcp.exe` legen. Alle anderen Formate
-  brauchen kein ffmpeg.
-- **Selbst testen:** `pixelart-mcp.exe --version` in der Eingabeaufforderung zeigt die Version an.
+- **WebM-Export meldet, ffmpeg fehle:** Im Editor den Export-Dialog öffnen (Strg+E), „WebM“ wählen und
+  auf „ffmpeg jetzt installieren“ klicken. Von Hand geht es mit `winget install Gyan.FFmpeg` in der
+  Eingabeaufforderung, oder du legst `ffmpeg.exe` neben das Programm. Ein Neustart ist nicht nötig.
+  Alle anderen Formate brauchen kein ffmpeg.
+- **Das Programm lässt sich nicht ersetzen:** Solange der Editor offen ist oder Claude den Server
+  benutzt, sperrt Windows die Datei. Zum Aktualisieren den Editor schließen und Claude beenden.
+- **Selbst testen:** `pixelart-studio.exe --version` in der Eingabeaufforderung zeigt die Version an.

@@ -22,7 +22,13 @@ const TICK_MS: u32 = 10;
 const MAX_VIDEO_FRAMES: u32 = 20_000;
 
 /// Sucht ffmpeg: zuerst die Umgebungsvariable `PIXELART_FFMPEG`, dann neben
-/// dem eigenen Programm, dann im Suchpfad des Systems.
+/// dem eigenen Programm, dann im Suchpfad des Systems und zuletzt dort, wo der
+/// Windows-Paketmanager winget es ablegt.
+///
+/// Der letzte Ort ist nötig, weil ein laufendes Programm den Suchpfad von
+/// seinem Start behält: Direkt nach der Installation stünde ffmpeg sonst erst
+/// nach einem Neustart zur Verfügung, auch für einen von Claude gestarteten
+/// MCP-Server.
 pub fn find_ffmpeg() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os("PIXELART_FFMPEG").filter(|v| !v.is_empty()) {
         let path = PathBuf::from(path);
@@ -35,15 +41,132 @@ pub fn find_ffmpeg() -> Option<PathBuf> {
     if beside.is_some() {
         return beside;
     }
-    std::env::var_os("PATH").and_then(|paths| {
+    let on_path = std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
             .map(|dir| dir.join(FFMPEG))
             .find(|p| p.is_file())
+    });
+    if on_path.is_some() {
+        return on_path;
+    }
+    std::env::var_os("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .and_then(|dir| find_in_winget(Path::new(&dir), FFMPEG))
+}
+
+/// Kennung des ffmpeg-Pakets bei winget.
+pub const WINGET_PACKAGE: &str = "Gyan.FFmpeg";
+
+/// Sucht ffmpeg in den Ordnern von winget unterhalb von `%LOCALAPPDATA%`.
+/// winget legt Programme ohne Installer unter `Microsoft/WinGet/Packages/<Paket>_…`
+/// ab und, wenn Windows es erlaubt, eine Verknüpfung unter `Microsoft/WinGet/Links`.
+pub fn find_in_winget(local_app_data: &Path, file: &str) -> Option<PathBuf> {
+    let winget = local_app_data.join("Microsoft").join("WinGet");
+    let link = winget.join("Links").join(file);
+    if link.is_file() {
+        return Some(link);
+    }
+    let mut packages: Vec<PathBuf> = std::fs::read_dir(winget.join("Packages"))
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(WINGET_PACKAGE))
+        })
+        .collect();
+    packages.sort();
+    // Im Paket liegt ein Ordner je Version, darin `bin/ffmpeg.exe`.
+    packages
+        .iter()
+        .rev()
+        .find_map(|package| find_file(package, file, 3))
+}
+
+/// Sucht eine Datei in einem Ordner und höchstens `depth` Ebenen darunter.
+/// Bei mehreren Treffern gewinnt der alphabetisch letzte, also die neueste Version.
+fn find_file(dir: &Path, file: &str, depth: u32) -> Option<PathBuf> {
+    let direct = dir.join(file);
+    if direct.is_file() {
+        return Some(direct);
+    }
+    if depth == 0 {
+        return None;
+    }
+    let mut folders: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    folders.sort();
+    folders
+        .iter()
+        .rev()
+        .find_map(|folder| find_file(folder, file, depth - 1))
+}
+
+/// Die Argumente, mit denen winget ffmpeg installiert, ohne nachzufragen.
+pub const WINGET_INSTALL_ARGS: [&str; 8] = [
+    "install",
+    "--id",
+    WINGET_PACKAGE,
+    "--exact",
+    "--source",
+    "winget",
+    "--accept-source-agreements",
+    "--accept-package-agreements",
+];
+
+/// Installiert ffmpeg über den Windows-Paketmanager winget und gibt zurück, wo
+/// es danach liegt. winget zeigt den Fortschritt in einem eigenen Fenster. Das
+/// kann einige Minuten dauern; der Aufruf wartet so lange.
+#[cfg(windows)]
+pub fn install_ffmpeg() -> Result<PathBuf> {
+    if let Some(found) = find_ffmpeg() {
+        return Ok(found);
+    }
+    let status = Command::new("winget")
+        .args(WINGET_INSTALL_ARGS)
+        .stdin(Stdio::null())
+        .status();
+    // winget meldet auch dann einen Fehler, wenn das Paket schon da war.
+    // Entscheidend ist, ob ffmpeg danach zu finden ist.
+    if let Some(found) = find_ffmpeg() {
+        return Ok(found);
+    }
+    Err(Error::Video(match status {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => format!(
+            "Der Windows-Paketmanager winget wurde nicht gefunden. {FFMPEG_MANUAL}"
+        ),
+        Err(err) => format!("winget lässt sich nicht starten ({err}). {FFMPEG_MANUAL}"),
+        Ok(status) if status.success() => format!(
+            "winget meldet Erfolg, aber ffmpeg ist nicht zu finden. Starte das Studio neu. {FFMPEG_MANUAL}"
+        ),
+        Ok(status) => format!(
+            "Die Installation ist fehlgeschlagen (winget: {status}). {FFMPEG_MANUAL}"
+        ),
+    }))
+}
+
+/// Außerhalb von Windows gibt es keinen einheitlichen Weg zur Installation.
+#[cfg(not(windows))]
+pub fn install_ffmpeg() -> Result<PathBuf> {
+    find_ffmpeg().ok_or_else(|| {
+        Error::Video(
+            "Die automatische Installation gibt es nur unter Windows. Installiere ffmpeg über die Paketverwaltung deines Systems.".into(),
+        )
     })
 }
 
+/// Ob [`install_ffmpeg`] auf diesem System etwas installieren kann.
+pub const CAN_INSTALL_FFMPEG: bool = cfg!(windows);
+
+/// Der Weg von Hand, falls die Installation aus dem Programm nicht klappt.
+pub const FFMPEG_MANUAL: &str = "Von Hand geht es so: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen.";
+
 /// Hinweis für Menschen, wie man ffmpeg bekommt.
-pub const FFMPEG_HELP: &str = "Für WebM wird das kostenlose Programm ffmpeg gebraucht. Unter Windows: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen und das Studio neu starten, oder ffmpeg.exe in denselben Ordner wie das Studio legen.";
+pub const FFMPEG_HELP: &str = "Für WebM wird das kostenlose Programm ffmpeg gebraucht. Im Studio lässt es sich im Export-Dialog bei „WebM“ mit einem Klick installieren. Von Hand: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen.";
 
 /// Wie die Frames eines Sprites auf Videobilder verteilt werden.
 #[derive(Clone, Debug, PartialEq, Eq)]
