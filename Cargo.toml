@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/pixel-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/Seralex666/PixelART_MCP"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v4", "serde"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
