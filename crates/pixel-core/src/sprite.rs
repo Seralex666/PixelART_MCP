@@ -84,6 +84,41 @@ impl Sprite {
             .ok_or(Error::NoSuchLayer(layer))
     }
 
+    /// Index der Ebene mit diesem Namen (Groß- und Kleinschreibung egal).
+    pub fn layer_index(&self, name: &str) -> Option<usize> {
+        self.layer_names()
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(name))
+    }
+
+    /// Ersetzt die Palette und passt sie und alle vorhandenen Pixel an die
+    /// Farbtiefe an. Bei gesperrter Palette (Figuren) nicht erlaubt.
+    pub fn set_palette(&mut self, palette: Palette) -> Result<()> {
+        if self.palette.locked {
+            return Err(Error::PaletteLocked);
+        }
+        self.palette = palette;
+        self.palette.locked = false;
+        self.palette.conform_to(self.depth);
+        if self.depth == ColorDepth::Indexed8 {
+            // Im 8-Bit-Modus müssen alle Pixel aus der neuen Palette stammen.
+            let pal = self.palette.clone();
+            for f in &mut self.frames {
+                for l in &mut f.layers {
+                    l.map_pixels(|p| pal.nearest(p));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Kopiert den Inhalt eines Frames in einen anderen (Dauer bleibt erhalten).
+    pub fn copy_frame(&mut self, from: usize, to: usize) -> Result<()> {
+        let layers = self.frame(from)?.layers.clone();
+        self.frame_mut(to)?.layers = layers;
+        Ok(())
+    }
+
     /// Bringt eine Farbe auf die Farbtiefe des Sprites.
     ///
     /// - 8 Bit: Ist die Farbe nicht in der Palette, wird sie aufgenommen, solange
@@ -153,13 +188,25 @@ impl Sprite {
         Ok(())
     }
 
-    /// Hängt einen leeren Frame an (mit denselben Ebenen) und gibt seinen Index zurück.
+    /// Hängt einen leeren Frame an und gibt seinen Index zurück. Der neue Frame hat
+    /// dieselben Ebenen wie die vorhandenen, samt Sichtbarkeit und Deckkraft.
     pub fn add_frame(&mut self) -> usize {
+        let (w, h) = (self.width, self.height);
         let layers = self
-            .layer_names()
-            .into_iter()
-            .map(|n| Layer::new(n, self.width, self.height))
-            .collect();
+            .frames
+            .first()
+            .map(|f| {
+                f.layers
+                    .iter()
+                    .map(|l| {
+                        let mut new = Layer::new(l.name.clone(), w, h);
+                        new.visible = l.visible;
+                        new.opacity = l.opacity;
+                        new
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.frames.push(Frame {
             duration_ms: Self::DEFAULT_FRAME_MS,
             layers,

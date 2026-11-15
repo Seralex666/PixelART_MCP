@@ -102,6 +102,28 @@ impl Project {
         Ok(self.characters.remove(i))
     }
 
+    /// Erweitert die Palette einer Figur um neue Farben. Vorhandene Farben bleiben
+    /// unverändert, deshalb bleibt alles bisher Gezeichnete gültig. Die Erweiterung
+    /// gilt auch für alle Animationen der Figur. Gibt die neue Palettengröße zurück.
+    pub fn add_character_colors(&mut self, id: Uuid, colors: &[crate::Rgba]) -> Result<usize> {
+        let depth = self.character(id)?.base.depth;
+        let mut palette = self.character(id)?.palette().clone();
+        palette.locked = false;
+        for &c in colors {
+            let c = depth.conform(c);
+            if !c.is_transparent() {
+                palette.add(c)?;
+            }
+        }
+        palette.locked = true;
+        let n = palette.len();
+        self.character_mut(id)?.base.palette = palette.clone();
+        for a in self.animations.iter_mut().filter(|a| a.character_id == id) {
+            a.sprite.palette = palette.clone();
+        }
+        Ok(n)
+    }
+
     // ---- Animationen ----
 
     /// Legt für eine Figur eine Animation an, deren Frames mit der Grundpose starten.
@@ -170,6 +192,15 @@ impl Project {
             .iter_mut()
             .find(|i| i.id == id)
             .ok_or_else(|| not_found("Bild", id))
+    }
+
+    pub fn remove_image(&mut self, id: Uuid) -> Result<Image> {
+        let i = self
+            .images
+            .iter()
+            .position(|i| i.id == id)
+            .ok_or_else(|| not_found("Bild", id))?;
+        Ok(self.images.remove(i))
     }
 
     // ---- Konstanz ----

@@ -16,7 +16,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | MCP-Server | offen |
+| 2 | `pixel-mcp`: MCP-Server mit 16 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | Editor (egui) | offen |
 | 4 | GIF- und WebM-Export, indizierte PNGs | offen |
 
@@ -25,6 +25,9 @@ Claude (oder eine andere KI) über MCP steuern kann.
 ```
 crates/
   pixel-core/   Gemeinsamer Kern für Editor und MCP-Server
+  pixel-mcp/    MCP-Server (Programm `pixelart-mcp`)
+docs/
+  MCP-EINRICHTUNG.md   So verbindest du Claude mit dem Studio
 ```
 
 Wichtige Typen in `pixel-core`:
@@ -34,6 +37,15 @@ Wichtige Typen in `pixel-core`:
 - `Animation`: gehört zu einer Figur, jeder Frame startet als Kopie der Grundpose.
 - `Project`: Figuren, Animationen, freie Bilder und Paletten in einer `.pxproj`-Datei. `validate()` meldet jede Abweichung einer Animation von ihrer Figur.
 - `CharacterBundle`: einzelne Figur als `.pxchar`-Datei, um sie unverändert in andere Projekte zu übernehmen.
+
+## Mit Claude verbinden
+
+Siehe [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md). Kurz: `pixelart-mcp.exe` in Claude Desktop
+oder Claude Code als MCP-Server eintragen, danach kann Claude Projekte anlegen, Figuren zeichnen,
+animieren und exportieren.
+
+Die Windows-exe wird bei jedem Push automatisch von GitHub Actions gebaut (Artefakt
+`pixelart-mcp-windows`). Selbst bauen: `cargo build --release -p pixel-mcp`.
 
 ## Ausprobieren
 

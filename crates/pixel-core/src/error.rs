@@ -23,6 +23,8 @@ pub enum Error {
     PaletteFull(usize),
     #[error("Palette ist gesperrt; Farbe {0} ist nicht enthalten")]
     ColorNotInPalette(crate::Rgba),
+    #[error("Palette ist gesperrt, weil sie zu einer Figur gehört")]
+    PaletteLocked,
     #[error("Eine Figur braucht eine Palette mit mindestens einer Farbe")]
     EmptyPalette,
     #[error("Koordinate oder Größe {0} liegt zu weit außerhalb des Bildes (erlaubt: ±{limit})", limit = crate::draw::COORD_LIMIT)]

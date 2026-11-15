@@ -10,7 +10,11 @@ use crate::{Result, Rgba, Sprite};
 pub const COORD_LIMIT: i64 = 16 * crate::MAX_SIZE as i64;
 
 fn check_coords(values: &[i64]) -> Result<()> {
-    match values.iter().find(|v| v.abs() > COORD_LIMIT) {
+    // Bereichsprüfung statt abs(): i64::MIN hat keinen positiven Betrag.
+    match values
+        .iter()
+        .find(|v| !(-COORD_LIMIT..=COORD_LIMIT).contains(*v))
+    {
         Some(&v) => Err(crate::Error::CoordOutOfRange(v)),
         None => Ok(()),
     }
@@ -193,22 +197,31 @@ pub fn replace_color(s: &mut Sprite, t: Target, from: Rgba, to: Rgba) -> Result<
     Ok(count)
 }
 
-/// Verschiebt den Inhalt einer Ebene um `(dx, dy)` Pixel. Was aus dem Bild fällt, geht verloren.
+/// Verschiebt den Inhalt einer Ebene um `(dx, dy)` Pixel. Was aus dem Bild fällt, geht verloren;
+/// zurückgegeben wird die Anzahl der so verlorenen Pixel.
 /// Praktisch für Animationen (z. B. Oberkörper beim Atmen 1 Pixel anheben).
-pub fn shift(s: &mut Sprite, t: Target, dx: i64, dy: i64) -> Result<()> {
+pub fn shift(s: &mut Sprite, t: Target, dx: i64, dy: i64) -> Result<usize> {
     let l = s.layer_mut(t.frame, t.layer)?;
     let (w, h) = (l.width() as i64, l.height() as i64);
     let old = l.pixels().to_vec();
     l.clear();
+    let mut lost = 0;
     for y in 0..h {
         for x in 0..w {
             let p = old[(y * w + x) as usize];
-            if !p.is_transparent() {
-                l.set_clipped(x.saturating_add(dx), y.saturating_add(dy), p);
+            if p.is_transparent() {
+                continue;
+            }
+            // saturating_add: auch absurde Verschiebungen dürfen nicht überlaufen.
+            let (nx, ny) = (x.saturating_add(dx), y.saturating_add(dy));
+            if l.in_bounds(nx, ny) {
+                l.set_clipped(nx, ny, p);
+            } else {
+                lost += 1;
             }
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
 /// Spiegelt eine Ebene horizontal (z. B. für die Blickrichtung).

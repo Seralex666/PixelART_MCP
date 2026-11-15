@@ -79,6 +79,10 @@ impl Palette {
         self.colors = out;
     }
 
+    pub fn is_full(&self) -> bool {
+        self.colors.len() >= Self::MAX_COLORS
+    }
+
     /// Standard-Startpalette mit 16 Farben (eigene Auswahl, für Figuren und Umgebung).
     pub fn default_16() -> Self {
         let hex = [
