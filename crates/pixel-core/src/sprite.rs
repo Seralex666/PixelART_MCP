@@ -71,11 +71,50 @@ impl Sprite {
     }
 
     pub fn layer(&self, frame: usize, layer: usize) -> Result<&Layer> {
-        self.frame(frame)?.layers.get(layer).ok_or(Error::NoSuchLayer(layer))
+        self.frame(frame)?
+            .layers
+            .get(layer)
+            .ok_or(Error::NoSuchLayer(layer))
     }
 
     pub fn layer_mut(&mut self, frame: usize, layer: usize) -> Result<&mut Layer> {
-        self.frame_mut(frame)?.layers.get_mut(layer).ok_or(Error::NoSuchLayer(layer))
+        self.frame_mut(frame)?
+            .layers
+            .get_mut(layer)
+            .ok_or(Error::NoSuchLayer(layer))
+    }
+
+    /// Index der Ebene mit diesem Namen (Groß- und Kleinschreibung egal).
+    pub fn layer_index(&self, name: &str) -> Option<usize> {
+        self.layer_names()
+            .iter()
+            .position(|n| n.eq_ignore_ascii_case(name))
+    }
+
+    /// Ersetzt die Palette und passt alle vorhandenen Pixel an die neue Palette
+    /// bzw. Farbtiefe an. Bei gesperrter Palette (Figuren) nicht erlaubt.
+    pub fn set_palette(&mut self, palette: Palette) -> Result<()> {
+        if self.palette.locked {
+            return Err(Error::PaletteLocked);
+        }
+        self.palette = palette;
+        if self.depth == ColorDepth::Indexed8 {
+            // Im 8-Bit-Modus müssen alle Pixel aus der neuen Palette stammen.
+            let pal = self.palette.clone();
+            for f in &mut self.frames {
+                for l in &mut f.layers {
+                    l.map_pixels(|p| pal.nearest(p));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Kopiert den Inhalt eines Frames in einen anderen (Dauer bleibt erhalten).
+    pub fn copy_frame(&mut self, from: usize, to: usize) -> Result<()> {
+        let layers = self.frame(from)?.layers.clone();
+        self.frame_mut(to)?.layers = layers;
+        Ok(())
     }
 
     /// Bringt eine Farbe auf die Farbtiefe des Sprites.
@@ -95,7 +134,11 @@ impl Sprite {
         }
         match self.depth {
             ColorDepth::Indexed8 => {
-                let c = if c.a < 128 { Rgba::TRANSPARENT } else { Rgba { a: 255, ..c } };
+                let c = if c.a < 128 {
+                    Rgba::TRANSPARENT
+                } else {
+                    Rgba { a: 255, ..c }
+                };
                 if c.is_transparent() {
                     return c;
                 }
@@ -110,7 +153,14 @@ impl Sprite {
     }
 
     /// Setzt einen Pixel mit Farbtiefen-Anpassung.
-    pub fn set_pixel(&mut self, frame: usize, layer: usize, x: i64, y: i64, c: Rgba) -> Result<Rgba> {
+    pub fn set_pixel(
+        &mut self,
+        frame: usize,
+        layer: usize,
+        x: i64,
+        y: i64,
+        c: Rgba,
+    ) -> Result<Rgba> {
         let c = self.conform(c);
         self.layer_mut(frame, layer)?.set(x, y, c)?;
         Ok(c)
@@ -120,7 +170,8 @@ impl Sprite {
     pub fn add_layer(&mut self, name: impl Into<String>) -> usize {
         let name = name.into();
         for f in &mut self.frames {
-            f.layers.push(Layer::new(name.clone(), self.width, self.height));
+            f.layers
+                .push(Layer::new(name.clone(), self.width, self.height));
         }
         self.layer_count() - 1
     }
@@ -153,7 +204,10 @@ impl Sprite {
             .into_iter()
             .map(|n| Layer::new(n, self.width, self.height))
             .collect();
-        self.frames.push(Frame { duration_ms: Self::DEFAULT_FRAME_MS, layers });
+        self.frames.push(Frame {
+            duration_ms: Self::DEFAULT_FRAME_MS,
+            layers,
+        });
         self.frames.len() - 1
     }
 
@@ -196,7 +250,10 @@ impl Sprite {
                 let src = if l.opacity == 255 {
                     src
                 } else {
-                    Rgba { a: (src.a as u32 * l.opacity as u32 / 255) as u8, ..src }
+                    Rgba {
+                        a: (src.a as u32 * l.opacity as u32 / 255) as u8,
+                        ..src
+                    }
                 };
                 *dst = src.over(*dst);
             }
@@ -213,7 +270,9 @@ impl Sprite {
         let names = self.layer_names();
         for f in &self.frames {
             if f.layers.len() != names.len() {
-                return Err(Error::InvalidPixelData("Frames haben unterschiedlich viele Ebenen".into()));
+                return Err(Error::InvalidPixelData(
+                    "Frames haben unterschiedlich viele Ebenen".into(),
+                ));
             }
             for l in &f.layers {
                 l.check_consistent()?;

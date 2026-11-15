@@ -57,7 +57,16 @@ pub fn line(s: &mut Sprite, t: Target, from: (i64, i64), to: (i64, i64), c: Rgba
 
 /// Rechteck. `w` und `h` sind die Größe in Pixeln; `filled` füllt die Fläche.
 #[allow(clippy::too_many_arguments)]
-pub fn rect(s: &mut Sprite, t: Target, x: i64, y: i64, w: u32, h: u32, c: Rgba, filled: bool) -> Result<()> {
+pub fn rect(
+    s: &mut Sprite,
+    t: Target,
+    x: i64,
+    y: i64,
+    w: u32,
+    h: u32,
+    c: Rgba,
+    filled: bool,
+) -> Result<()> {
     let c = s.conform(c);
     let l = s.layer_mut(t.frame, t.layer)?;
     if w == 0 || h == 0 {
@@ -81,7 +90,16 @@ pub fn rect(s: &mut Sprite, t: Target, x: i64, y: i64, w: u32, h: u32, c: Rgba, 
 
 /// Ellipse, die genau in das Rechteck `x, y, w, h` passt.
 #[allow(clippy::too_many_arguments)]
-pub fn ellipse(s: &mut Sprite, t: Target, x: i64, y: i64, w: u32, h: u32, c: Rgba, filled: bool) -> Result<()> {
+pub fn ellipse(
+    s: &mut Sprite,
+    t: Target,
+    x: i64,
+    y: i64,
+    w: u32,
+    h: u32,
+    c: Rgba,
+    filled: bool,
+) -> Result<()> {
     let c = s.conform(c);
     let l = s.layer_mut(t.frame, t.layer)?;
     if w == 0 || h == 0 {
@@ -110,7 +128,11 @@ pub fn ellipse(s: &mut Sprite, t: Target, x: i64, y: i64, w: u32, h: u32, c: Rgb
         // Umriss: Randpixel der Zeile plus alles, was über die Nachbarzeilen hinausragt,
         // damit der Umriss oben und unten geschlossen ist.
         let neighbour = |r: Option<&Option<(i64, i64)>>| r.and_then(|s| *s);
-        let above = if row == 0 { None } else { neighbour(rows.get(row - 1)) };
+        let above = if row == 0 {
+            None
+        } else {
+            neighbour(rows.get(row - 1))
+        };
         let below = neighbour(rows.get(row + 1));
         for px in left..=right {
             let inside = |n: Option<(i64, i64)>| n.is_some_and(|(nl, nr)| px > nl && px < nr);
@@ -161,22 +183,31 @@ pub fn replace_color(s: &mut Sprite, t: Target, from: Rgba, to: Rgba) -> Result<
     Ok(count)
 }
 
-/// Verschiebt den Inhalt einer Ebene um `(dx, dy)` Pixel. Was aus dem Bild fällt, geht verloren.
+/// Verschiebt den Inhalt einer Ebene um `(dx, dy)` Pixel. Was aus dem Bild fällt, geht verloren;
+/// zurückgegeben wird die Anzahl der so verlorenen Pixel.
 /// Praktisch für Animationen (z. B. Oberkörper beim Atmen 1 Pixel anheben).
-pub fn shift(s: &mut Sprite, t: Target, dx: i64, dy: i64) -> Result<()> {
+pub fn shift(s: &mut Sprite, t: Target, dx: i64, dy: i64) -> Result<usize> {
     let l = s.layer_mut(t.frame, t.layer)?;
     let (w, h) = (l.width() as i64, l.height() as i64);
     let old = l.pixels().to_vec();
     l.clear();
+    let mut lost = 0;
     for y in 0..h {
         for x in 0..w {
             let p = old[(y * w + x) as usize];
-            if !p.is_transparent() {
-                l.set_clipped(x + dx, y + dy, p);
+            if p.is_transparent() {
+                continue;
+            }
+            // saturating_add: auch absurde Verschiebungen dürfen nicht überlaufen.
+            let (nx, ny) = (x.saturating_add(dx), y.saturating_add(dy));
+            if l.in_bounds(nx, ny) {
+                l.set_clipped(nx, ny, p);
+            } else {
+                lost += 1;
             }
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
 /// Spiegelt eine Ebene horizontal (z. B. für die Blickrichtung).

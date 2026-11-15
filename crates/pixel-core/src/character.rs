@@ -23,7 +23,13 @@ pub struct Character {
 }
 
 impl Character {
-    pub fn new(name: impl Into<String>, width: u32, height: u32, depth: ColorDepth, palette: Palette) -> Result<Self> {
+    pub fn new(
+        name: impl Into<String>,
+        width: u32,
+        height: u32,
+        depth: ColorDepth,
+        palette: Palette,
+    ) -> Result<Self> {
         let mut palette = palette;
         palette.locked = true;
         let mut base = Sprite::new(width, height, depth, palette)?;

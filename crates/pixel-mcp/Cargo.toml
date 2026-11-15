@@ -1,0 +1,22 @@
+[package]
+name = "pixel-mcp"
+description = "MCP server for PixelART MCP: lets Claude and other MCP clients draw real pixel art."
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "pixelart-mcp"
+path = "src/main.rs"
+
+[dependencies]
+pixel-core = { path = "../pixel-core" }
+rmcp = { version = "3.10", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+serde.workspace = true
+serde_json.workspace = true
+schemars = "1"
+uuid.workspace = true
+base64.workspace = true
+dirs = "7"
+image.workspace = true

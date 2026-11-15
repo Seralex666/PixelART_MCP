@@ -7,7 +7,12 @@ pub enum Error {
     #[error("ungültige Bildgröße {width}×{height} (erlaubt: 1 bis {max})", max = crate::MAX_SIZE)]
     InvalidSize { width: u32, height: u32 },
     #[error("Pixel ({x}, {y}) liegt außerhalb des Bildes {width}×{height}")]
-    OutOfBounds { x: i64, y: i64, width: u32, height: u32 },
+    OutOfBounds {
+        x: i64,
+        y: i64,
+        width: u32,
+        height: u32,
+    },
     #[error("Ebene {0} existiert nicht")]
     NoSuchLayer(usize),
     #[error("Frame {0} existiert nicht")]
@@ -18,8 +23,15 @@ pub enum Error {
     PaletteFull(usize),
     #[error("Palette ist gesperrt; Farbe {0} ist nicht enthalten")]
     ColorNotInPalette(crate::Rgba),
+    #[error("Palette ist gesperrt, weil sie zu einer Figur gehört")]
+    PaletteLocked,
     #[error("Größe passt nicht: erwartet {expected_w}×{expected_h}, bekommen {got_w}×{got_h}")]
-    SizeMismatch { expected_w: u32, expected_h: u32, got_w: u32, got_h: u32 },
+    SizeMismatch {
+        expected_w: u32,
+        expected_h: u32,
+        got_w: u32,
+        got_h: u32,
+    },
     #[error("ungültige Farbe '{0}' (erwartet #RRGGBB oder #RRGGBBAA)")]
     InvalidColor(String),
     #[error("ungültige Pixeldaten: {0}")]

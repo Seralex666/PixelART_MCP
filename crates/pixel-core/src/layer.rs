@@ -13,7 +13,7 @@ pub struct Layer {
     pub opacity: u8,
     width: u32,
     height: u32,
-    /// Pixel zeilenweise von links oben, gespeichert als Base64 von RGBA-Bytes.
+    /// Pixel zeilenweise von links oben, gespeichert als komprimierte RGBA-Bytes in Base64.
     #[serde(with = "pixel_data")]
     pixels: Vec<Rgba>,
 }
@@ -55,7 +55,12 @@ impl Layer {
 
     fn index(&self, x: i64, y: i64) -> Result<usize> {
         if !self.in_bounds(x, y) {
-            return Err(Error::OutOfBounds { x, y, width: self.width, height: self.height });
+            return Err(Error::OutOfBounds {
+                x,
+                y,
+                width: self.width,
+                height: self.height,
+            });
         }
         Ok(y as usize * self.width as usize + x as usize)
     }
@@ -123,20 +128,50 @@ impl Layer {
 
 mod pixel_data {
     use super::*;
+    use std::io::{Read, Write};
 
-    pub fn serialize<S: serde::Serializer>(px: &[Rgba], s: S) -> std::result::Result<S::Ok, S::Error> {
+    /// Obergrenze für entpackte Pixeldaten einer Ebene (1024 × 1024 × 4 Bytes).
+    const MAX_BYTES: u64 = (crate::MAX_SIZE as u64) * (crate::MAX_SIZE as u64) * 4;
+
+    // Pixel werden als zlib-komprimierte RGBA-Bytes in Base64 gespeichert.
+    // Pixel-Art besteht aus großen einfarbigen Flächen und schrumpft dadurch stark.
+    pub fn serialize<S: serde::Serializer>(
+        px: &[Rgba],
+        s: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         let bytes: Vec<u8> = px.iter().flat_map(|p| p.to_array()).collect();
-        s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        enc.write_all(&bytes).map_err(serde::ser::Error::custom)?;
+        let packed = enc.finish().map_err(serde::ser::Error::custom)?;
+        s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(packed))
     }
 
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<Rgba>, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        d: D,
+    ) -> std::result::Result<Vec<Rgba>, D::Error> {
         let s = String::deserialize(d)?;
-        let bytes = base64::engine::general_purpose::STANDARD
+        let packed = base64::engine::general_purpose::STANDARD
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
-        if bytes.len() % 4 != 0 {
-            return Err(serde::de::Error::custom("Pixeldaten sind kein Vielfaches von 4 Bytes"));
+        let mut bytes = Vec::new();
+        // Ein Byte mehr lesen als erlaubt, um übergroße Daten sicher zu erkennen.
+        flate2::read::ZlibDecoder::new(packed.as_slice())
+            .take(MAX_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(serde::de::Error::custom)?;
+        if bytes.len() as u64 > MAX_BYTES {
+            return Err(serde::de::Error::custom(
+                "Pixeldaten sind größer als 1024×1024",
+            ));
         }
-        Ok(bytes.chunks_exact(4).map(|c| Rgba::new(c[0], c[1], c[2], c[3])).collect())
+        if bytes.len() % 4 != 0 {
+            return Err(serde::de::Error::custom(
+                "Pixeldaten sind kein Vielfaches von 4 Bytes",
+            ));
+        }
+        Ok(bytes
+            .chunks_exact(4)
+            .map(|c| Rgba::new(c[0], c[1], c[2], c[3]))
+            .collect())
     }
 }
