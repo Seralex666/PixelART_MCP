@@ -169,6 +169,14 @@ impl App {
         match Doc::open(&self.ws, name) {
             Ok(doc) => {
                 self.doc = Some(doc);
+                // Ein neu geöffnetes Projekt zählt seine Änderungen wieder von vorn, und
+                // übernommene Figuren behalten ihre Kennung. Alte Bilder im Zwischenspeicher
+                // könnten deshalb für die des neuen Projekts gehalten werden.
+                self.textures.main = None;
+                self.textures.onion = None;
+                self.textures.thumbs = None;
+                self.stroke = None;
+                self.playing = false;
                 self.sel = None;
                 self.fix_selection();
                 self.fit_color();
@@ -273,6 +281,9 @@ impl App {
             }
         }
         ctx.request_repaint_after_secs(POLL_SECONDS as f32);
+        if let Some(notice) = self.doc.as_mut().and_then(|d| d.take_notice()) {
+            self.error(notice);
+        }
 
         if self.playing {
             let durations: Vec<u32> = self
@@ -282,11 +293,21 @@ impl App {
             if durations.len() < 2 {
                 self.playing = false;
             } else {
+                // Freie Bilder und Figuren laufen in der Vorschau im Kreis. Animationen
+                // richten sich danach, ob sie wiederholt werden sollen.
+                let looping = self.looping().unwrap_or(true);
+                let last = durations.len() - 1;
                 self.play_clock += dt.min(0.25) * 1000.0;
-                self.frame %= durations.len();
-                while self.play_clock >= durations[self.frame] as f32 {
+                self.frame = self.frame.min(last);
+                while self.playing && self.play_clock >= durations[self.frame] as f32 {
                     self.play_clock -= durations[self.frame] as f32;
-                    self.frame = (self.frame + 1) % durations.len();
+                    if self.frame < last {
+                        self.frame += 1;
+                    } else if looping {
+                        self.frame = 0;
+                    } else {
+                        self.playing = false;
+                    }
                 }
                 ctx.request_repaint();
             }
@@ -345,6 +366,17 @@ impl App {
     fn toggle_play(&mut self) {
         self.playing = !self.playing;
         self.play_clock = 0.0;
+        // Eine Animation ohne Wiederholung steht nach dem Abspielen am Ende:
+        // dann von vorn beginnen.
+        let frames = self.sprite().map_or(0, |s| s.frames().len());
+        if self.playing && self.looping() == Some(false) && self.frame + 1 >= frames {
+            self.frame = 0;
+        }
+    }
+
+    /// Ob die gewählte Animation wiederholt wird; `None` bei Figuren und Bildern.
+    fn looping(&self) -> Option<bool> {
+        self.doc.as_ref()?.looping(self.sel?)
     }
 
     fn take_shot(&mut self, ctx: &egui::Context) {
@@ -828,8 +860,15 @@ impl App {
                 .add_enabled(layers.len() < MAX_LAYERS, egui::Button::new("+ Ebene"))
                 .clicked()
             {
-                let name = format!("Ebene {}", layers.len() + 1);
-                if let Some(i) = self.edit(|s| Ok(s.add_layer(name))) {
+                // Der Name wird erst in der Änderung gewählt, also nach dem Abgleich mit
+                // der Datei. Der MCP-Server findet Ebenen über ihren Namen.
+                if let Some(i) = self.edit(|s| {
+                    let name = (s.layer_count() + 1..)
+                        .map(|n| format!("Ebene {n}"))
+                        .find(|name| s.layer_index(name).is_none())
+                        .unwrap_or_default();
+                    Ok(s.add_layer(name))
+                }) {
                     self.layer = i;
                 }
             }
@@ -872,6 +911,18 @@ impl App {
                 self.toggle_play();
             }
             ui.label(format!("Frame {} von {n}", self.frame + 1));
+            if let (Some(mut looping), Some(id)) = (self.looping(), self.sel) {
+                if ui
+                    .checkbox(&mut looping, "Schleife")
+                    .on_hover_text("Ob die Animation nach dem letzten Frame von vorn beginnt")
+                    .changed()
+                {
+                    let result = self.doc.as_mut().map(|d| d.set_looping(id.id, looping));
+                    if let Some(result) = result {
+                        self.check(result);
+                    }
+                }
+            }
             ui.separator();
             if ui
                 .add_enabled(n < MAX_FRAMES, egui::Button::new("+ Frame"))

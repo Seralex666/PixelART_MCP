@@ -6,7 +6,9 @@
 
 use pixel_core::draw::{self, Target};
 use pixel_core::project::CharacterBundle;
-use pixel_core::workspace::{self, ExportFormat, NameClash, ProjectNameError, Workspace};
+use pixel_core::workspace::{
+    self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
+};
 use pixel_core::{
     export, template, Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba,
     Sprite, TEMPLATES,
@@ -175,6 +177,14 @@ impl Studio {
         Project::load(&path).map_err(e)
     }
 
+    /// Lädt ein Projekt, um es zu ändern. Die Sperre hält den Editor und andere
+    /// Server davon ab, zwischen Laden und Speichern dazwischenzuschreiben.
+    fn load_locked(&self, name: &str) -> Res<(ProjectLock, Project)> {
+        self.project_path(name)?;
+        let lock = self.ws.lock(name).map_err(e)?;
+        Ok((lock, self.load(name)?))
+    }
+
     fn save(&self, name: &str, p: &Project) -> Res<()> {
         p.save(&self.project_path(name)?).map_err(e)
     }
@@ -205,6 +215,7 @@ impl Studio {
 
     pub fn create_project(&self, name: &str) -> Res {
         let path = self.project_path(name)?;
+        let _lock = self.ws.lock(name).map_err(e)?;
         if path.exists() {
             return Err(format!("project '{name}' already exists"));
         }
@@ -427,7 +438,7 @@ impl Studio {
         palette_preset: Option<&str>,
         palette: Option<&[String]>,
     ) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let name = Self::check_new_name(&p, name)?;
         let (w, h) = Self::size(template_id, width, height)?;
         let depth = Self::depth(depth_bits)?;
@@ -455,7 +466,7 @@ impl Studio {
         palette: Option<&[String]>,
         layers: Option<&[String]>,
     ) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let name = Self::check_new_name(&p, name)?;
         let (w, h) = Self::size(template_id, width, height)?;
         let depth = Self::depth(depth_bits)?;
@@ -495,7 +506,7 @@ impl Studio {
         kind: &str,
         frames: Option<usize>,
     ) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let AssetRef::Character(cid) = Self::resolve(&p, character)? else {
             return Err(format!("'{character}' is not a character"));
         };
@@ -523,7 +534,7 @@ impl Studio {
     }
 
     pub fn delete_asset(&self, project: &str, asset: &str) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
         let name = Self::asset_name(&p, r);
         let extra = match r {
@@ -554,7 +565,7 @@ impl Studio {
             return Err(format!("'{character}' is not a character"));
         };
         let bundle: CharacterBundle = src.export_character(cid).map_err(e)?;
-        let mut dst = self.load(to_project)?;
+        let (_lock, mut dst) = self.load_locked(to_project)?;
         let replaced = dst.characters.iter().any(|c| c.id == cid);
         // Namen prüfen gegen alles, was im Zielprojekt bestehen bleibt. Die Figur
         // selbst und ihre bisherigen Animationen werden ersetzt und zählen nicht.
@@ -646,7 +657,7 @@ impl Studio {
         if ops.len() > MAX_OPS {
             return Err(format!("at most {MAX_OPS} ops per call"));
         }
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
         let s = Self::sprite_mut(&mut p, r)?;
         let f = Self::frame_index(s, frame)?;
@@ -825,7 +836,7 @@ impl Studio {
         visible: Option<bool>,
         opacity: Option<u8>,
     ) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
         let s = Self::sprite_mut(&mut p, r)?;
         let need_name = || {
@@ -905,7 +916,7 @@ impl Studio {
         duration_ms: Option<u32>,
         looping: Option<bool>,
     ) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
         if matches!(r, AssetRef::Character(_)) && matches!(action, "add" | "duplicate") {
             return Err(
@@ -992,7 +1003,7 @@ impl Studio {
         if preset.is_none() && colors.is_none() {
             return Err("give `palette_preset` or `palette`".into());
         }
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
         if !matches!(r, AssetRef::Image(_)) {
             return Err("character palettes are fixed to keep the character consistent. Use add_character_colors to extend one.".into());
@@ -1013,7 +1024,7 @@ impl Studio {
     }
 
     pub fn add_character_colors(&self, project: &str, character: &str, colors: &[String]) -> Res {
-        let mut p = self.load(project)?;
+        let (_lock, mut p) = self.load_locked(project)?;
         let AssetRef::Character(cid) = Self::resolve(&p, character)? else {
             return Err(format!("'{character}' is not a character"));
         };

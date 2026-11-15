@@ -12,6 +12,15 @@ pub const DEFAULT_FOLDER: &str = "PixelArt Studio";
 /// Liegt ein Ordner dieses Namens neben dem Programm, ist er der Arbeitsordner.
 pub const PORTABLE_FOLDER: &str = "Projekte";
 
+/// Unterordner für die Sperrdateien der Projekte.
+const LOCK_FOLDER: &str = ".locks";
+
+/// Hält ein Projekt gesperrt, solange der Wert lebt (siehe [`Workspace::lock`]).
+#[derive(Debug)]
+pub struct ProjectLock {
+    _file: std::fs::File,
+}
+
 #[derive(Clone, Debug)]
 pub struct Workspace {
     home: PathBuf,
@@ -49,10 +58,41 @@ pub enum NameClash {
 
 impl Workspace {
     /// Öffnet den Arbeitsordner und legt ihn bei Bedarf an.
+    ///
+    /// Ein relativer Pfad wird sofort zum absoluten gemacht. Sonst würde ein anderes
+    /// Programm (etwa der von Claude gestartete MCP-Server) denselben Text von seinem
+    /// eigenen Startordner aus deuten und in einem anderen Ordner landen.
     pub fn open(home: impl Into<PathBuf>) -> Result<Self> {
-        let home = home.into();
+        let home = std::path::absolute(home.into())?;
         std::fs::create_dir_all(&home)?;
         Ok(Self { home })
+    }
+
+    /// Sperrt ein Projekt für andere Programme, bis die Sperre fallen gelassen wird.
+    ///
+    /// Editor und MCP-Server lesen eine Projektdatei, ändern sie und schreiben sie
+    /// zurück. Ohne Sperre könnte dazwischen der jeweils andere speichern, und dessen
+    /// Änderung ginge verloren. Wer speichert, hält die Sperre deshalb vom Lesen bis
+    /// zum Schreiben. Endet ein Programm, gibt das Betriebssystem die Sperre frei.
+    pub fn lock(&self, name: &str) -> Result<ProjectLock> {
+        self.project_path(name)?;
+        let dir = self.home.join(LOCK_FOLDER);
+        std::fs::create_dir_all(&dir)?;
+        // Kleinschreibung, damit "Spiel" und "spiel" unter Windows dieselbe Sperre teilen:
+        // dort ist es auch dieselbe Projektdatei.
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(dir.join(format!("{}.lock", name.trim().to_lowercase())))?;
+        match file.lock() {
+            Ok(()) => {}
+            // Manche Netzlaufwerke kennen keine Sperren. Dann lieber ohne arbeiten,
+            // als gar nicht speichern zu können.
+            Err(err) if err.kind() == std::io::ErrorKind::Unsupported => {}
+            Err(err) => return Err(err.into()),
+        }
+        Ok(ProjectLock { _file: file })
     }
 
     /// Der Standard-Arbeitsordner, in dieser Reihenfolge:
@@ -120,6 +160,7 @@ impl Workspace {
     /// Legt ein neues, leeres Projekt an.
     pub fn create(&self, name: &str) -> Result<Project> {
         let path = self.project_path(name)?;
+        let _lock = self.lock(name)?;
         if path.exists() {
             return Err(Error::InvalidName(format!(
                 "Ein Projekt namens '{}' gibt es schon",

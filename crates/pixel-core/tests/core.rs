@@ -680,4 +680,43 @@ mod workspace {
             .export("../x", "Held 1", &s, ExportFormat::Png, None, 1)
             .is_err());
     }
+
+    #[test]
+    fn a_relative_home_becomes_absolute() {
+        let name = format!("pixelart-rel-{}", uuid::Uuid::new_v4());
+        let ws = Workspace::open(std::path::Path::new("target").join(&name)).unwrap();
+        assert!(ws.home().is_absolute());
+        assert!(ws
+            .home()
+            .ends_with(std::path::Path::new("target").join(&name)));
+        std::fs::remove_dir(ws.home()).unwrap();
+    }
+
+    #[test]
+    fn a_project_lock_keeps_others_out_until_it_is_dropped() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let ws = temp();
+        ws.create("Spiel").unwrap();
+        let lock = ws.lock("Spiel").unwrap();
+        // Ein anderes Projekt ist davon nicht betroffen.
+        ws.create("Anderes").unwrap();
+        drop(ws.lock("Anderes").unwrap());
+
+        let got_it = Arc::new(AtomicBool::new(false));
+        let waiter = {
+            let (ws, got_it) = (ws.clone(), got_it.clone());
+            std::thread::spawn(move || {
+                // Gleiche Datei unter Windows, also dieselbe Sperre.
+                let _lock = ws.lock(" SPIEL ").unwrap();
+                got_it.store(true, Ordering::SeqCst);
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        assert!(!got_it.load(Ordering::SeqCst), "die Sperre hält nicht");
+        drop(lock);
+        waiter.join().unwrap();
+        assert!(got_it.load(Ordering::SeqCst));
+        assert!(ws.lock("../x").is_err());
+    }
 }

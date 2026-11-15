@@ -476,9 +476,25 @@ fn rename_layer(app: &mut App, ui: &mut egui::Ui, layer: usize, name: &mut Strin
     if !ok {
         return Outcome::Keep;
     }
+    let (Some(doc), Some(id)) = (&mut app.doc, app.sel) else {
+        return Outcome::Close;
+    };
     let new_name = name.trim().to_string();
-    app.edit(|s| s.rename_layer(layer, new_name).map_err(|e| e.to_string()));
-    Outcome::Close
+    let renamed = doc.edit(id, |s| {
+        // Dieselben Regeln wie im MCP-Server, der Ebenen über ihren Namen findet.
+        if new_name.len() > 64 {
+            return Err("Der Name darf höchstens 64 Zeichen lang sein".into());
+        }
+        if s.layer_index(&new_name).is_some_and(|other| other != layer) {
+            return Err(format!("Eine Ebene namens „{new_name}“ gibt es schon"));
+        }
+        s.rename_layer(layer, new_name.clone())
+            .map_err(|e| e.to_string())
+    });
+    finish(app, renamed, |app, ()| {
+        app.fix_selection();
+        app.info("Ebene umbenannt");
+    })
 }
 
 fn delete(app: &mut App, ui: &mut egui::Ui, id: AssetId) -> Outcome {
