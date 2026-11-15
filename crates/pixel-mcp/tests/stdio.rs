@@ -421,3 +421,147 @@ fn bad_input_gives_helpful_errors_and_saves_nothing() {
     // Der Server lebt noch.
     c.ok("get_studio_info", json!({}));
 }
+
+#[test]
+fn extreme_coordinates_do_not_hang_or_crash_the_server() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Bild", "width": 4, "height": 4}),
+    );
+    for v in [i64::MIN, i64::MAX] {
+        c.err("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "line", "color": "#ff0000", "from": [v, 0], "to": [0, 0]}]}));
+        c.err("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "rect", "color": "#ff0000", "x": v, "y": 0, "w": 2, "h": 2}]}));
+        c.err("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "ellipse", "color": "#ff0000", "x": 0, "y": v, "w": 2, "h": 2}]}));
+    }
+    c.ok("get_studio_info", json!({}));
+}
+
+#[test]
+fn pixels_read_as_text_can_be_edited_and_written_back() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Bild", "width": 3, "height": 1}),
+    );
+    c.ok("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "rect", "color": "#ff0000", "x": 0, "y": 0, "w": 3, "h": 1, "filled": true}]}));
+    let px: Value = serde_json::from_str(
+        &c.ok("get_pixels", json!({"project": "P", "asset": "Bild"}))
+            .text,
+    )
+    .unwrap();
+    assert_eq!(px["rows"], json!(["aaa"]));
+    assert_eq!(px["legend"]["."], "transparent");
+    // Mittleren Pixel im Text löschen und mit der gelieferten Legende zurückschreiben.
+    c.ok("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "grid", "rows": ["a.a"], "legend": px["legend"]}]}));
+    let px: Value = serde_json::from_str(
+        &c.ok("get_pixels", json!({"project": "P", "asset": "Bild"}))
+            .text,
+    )
+    .unwrap();
+    assert_eq!(px["rows"], json!(["a.a"]));
+    // Ohne Eintrag für '.' bleibt der Pixel dagegen unverändert.
+    c.ok("draw", json!({"project": "P", "asset": "Bild", "ops": [{"op": "grid", "rows": ["..."], "legend": {"x": "#00ff00"}}]}));
+    let px: Value = serde_json::from_str(
+        &c.ok("get_pixels", json!({"project": "P", "asset": "Bild"}))
+            .text,
+    )
+    .unwrap();
+    assert_eq!(px["rows"], json!(["a.a"]));
+}
+
+#[test]
+fn names_that_would_collide_are_rejected() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "A"}));
+    c.ok(
+        "create_image",
+        json!({"project": "A", "name": "Tile A", "width": 2, "height": 2}),
+    );
+    // Gleicher Dateiname beim Export: nicht erlaubt.
+    assert!(c
+        .err(
+            "create_image",
+            json!({"project": "A", "name": "tile_a", "width": 2, "height": 2})
+        )
+        .contains("too similar"));
+    c.err("create_project", json!({"project": "NUL"}));
+
+    // Kopieren: Kollision mit einem fremden Asset wird auch beim Aktualisieren erkannt.
+    c.ok(
+        "create_character",
+        json!({"project": "A", "name": "Held", "width": 4, "height": 4}),
+    );
+    c.ok("create_project", json!({"project": "B"}));
+    c.ok(
+        "copy_character",
+        json!({"from_project": "A", "character": "Held", "to_project": "B"}),
+    );
+    c.ok(
+        "create_image",
+        json!({"project": "B", "name": "Held walk", "width": 2, "height": 2}),
+    );
+    c.ok(
+        "create_animation",
+        json!({"project": "A", "character": "Held", "kind": "walk"}),
+    );
+    let msg = c.err(
+        "copy_character",
+        json!({"from_project": "A", "character": "Held", "to_project": "B"}),
+    );
+    assert!(msg.contains("Held walk"), "{msg}");
+    // Nach dem Aufräumen klappt die Aktualisierung, und nichts ist doppelt.
+    c.ok(
+        "delete_asset",
+        json!({"project": "B", "asset": "Held walk"}),
+    );
+    c.ok(
+        "copy_character",
+        json!({"from_project": "A", "character": "Held", "to_project": "B"}),
+    );
+    c.ok(
+        "copy_character",
+        json!({"from_project": "A", "character": "Held", "to_project": "B"}),
+    );
+    let proj: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "B"})).text).unwrap();
+    assert_eq!(proj["characters"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        proj["characters"][0]["animations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn layer_settings_survive_new_frames() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Bild", "width": 2, "height": 2}),
+    );
+    c.ok(
+        "edit_layers",
+        json!({"project": "P", "asset": "Bild", "action": "set", "layer": 0, "visible": false}),
+    );
+    c.ok(
+        "edit_frames",
+        json!({"project": "P", "asset": "Bild", "action": "add"}),
+    );
+    c.ok("draw", json!({"project": "P", "asset": "Bild", "frame": 1, "ops": [{"op": "pixels", "color": "#ff0000", "points": [[0, 0]]}]}));
+    // Die Ebene ist auch im neuen Frame unsichtbar: das Gesamtbild bleibt leer.
+    let px: Value = serde_json::from_str(
+        &c.ok(
+            "get_pixels",
+            json!({"project": "P", "asset": "Bild", "frame": 1}),
+        )
+        .text,
+    )
+    .unwrap();
+    assert_eq!(px["rows"], json!(["..", ".."]));
+}

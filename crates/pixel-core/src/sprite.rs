@@ -188,13 +188,25 @@ impl Sprite {
         Ok(())
     }
 
-    /// Hängt einen leeren Frame an (mit denselben Ebenen) und gibt seinen Index zurück.
+    /// Hängt einen leeren Frame an und gibt seinen Index zurück. Der neue Frame hat
+    /// dieselben Ebenen wie die vorhandenen, samt Sichtbarkeit und Deckkraft.
     pub fn add_frame(&mut self) -> usize {
+        let (w, h) = (self.width, self.height);
         let layers = self
-            .layer_names()
-            .into_iter()
-            .map(|n| Layer::new(n, self.width, self.height))
-            .collect();
+            .frames
+            .first()
+            .map(|f| {
+                f.layers
+                    .iter()
+                    .map(|l| {
+                        let mut new = Layer::new(l.name.clone(), w, h);
+                        new.visible = l.visible;
+                        new.opacity = l.opacity;
+                        new
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         self.frames.push(Frame {
             duration_ms: Self::DEFAULT_FRAME_MS,
             layers,

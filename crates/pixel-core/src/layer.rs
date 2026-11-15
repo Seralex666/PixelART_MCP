@@ -133,6 +133,10 @@ mod pixel_data {
     /// Obergrenze für entpackte Pixeldaten einer Ebene (1024 × 1024 × 4 Bytes).
     const MAX_BYTES: u64 = (crate::MAX_SIZE as u64) * (crate::MAX_SIZE as u64) * 4;
 
+    /// Kennung vor komprimierten Daten. Ohne Kennung sind es rohe RGBA-Bytes in
+    /// Base64, wie sie die erste Fassung des Formats geschrieben hat.
+    const ZLIB_TAG: &str = "z:";
+
     // Pixel werden als zlib-komprimierte RGBA-Bytes in Base64 gespeichert.
     // Pixel-Art besteht aus großen einfarbigen Flächen und schrumpft dadurch stark.
     pub fn serialize<S: serde::Serializer>(
@@ -143,22 +147,34 @@ mod pixel_data {
         let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(&bytes).map_err(serde::ser::Error::custom)?;
         let packed = enc.finish().map_err(serde::ser::Error::custom)?;
-        s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(packed))
+        let b64 = base64::engine::general_purpose::STANDARD.encode(packed);
+        s.serialize_str(&format!("{ZLIB_TAG}{b64}"))
     }
 
     pub fn deserialize<'de, D: serde::Deserializer<'de>>(
         d: D,
     ) -> std::result::Result<Vec<Rgba>, D::Error> {
         let s = String::deserialize(d)?;
-        let packed = base64::engine::general_purpose::STANDARD
-            .decode(s.as_bytes())
-            .map_err(serde::de::Error::custom)?;
-        let mut bytes = Vec::new();
-        // Ein Byte mehr lesen als erlaubt, um übergroße Daten sicher zu erkennen.
-        flate2::read::ZlibDecoder::new(packed.as_slice())
-            .take(MAX_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(serde::de::Error::custom)?;
+        let decode = |text: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(text.as_bytes())
+                .map_err(serde::de::Error::custom)
+        };
+        let bytes = match s.strip_prefix(ZLIB_TAG) {
+            Some(packed) => {
+                let packed = decode(packed)?;
+                let mut bytes = Vec::new();
+                // Ein Byte mehr lesen als erlaubt, um übergroße Daten sicher zu erkennen.
+                flate2::read::ZlibDecoder::new(packed.as_slice())
+                    .take(MAX_BYTES + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(serde::de::Error::custom)?;
+                bytes
+            }
+            // Ältere Dateien: unkomprimiert. ':' kommt in Base64 nicht vor,
+            // die beiden Formen sind also eindeutig unterscheidbar.
+            None => decode(&s)?,
+        };
         if bytes.len() as u64 > MAX_BYTES {
             return Err(serde::de::Error::custom(
                 "Pixeldaten sind größer als 1024×1024",

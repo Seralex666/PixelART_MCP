@@ -163,6 +163,11 @@ impl Studio {
                 "invalid project name '{name}': use 1 to 64 letters, digits, spaces, '-' or '_'"
             ));
         }
+        if is_reserved_file_name(name) {
+            return Err(format!(
+                "invalid project name '{name}': this name is reserved by Windows"
+            ));
+        }
         Ok(self.home.join(format!("{name}.{PROJECT_EXT}")))
     }
 
@@ -334,15 +339,23 @@ impl Studio {
         if name.is_empty() || name.len() > 64 {
             return Err("asset name must have 1 to 64 characters".into());
         }
-        if Self::asset_names(p)
-            .iter()
-            .any(|n| n.eq_ignore_ascii_case(name))
-        {
-            return Err(format!(
-                "an asset named '{name}' already exists in this project"
-            ));
-        }
+        Self::check_name_free(&Self::asset_names(p), name)?;
         Ok(name.to_string())
+    }
+
+    /// Ein Name ist frei, wenn kein vorhandenes Asset gleich heißt und auch keines
+    /// denselben Dateinamen beim Export ergäbe (z. B. "Tile A" und "Tile_A").
+    fn check_name_free(taken: &[String], name: &str) -> Res<()> {
+        let key = name_key(name);
+        match taken.iter().find(|t| name_key(t) == key) {
+            Some(t) if t.eq_ignore_ascii_case(name) => {
+                Err(format!("an asset named '{t}' already exists in this project"))
+            }
+            Some(t) => Err(format!(
+                "the name '{name}' is too similar to the existing asset '{t}': both would export to the same file name"
+            )),
+            None => Ok(()),
+        }
     }
 
     fn sprite(p: &Project, r: AssetRef) -> Res<&Sprite> {
@@ -566,16 +579,26 @@ impl Studio {
         let bundle: CharacterBundle = src.export_character(cid).map_err(e)?;
         let mut dst = self.load(to_project)?;
         let replaced = dst.characters.iter().any(|c| c.id == cid);
-        if !replaced {
-            let taken = Self::asset_names(&dst);
-            let clash = std::iter::once(&bundle.character.name)
-                .chain(bundle.animations.iter().map(|a| &a.name))
-                .find(|n| taken.iter().any(|t| t.eq_ignore_ascii_case(n)));
-            if let Some(n) = clash {
-                return Err(format!(
-                    "project '{to_project}' already has a different asset named '{n}'"
-                ));
-            }
+        // Namen prüfen gegen alles, was im Zielprojekt bestehen bleibt. Die Figur
+        // selbst und ihre bisherigen Animationen werden ersetzt und zählen nicht.
+        let surviving: Vec<String> = dst
+            .characters
+            .iter()
+            .filter(|c| c.id != cid)
+            .map(|c| c.name.clone())
+            .chain(
+                dst.animations
+                    .iter()
+                    .filter(|a| a.character_id != cid)
+                    .map(|a| a.name.clone()),
+            )
+            .chain(dst.images.iter().map(|i| i.name.clone()))
+            .collect();
+        for incoming in
+            std::iter::once(&bundle.character.name).chain(bundle.animations.iter().map(|a| &a.name))
+        {
+            Self::check_name_free(&surviving, incoming)
+                .map_err(|err| format!("cannot copy into project '{to_project}': {err}"))?;
         }
         let n = bundle.animations.len();
         let name = bundle.character.name.clone();
@@ -796,15 +819,19 @@ impl Studio {
             .iter()
             .enumerate()
             .map(|(i, c)| (SYMBOLS.chars().nth(i).unwrap().to_string(), c.to_string()))
+            // Mit Eintrag für '.', damit ein zurückgeschriebenes Raster auch löscht.
+            .chain(std::iter::once((
+                ".".to_string(),
+                "transparent".to_string(),
+            )))
             .collect();
         Ok(Reply::json(json!({
             "asset": Self::asset_name(&p, r),
             "frame": f,
             "region": {"x": x, "y": y, "w": w, "h": h},
             "legend": legend,
-            "transparent": ".",
             "rows": rows,
-            "hint": "rows and legend can be passed back unchanged to the grid op of draw.",
+            "hint": "rows and legend can be edited and passed back to the grid op of draw. '.' is transparent: with this legend it erases, without a '.' entry the grid op leaves those pixels unchanged.",
         })))
     }
 
@@ -1044,7 +1071,9 @@ impl Studio {
         if !(1..=export::MAX_SCALE).contains(&scale) {
             return Err(format!("scale must be 1 to {}", export::MAX_SCALE));
         }
-        let dir = self.home.join("exports").join(file_safe(&p.name));
+        // Der Projektname ist als Dateiname geprüft und eindeutig, er dient
+        // unverändert als Ordnername.
+        let dir = self.home.join("exports").join(project.trim());
         std::fs::create_dir_all(&dir).map_err(e)?;
         let base = file_safe(&Self::asset_name(&p, r));
         let suffix = if scale > 1 {
@@ -1115,6 +1144,12 @@ pub fn parse_color(s: &str) -> Res<Rgba> {
         .map_err(|_| format!("invalid color '{s}': use #RRGGBB, #RRGGBBAA or \"transparent\""))
 }
 
+/// Vergleichsschlüssel für Namen: gleich, wenn beim Export derselbe Dateiname
+/// entstünde. Kleinschreibung, weil Windows Dateinamen so vergleicht.
+fn name_key(name: &str) -> String {
+    file_safe(name).to_lowercase()
+}
+
 fn file_safe(name: &str) -> String {
     let s: String = name
         .trim()
@@ -1129,9 +1164,20 @@ fn file_safe(name: &str) -> String {
         .collect();
     if s.is_empty() {
         "unnamed".into()
+    } else if is_reserved_file_name(&s) {
+        format!("{s}_")
     } else {
         s
     }
+}
+
+/// Gerätenamen wie CON oder NUL lassen sich unter Windows nicht als Datei anlegen.
+fn is_reserved_file_name(name: &str) -> bool {
+    const RESERVED: [&str; 22] = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    RESERVED.contains(&name.to_ascii_lowercase().as_str())
 }
 
 fn note_snap(s: &mut Sprite, wanted: Rgba, snapped: &mut BTreeMap<String, String>) -> Rgba {
@@ -1169,7 +1215,7 @@ fn apply_op(
             let lim = 4 * pixel_core::MAX_SIZE as i64;
             if [from[0], from[1], to[0], to[1]]
                 .iter()
-                .any(|v| v.abs() > lim)
+                .any(|v| !(-lim..=lim).contains(v))
             {
                 return Err("line coordinates are far outside the canvas".into());
             }
@@ -1260,7 +1306,9 @@ fn apply_op(
 
 fn check_box(x: i64, y: i64, w: u32, h: u32) -> Res<()> {
     let lim = 4 * pixel_core::MAX_SIZE as i64;
-    if x.abs() > lim || y.abs() > lim || w as i64 > lim || h as i64 > lim {
+    // Bereichsprüfung statt abs(): i64::MIN hat keinen positiven Betrag.
+    let ok = |v: i64| (-lim..=lim).contains(&v);
+    if !ok(x) || !ok(y) || !ok(w as i64) || !ok(h as i64) {
         return Err("shape is far outside the canvas".into());
     }
     Ok(())

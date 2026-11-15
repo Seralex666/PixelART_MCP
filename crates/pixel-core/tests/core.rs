@@ -512,3 +512,49 @@ fn image_palette_swap_remaps_indexed_pixels() {
     let mut ch = hero();
     assert!(ch.base.set_palette(Palette::grayscale(4)).is_err());
 }
+
+#[test]
+fn reads_uncompressed_pixel_data_from_the_first_format_version() {
+    use base64::Engine;
+    let mut p = Project::new("Alt");
+    let mut s = Sprite::new(2, 1, ColorDepth::Rgba32, Palette::default()).unwrap();
+    s.set_pixel(0, 0, 1, 0, Rgba::rgb(10, 20, 30)).unwrap();
+    p.add_image("b", s);
+    let mut v: serde_json::Value = serde_json::from_str(&p.to_json().unwrap()).unwrap();
+    let pixels = &mut v["images"][0]["sprite"]["frames"][0]["layers"][0]["pixels"];
+    assert!(pixels.as_str().unwrap().starts_with("z:"));
+    // So sah das Feld vor der Komprimierung aus: rohe RGBA-Bytes in Base64.
+    let raw = [0u8, 0, 0, 0, 10, 20, 30, 255];
+    *pixels = base64::engine::general_purpose::STANDARD.encode(raw).into();
+    assert_eq!(Project::from_json(&v.to_string()).unwrap(), p);
+}
+
+#[test]
+fn new_frames_inherit_layer_visibility_and_opacity() {
+    let mut s = Sprite::new(2, 2, ColorDepth::Rgba32, Palette::default()).unwrap();
+    let top = s.add_layer("Oben");
+    s.layer_mut(0, top).unwrap().visible = false;
+    s.layer_mut(0, 0).unwrap().opacity = 128;
+    let f = s.add_frame();
+    assert!(!s.layer(f, top).unwrap().visible);
+    assert_eq!(s.layer(f, 0).unwrap().opacity, 128);
+    assert!(s
+        .layer(f, 0)
+        .unwrap()
+        .pixels()
+        .iter()
+        .all(|p| p.is_transparent()));
+}
+
+#[test]
+fn extreme_coordinates_are_rejected_without_overflow() {
+    let mut s = Sprite::new(8, 8, ColorDepth::Rgba32, Palette::default()).unwrap();
+    let red = Rgba::rgb(255, 0, 0);
+    for v in [i64::MIN, i64::MAX, i64::MIN + 1] {
+        assert!(draw::line(&mut s, T, (v, 0), (0, 0), red).is_err());
+        assert!(draw::line(&mut s, T, (0, 0), (0, v), red).is_err());
+        assert!(draw::rect(&mut s, T, v, 0, 4, 4, red, true).is_err());
+        assert!(draw::ellipse(&mut s, T, 0, v, 4, 4, red, true).is_err());
+    }
+    assert!(s.used_colors().is_empty());
+}

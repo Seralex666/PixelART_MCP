@@ -10,7 +10,11 @@ use crate::{Result, Rgba, Sprite};
 pub const COORD_LIMIT: i64 = 16 * crate::MAX_SIZE as i64;
 
 fn check_coords(values: &[i64]) -> Result<()> {
-    match values.iter().find(|v| v.abs() > COORD_LIMIT) {
+    // Bereichsprüfung statt abs(): i64::MIN hat keinen positiven Betrag.
+    match values
+        .iter()
+        .find(|v| !(-COORD_LIMIT..=COORD_LIMIT).contains(*v))
+    {
         Some(&v) => Err(crate::Error::CoordOutOfRange(v)),
         None => Ok(()),
     }
