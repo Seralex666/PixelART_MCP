@@ -17,7 +17,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
 | 2 | `pixel-mcp`: MCP-Server mit 16 Werkzeugen für Claude und andere MCP-Clients | fertig |
-| 3 | Editor (egui) | offen |
+| 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | offen |
 
 ## Aufbau
@@ -26,6 +26,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 crates/
   pixel-core/   Gemeinsamer Kern für Editor und MCP-Server
   pixel-mcp/    MCP-Server (Programm `pixelart-mcp`)
+  pixel-editor/ Editor (Programm `pixelart-studio`)
 docs/
   MCP-EINRICHTUNG.md   So verbindest du Claude mit dem Studio
 ```
@@ -38,19 +39,38 @@ Wichtige Typen in `pixel-core`:
 - `Project`: Figuren, Animationen, freie Bilder und Paletten in einer `.pxproj`-Datei. `validate()` meldet jede Abweichung einer Animation von ihrer Figur.
 - `CharacterBundle`: einzelne Figur als `.pxchar`-Datei, um sie unverändert in andere Projekte zu übernehmen.
 
+## Der Editor
+
+`pixelart-studio` ist das Programm zum Selberzeichnen:
+
+- Leinwand mit pixelgenauer Vergrößerung, Raster und Zwiebelhaut (vorheriger Frame scheint durch)
+- Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben
+- Palette, Ebenen, Timeline mit Vorschaubildern und Animationsvorschau
+- Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG oder Spritesheet
+- Gespeichert wird nach jeder Änderung von selbst, Rückgängig mit Strg+Z
+
+Editor und MCP-Server arbeiten im selben Arbeitsordner. Zeichnet Claude, lädt der Editor das Projekt
+nach kurzer Zeit neu; „Rückgängig“ nimmt auch Claudes letzte Änderung am geöffneten Bild zurück.
+
+Der Arbeitsordner ist, in dieser Reihenfolge: `--home <Ordner>`, die Umgebungsvariable `PIXELART_HOME`,
+ein Ordner `Projekte` neben dem Programm, sonst `Dokumente/PixelArt Studio`.
+
 ## Mit Claude verbinden
 
-Siehe [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md). Kurz: `pixelart-mcp.exe` in Claude Desktop
-oder Claude Code als MCP-Server eintragen, danach kann Claude Projekte anlegen, Figuren zeichnen,
-animieren und exportieren.
+Im Editor unter **Hilfe → Mit Claude verbinden…** stehen alle Angaben mit den Pfaden deines Rechners,
+dazu ein fertiger Prompt, mit dem Claude die Verbindung selbst einrichtet. Dieselbe Anleitung zum
+Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 
-Die fertige Windows-exe liegt unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
-Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.1.0` pushen). Selbst bauen: `cargo build --release -p pixel-mcp`.
+Die fertigen Windows-Programme liegen unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
+Lege `pixelart-studio.exe` und `pixelart-mcp.exe` in denselben Ordner.
+Gebaut werden sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.2.0` pushen).
+Selbst bauen: `cargo build --release`.
 
 ## Ausprobieren
 
 ```sh
 cargo test
+cargo run -p pixel-editor
 cargo run -p pixel-core --example demo -- demo-out
 ```
 

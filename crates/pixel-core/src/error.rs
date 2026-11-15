@@ -40,6 +40,8 @@ pub enum Error {
     InvalidColor(String),
     #[error("ungültige Pixeldaten: {0}")]
     InvalidPixelData(String),
+    #[error("{0}")]
+    InvalidName(String),
     #[error("nicht unterstützte Projektversion {0}")]
     UnsupportedVersion(u32),
     #[error("E/A-Fehler: {0}")]

@@ -38,12 +38,7 @@ fn home_dir() -> Result<PathBuf, String> {
             other => return Err(format!("unknown argument '{other}', try --help")),
         }
     }
-    if let Some(dir) = std::env::var_os("PIXELART_HOME").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(dir));
-    }
-    dirs::document_dir()
-        .or_else(dirs::home_dir)
-        .map(|d| d.join("PixelArt Studio"))
+    pixel_core::Workspace::default_home()
         .ok_or("cannot find a documents folder, pass --home <folder>".into())
 }
 

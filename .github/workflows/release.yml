@@ -1,6 +1,6 @@
 name: Release
 
-# Baut die Windows-exe und legt sie als Release ab. Zwei Wege:
+# Baut die Windows-Programme (Editor und MCP-Server) und legt sie als Release ab. Zwei Wege:
 # - einen Tag wie v0.1.0 pushen, oder
 # - den Workflow von Hand starten (Actions → Release → Run workflow) und die
 #   Version angeben; der Tag wird dann beim Anlegen des Release erzeugt.
@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   windows:
-    name: Windows-exe bauen und veröffentlichen
+    name: Windows-Programme bauen und veröffentlichen
     runs-on: windows-latest
     env:
       TAG: ${{ inputs.version || github.ref_name }}
@@ -35,13 +35,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      - run: cargo build --release -p pixel-mcp
+      - run: cargo build --release -p pixel-mcp -p pixel-editor
       - name: Release anlegen
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" target/release/pixelart-mcp.exe \
+          gh release create "$TAG" \
+            target/release/pixelart-studio.exe \
+            target/release/pixelart-mcp.exe \
             --target "$GITHUB_SHA" \
             --title "PixelArt Studio $TAG" \
-            --notes "Windows-Programm des MCP-Servers. Einrichtung: docs/MCP-EINRICHTUNG.md"
+            --notes "Windows-Programme: pixelart-studio.exe (Editor) und pixelart-mcp.exe (MCP-Server für Claude). Beide in denselben Ordner legen. Die Einrichtung steht im Editor unter Hilfe → Mit Claude verbinden und in docs/MCP-EINRICHTUNG.md."
