@@ -613,6 +613,7 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     }
 
     let looping = doc.looping(id).unwrap_or(true);
+    let mut install_ffmpeg = false;
     // Ein Video kennt keine Schleife, das entscheidet das Abspielprogramm.
     let timing = |ui: &mut egui::Ui, mentions_loop: bool| {
         ui.weak(if frames < 2 {
@@ -658,17 +659,36 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
             let found = *f
                 .ffmpeg
                 .get_or_insert_with(|| pixel_core::video::find_ffmpeg().is_some());
-            if !found {
+            if app.installing_ffmpeg() {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("ffmpeg wird installiert. Windows zeigt den Fortschritt in einem eigenen Fenster; das kann ein paar Minuten dauern.");
+                });
+            } else if !found {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    format!(
-                        "ffmpeg wurde nicht gefunden. {}",
-                        pixel_core::video::FFMPEG_HELP
-                    ),
+                    "Für WebM fehlt noch das kostenlose Programm ffmpeg.",
                 );
-                if ui.button("Erneut suchen").clicked() {
-                    f.ffmpeg = None;
+                if pixel_core::video::CAN_INSTALL_FFMPEG {
+                    ui.horizontal(|ui| {
+                        install_ffmpeg = ui
+                            .button(RichText::new("ffmpeg jetzt installieren").strong())
+                            .on_hover_text(
+                                "Lädt ffmpeg über den Windows-Paketmanager winget herunter und richtet es ein. Danach geht der WebM-Export sofort, auch für Claude.",
+                            )
+                            .clicked();
+                        if ui.button("Erneut suchen").clicked() {
+                            f.ffmpeg = None;
+                        }
+                    });
+                    ui.weak(pixel_core::video::FFMPEG_MANUAL);
+                } else {
+                    ui.weak("Installiere ffmpeg über die Paketverwaltung deines Systems.");
+                    if ui.button("Erneut suchen").clicked() {
+                        f.ffmpeg = None;
+                    }
                 }
             }
         }
@@ -754,6 +774,9 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
             Err(err) => app.dialog_error = Some(err),
         }
     }
+    if install_ffmpeg {
+        app.install_ffmpeg(ui.ctx());
+    }
     Outcome::Keep
 }
 
@@ -778,20 +801,13 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
     let project = app.doc.as_ref().map(|d| d.name().to_string());
     let info = ConnectInfo::detect(app.ws.home(), project.as_deref());
     ui.heading("Mit Claude verbinden");
-    ui.label("Claude zeichnet über den MCP-Server „pixelart-mcp“. Das ist ein kleines Programm, das Claude selbst startet, sobald es einmal eingetragen ist. Es arbeitet im selben Arbeitsordner wie dieser Editor. Deshalb siehst du hier nach kurzer Zeit, was Claude zeichnet, und Claude sieht, was du zeichnest.");
+    ui.label("Claude zeichnet über einen MCP-Server, und der steckt in diesem Programm: Mit der Angabe „--mcp“ gestartet, öffnet es kein Fenster, sondern arbeitet für Claude. Claude startet es so von selbst, sobald es einmal eingetragen ist. Beide arbeiten im selben Arbeitsordner. Deshalb siehst du hier nach kurzer Zeit, was Claude zeichnet, und Claude sieht, was du zeichnest.");
     ui.add_space(6.0);
     egui::Grid::new("connect-facts")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("MCP-Server:");
-            ui.horizontal(|ui| {
-                ui.monospace(info.server.display().to_string());
-                if info.server_found {
-                    ui.colored_label(egui::Color32::from_rgb(60, 160, 80), "gefunden");
-                } else {
-                    ui.colored_label(ui.visuals().error_fg_color, "fehlt");
-                }
-            });
+            ui.label("Programm:");
+            ui.monospace(info.server.display().to_string());
             ui.end_row();
             ui.label("Arbeitsordner:");
             ui.horizontal(|ui| {
@@ -802,12 +818,7 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
             });
             ui.end_row();
         });
-    if !info.server_found {
-        ui.colored_label(
-            ui.visuals().error_fg_color,
-            "Lege die Datei „pixelart-mcp“ in denselben Ordner wie dieses Programm. Erst dann stimmen die Angaben unten.",
-        );
-    }
+    ui.weak("Die Angaben unten gelten für diesen Speicherort. Verschiebst du das Programm, trage es bei Claude neu ein.");
     ui.add_space(6.0);
 
     egui::ScrollArea::vertical()
@@ -832,8 +843,9 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
             egui::CollapsingHeader::new("4. Andere MCP-Programme").show(ui, |ui| {
                 ui.label("Jedes Programm, das lokale MCP-Server über stdio starten kann, funktioniert. Einzutragen sind immer dieselben Angaben:");
                 let text = format!(
-                    "Programm:  {}\nArgumente: --home \"{}\"\nÜbertragung: stdio",
+                    "Programm:  {}\nArgumente: {} --home \"{}\"\nÜbertragung: stdio",
                     info.server.display(),
+                    help::MCP_FLAG,
                     info.home.display()
                 );
                 copy_block(app, ui, &text, "Angaben kopieren", 3);

@@ -5,6 +5,10 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 
+[lib]
+name = "pixel_mcp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pixelart-mcp"
 path = "src/main.rs"

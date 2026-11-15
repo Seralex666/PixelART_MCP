@@ -494,6 +494,53 @@ fn video_frames_follow_the_frame_durations() {
 }
 
 #[test]
+fn ffmpeg_is_found_where_winget_puts_it() {
+    use pixel_core::video::find_in_winget;
+    let base = std::env::temp_dir().join(format!("pixelart-winget-{}", uuid::Uuid::new_v4()));
+    let winget = base.join("Microsoft").join("WinGet");
+    assert_eq!(
+        find_in_winget(&base, "ffmpeg.exe"),
+        None,
+        "nichts installiert"
+    );
+
+    // Ein fremdes Paket zählt nicht, auch wenn es ein ffmpeg enthält.
+    let other = winget.join("Packages").join("Other.Tool_x").join("bin");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("ffmpeg.exe"), b"").unwrap();
+    assert_eq!(find_in_winget(&base, "ffmpeg.exe"), None);
+
+    let package = winget
+        .join("Packages")
+        .join("Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe");
+    for version in ["ffmpeg-7.0-full_build", "ffmpeg-7.1-full_build"] {
+        let bin = package.join(version).join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("ffmpeg.exe"), b"").unwrap();
+    }
+    assert_eq!(
+        find_in_winget(&base, "ffmpeg.exe"),
+        Some(
+            package
+                .join("ffmpeg-7.1-full_build")
+                .join("bin")
+                .join("ffmpeg.exe")
+        ),
+        "die neueste Version im Paketordner"
+    );
+
+    // Gibt es die Verknüpfung, hat sie Vorrang.
+    let links = winget.join("Links");
+    std::fs::create_dir_all(&links).unwrap();
+    std::fs::write(links.join("ffmpeg.exe"), b"").unwrap();
+    assert_eq!(
+        find_in_winget(&base, "ffmpeg.exe"),
+        Some(links.join("ffmpeg.exe"))
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn templates_are_valid() {
     let mut ids = std::collections::HashSet::new();
     for t in TEMPLATES {

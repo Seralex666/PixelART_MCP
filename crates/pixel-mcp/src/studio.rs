@@ -1105,7 +1105,7 @@ impl Studio {
                     "webm needs an even scale (2, 4, 6 ... {}) so that pixel edges stay sharp",
                     export::MAX_SCALE
                 ),
-                pixel_core::Error::FfmpegMissing => "webm needs the free program ffmpeg, which was not found. Ask the user to install it (Windows: `winget install Gyan.FFmpeg`, then restart the MCP client) or to put ffmpeg.exe next to pixelart-mcp.exe. Alternatively set PIXELART_FFMPEG to its path. gif and sheet work without it.".to_string(),
+                pixel_core::Error::FfmpegMissing => "webm needs the free program ffmpeg, which was not found. Ask the user to install it: in PixelArt Studio open the export dialog (Ctrl+E), choose WebM and click \"ffmpeg jetzt installieren\"; or run `winget install Gyan.FFmpeg` in a terminal; or put ffmpeg.exe next to the program. No restart is needed afterwards. gif and sheet work without it.".to_string(),
                 other => e(other),
             })?;
         let mut reply = json!({ "files": out.files });
