@@ -109,7 +109,8 @@ fn scale_indices(px: &[u8], width: u32, height: u32, scale: u32) -> Vec<u8> {
     out
 }
 
-fn check_export_size(s: &Sprite, scale: u32) -> Result<(u32, u32)> {
+/// Größe des vergrößerten Bildes, oder ein Fehler, wenn sie die Grenze sprengt.
+pub(crate) fn check_export_size(s: &Sprite, scale: u32) -> Result<(u32, u32)> {
     let scale = scale.clamp(1, MAX_SCALE);
     let (ow, oh) = (s.width() * scale, s.height() * scale);
     if ow > MAX_EXPORT_SIZE || oh > MAX_EXPORT_SIZE {

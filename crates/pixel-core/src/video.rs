@@ -80,7 +80,7 @@ fn gcd(a: u32, b: u32) -> u32 {
     }
 }
 
-/// Die Argumente für ffmpeg bis auf die Zieldatei: rohe RGBA-Bilder von der
+/// Die Argumente für ffmpeg bis auf die Zieldatei, die direkt danach folgt: rohe RGBA-Bilder von der
 /// Standardeingabe, VP9 verlustfrei als Ausgabe. Mit Transparenz, falls das
 /// Bild welche hat.
 pub fn ffmpeg_args(width: u32, height: u32, tick_ms: u32, alpha: bool) -> Vec<String> {
@@ -99,6 +99,8 @@ pub fn ffmpeg_args(width: u32, height: u32, tick_ms: u32, alpha: bool) -> Vec<St
     args.extend(["-c:v", "libvpx-vp9", "-lossless", "1", "-vf", &filter]);
     args.extend(["-colorspace", "bt709", "-color_primaries", "bt709"]);
     args.extend(["-color_trc", "bt709", "-color_range", "tv"]);
+    // Das Format steht fest und hängt nicht am Namen der Zieldatei.
+    args.extend(["-f", "webm"]);
     if alpha {
         // Ohne diese Einstellung verwirft der Encoder die Transparenz.
         args.extend(["-auto-alt-ref", "0"]);
@@ -125,13 +127,36 @@ pub fn animation_webm(s: &Sprite, scale: u32, out: &Path, ffmpeg: &Path) -> Resu
             plan.total_frames()
         )));
     }
-    let mut images = Vec::with_capacity(durations.len());
+    let (w, h) = export::check_export_size(s, scale)?;
+    // Transparenz steht schon im unvergrößerten Bild. Die vergrößerten Bilder
+    // entstehen erst beim Schreiben, eins nach dem anderen: Alle auf einmal
+    // können mehrere Gigabyte belegen.
+    let mut alpha = false;
     for f in 0..durations.len() {
-        images.push(export::frame_image(s, f, scale)?.into_raw());
+        alpha |= s.composite(f)?.iter().any(|c| c.a < 255);
     }
-    let alpha = images.iter().flatten().skip(3).step_by(4).any(|&a| a < 255);
-    let (w, h) = (s.width() * scale, s.height() * scale);
+    // ffmpeg schreibt in eine Datei daneben, die erst am Ende den richtigen
+    // Namen bekommt. So bleibt ein früherer Export heil, wenn dieser scheitert.
+    let name = out.file_stem().unwrap_or_default().to_string_lossy();
+    let part = out.with_file_name(format!("{name}.teil-{}.webm", std::process::id()));
+    let result = encode(s, scale, &plan, (w, h), alpha, &part, ffmpeg)
+        .and_then(|()| std::fs::rename(&part, out).map_err(Error::from));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
+    }
+    result
+}
 
+/// Startet ffmpeg und schickt ihm die Frames, jeden so oft, wie er dauert.
+fn encode(
+    s: &Sprite,
+    scale: u32,
+    plan: &VideoPlan,
+    (w, h): (u32, u32),
+    alpha: bool,
+    out: &Path,
+    ffmpeg: &Path,
+) -> Result<()> {
     let failed = |what: String| Error::Video(format!("ffmpeg ({}): {what}", ffmpeg.display()));
     let mut command = Command::new(ffmpeg);
     command
@@ -164,12 +189,19 @@ pub fn animation_webm(s: &Sprite, scale: u32, out: &Path, ffmpeg: &Path) -> Resu
     });
     // Bricht ffmpeg vorzeitig ab, scheitert das Schreiben; die Ursache steht
     // dann in seiner Fehlerausgabe.
-    let mut write_error = None;
+    let mut sent: Result<()> = Ok(());
     if let Some(mut pipe) = child.stdin.take() {
-        'frames: for (image, &repeat) in images.iter().zip(&plan.repeats) {
+        'frames: for (f, &repeat) in plan.repeats.iter().enumerate() {
+            let image = match export::frame_image(s, f, scale) {
+                Ok(image) => image.into_raw(),
+                Err(e) => {
+                    sent = Err(e);
+                    break;
+                }
+            };
             for _ in 0..repeat {
-                if let Err(e) = pipe.write_all(image) {
-                    write_error = Some(e);
+                if let Err(e) = pipe.write_all(&image) {
+                    sent = Err(failed(e.to_string()));
                     break 'frames;
                 }
             }
@@ -178,16 +210,11 @@ pub fn animation_webm(s: &Sprite, scale: u32, out: &Path, ffmpeg: &Path) -> Resu
     let status = child.wait().map_err(|e| failed(e.to_string()))?;
     let message = messages.join().unwrap_or_default();
     if !status.success() {
-        let _ = std::fs::remove_file(out);
         return Err(failed(if message.is_empty() {
             format!("beendet mit {status}")
         } else {
             message
         }));
     }
-    if let Some(e) = write_error {
-        let _ = std::fs::remove_file(out);
-        return Err(failed(e.to_string()));
-    }
-    Ok(())
+    sent
 }

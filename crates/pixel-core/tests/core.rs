@@ -911,6 +911,38 @@ mod workspace {
         }
     }
 
+    /// Ein Programm, das wie ein kaputtes ffmpeg sofort mit Fehler endet.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_video_export_keeps_the_previous_file() {
+        let ws = temp();
+        let dir = ws.home().join("out");
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("Held@2x.webm");
+        std::fs::write(&out, b"der letzte gute Export").unwrap();
+        let mut s = Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+        s.add_frame();
+
+        let broken = ["/bin/false", "/usr/bin/false"]
+            .map(std::path::Path::new)
+            .into_iter()
+            .find(|p| p.is_file())
+            .expect("das Programm `false` fehlt");
+        let err = pixel_core::video::animation_webm(&s, 2, &out, broken).unwrap_err();
+        assert!(matches!(err, pixel_core::Error::Video(_)), "{err}");
+        assert_eq!(std::fs::read(&out).unwrap(), b"der letzte gute Export");
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(left.len(), 1, "keine halbe Datei bleibt liegen");
+
+        // Mit einem echten ffmpeg ersetzt der Export die alte Datei.
+        if let Some(ffmpeg) = pixel_core::video::find_ffmpeg() {
+            pixel_core::video::animation_webm(&s, 2, &out, &ffmpeg).unwrap();
+            let bytes = std::fs::read(&out).unwrap();
+            assert!(bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]), "WebM-Kopf");
+            assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        }
+    }
+
     #[test]
     fn a_relative_home_becomes_absolute() {
         let name = format!("pixelart-rel-{}", uuid::Uuid::new_v4());
