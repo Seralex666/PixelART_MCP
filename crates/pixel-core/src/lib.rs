@@ -25,6 +25,7 @@ pub mod palette;
 pub mod project;
 pub mod sprite;
 pub mod template;
+pub mod video;
 pub mod workspace;
 
 pub use animation::{Animation, AnimationKind};

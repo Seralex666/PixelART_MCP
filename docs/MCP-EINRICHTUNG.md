@@ -80,7 +80,7 @@ dieselben zwei Angaben: das Programm (`pixelart-mcp.exe`) und die Argumente (`--
 | `edit_layers`, `edit_frames` | Ebenen und Frames verwalten, Frame-Dauer setzen |
 | `set_palette`, `add_character_colors` | Palette eines Bildes tauschen, Palette einer Figur erweitern |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
-| `export` | PNG, JPG oder Spritesheet mit JSON-Metadaten |
+| `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video |
 | `delete_asset` | Figur, Animation oder Bild löschen |
 
 ## Wenn etwas nicht klappt
@@ -89,4 +89,7 @@ dieselben zwei Angaben: das Programm (`pixelart-mcp.exe`) und die Argumente (`--
   Claude Desktop schreibt Fehler nach `%APPDATA%\Claude\logs\`.
 - **Windows warnt vor der exe:** Die Datei ist nicht signiert. Über „Weitere Informationen → Trotzdem
   ausführen“ lässt sie sich starten.
+- **WebM-Export meldet, ffmpeg fehle:** In der Eingabeaufforderung `winget install Gyan.FFmpeg` ausführen
+  und Claude neu starten, oder `ffmpeg.exe` neben `pixelart-mcp.exe` legen. Alle anderen Formate
+  brauchen kein ffmpeg.
 - **Selbst testen:** `pixelart-mcp.exe --version` in der Eingabeaufforderung zeigt die Version an.

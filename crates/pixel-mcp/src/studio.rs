@@ -1072,25 +1072,56 @@ impl Studio {
                 },
                 quality: quality.unwrap_or(95),
             },
-            "sheet" | "spritesheet" => {
-                if frame.is_some() {
-                    return Err("a sheet always contains all frames, omit `frame`".into());
-                }
-                ExportFormat::Sheet {
-                    columns: columns.unwrap_or(0),
-                }
+            "sheet" | "spritesheet" => ExportFormat::Sheet {
+                columns: columns.unwrap_or(0),
+            },
+            "png8" | "indexed" | "indexed_png" => ExportFormat::PngIndexed,
+            "gif" => ExportFormat::Gif {
+                // Eine Animation spielt so ab, wie sie im Projekt eingestellt ist.
+                looping: match r {
+                    AssetRef::Animation(id) => p.animation(id).map_err(e)?.looping,
+                    _ => true,
+                },
+            },
+            "webm" => ExportFormat::WebM,
+            other => {
+                return Err(format!(
+                    "unknown format '{other}', use png, png8, jpg, sheet, gif or webm"
+                ))
             }
-            other => return Err(format!("unknown format '{other}', use png, jpg or sheet")),
         };
+        if format.is_whole_animation() && frame.is_some() {
+            return Err("this format always contains all frames, omit `frame`".into());
+        }
         let name = Self::asset_name(&p, r);
         let out = self
             .ws
             .export(project, &name, s, format, frame, scale)
-            .map_err(e)?;
-        Ok(match out.sheet {
-            Some(meta) => Reply::json(json!({ "files": out.files, "sheet": meta })),
-            None => Reply::json(json!({ "files": out.files })),
-        })
+            .map_err(|err| match err {
+                pixel_core::Error::TooManyColors { found, max } => format!(
+                    "png8 holds at most {max} colors, this frame has {found}. Use png instead."
+                ),
+                pixel_core::Error::OddVideoScale => format!(
+                    "webm needs an even scale (2, 4, 6 ... {}) so that pixel edges stay sharp",
+                    export::MAX_SCALE
+                ),
+                pixel_core::Error::FfmpegMissing => "webm needs the free program ffmpeg, which was not found. Ask the user to install it (Windows: `winget install Gyan.FFmpeg`, then restart the MCP client) or to put ffmpeg.exe next to pixelart-mcp.exe. Alternatively set PIXELART_FFMPEG to its path. gif and sheet work without it.".to_string(),
+                other => e(other),
+            })?;
+        let mut reply = json!({ "files": out.files });
+        if let Some(meta) = out.sheet {
+            reply["sheet"] = json!(meta);
+        }
+        if let Some(info) = out.gif {
+            reply["gif"] = json!(info);
+            if !info.exact {
+                reply["note"] = json!("The frames have more colors than a GIF can hold (255 plus transparency), so they were reduced to similar colors. Use sheet or png for exact pixels.");
+            }
+        }
+        if matches!(format, ExportFormat::WebM) {
+            reply["note"] = json!("Video compression can shift colors by one or two steps. Use sheet, png or gif for exact pixels.");
+        }
+        Ok(Reply::json(reply))
     }
 }
 
