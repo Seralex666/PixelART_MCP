@@ -1,0 +1,29 @@
+name: Release
+
+# Ein Tag wie v0.1.0 baut die Windows-exe und legt sie als Release ab.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows-exe bauen und veröffentlichen
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo build --release -p pixel-mcp
+      - name: Release anlegen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" target/release/pixelart-mcp.exe \
+            --title "PixelArt Studio $TAG" \
+            --notes "Windows-Programm des MCP-Servers. Einrichtung: docs/MCP-EINRICHTUNG.md"
