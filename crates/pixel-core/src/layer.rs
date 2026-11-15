@@ -150,8 +150,10 @@ mod pixel_data {
             ));
         }
         Ok(bytes
-            .chunks_exact(4)
-            .map(|c| Rgba::new(c[0], c[1], c[2], c[3]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&[r, g, b, a]| Rgba::new(r, g, b, a))
             .collect())
     }
 }
