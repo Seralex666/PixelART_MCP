@@ -145,6 +145,18 @@ impl ColorDepth {
         }
     }
 
+    /// Bringt eine Farbe in den Wertebereich dieser Farbtiefe (ohne Palette):
+    /// 8 Bit kennt nur deckend oder transparent, 16 Bit zusätzlich nur RGB565-Werte.
+    pub fn conform(self, c: Rgba) -> Rgba {
+        match self {
+            ColorDepth::Indexed8 if c.a < 128 => Rgba::TRANSPARENT,
+            ColorDepth::Indexed8 => Rgba { a: 255, ..c },
+            ColorDepth::Rgb565 => c.to_rgb565(),
+            ColorDepth::Rgba32 if c.a == 0 => Rgba::TRANSPARENT,
+            ColorDepth::Rgba32 => c,
+        }
+    }
+
     pub fn from_bits(bits: u8) -> Option<Self> {
         match bits {
             8 => Some(ColorDepth::Indexed8),

@@ -25,6 +25,10 @@ pub enum Error {
     ColorNotInPalette(crate::Rgba),
     #[error("Palette ist gesperrt, weil sie zu einer Figur gehört")]
     PaletteLocked,
+    #[error("Eine Figur braucht eine Palette mit mindestens einer Farbe")]
+    EmptyPalette,
+    #[error("Koordinate oder Größe {0} liegt zu weit außerhalb des Bildes (erlaubt: ±{limit})", limit = crate::draw::COORD_LIMIT)]
+    CoordOutOfRange(i64),
     #[error("Größe passt nicht: erwartet {expected_w}×{expected_h}, bekommen {got_w}×{got_h}")]
     SizeMismatch {
         expected_w: u32,

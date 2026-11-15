@@ -1,4 +1,4 @@
-use crate::{Error, Result, Rgba};
+use crate::{ColorDepth, Error, Result, Rgba};
 use serde::{Deserialize, Serialize};
 
 /// Eine Farbpalette. Im 8-Bit-Modus ist sie die einzige Farbquelle,
@@ -54,15 +54,29 @@ impl Palette {
     }
 
     /// Die Palettenfarbe, die `c` am nächsten kommt. Transparenz bleibt transparent.
+    /// Eine leere Palette kennt keine Farbe, das Ergebnis ist dann transparent.
     pub fn nearest(&self, c: Rgba) -> Rgba {
-        if c.a < 128 || self.colors.is_empty() {
-            return if c.a < 128 { Rgba::TRANSPARENT } else { c };
+        if c.a < 128 {
+            return Rgba::TRANSPARENT;
         }
-        *self
-            .colors
+        self.colors
             .iter()
             .min_by_key(|p| p.distance_sq(c))
-            .expect("palette not empty")
+            .copied()
+            .unwrap_or(Rgba::TRANSPARENT)
+    }
+
+    /// Bringt alle Palettenfarben auf die Farbtiefe und entfernt dabei entstehende
+    /// Doppelte, damit jede Palettenfarbe in dieser Farbtiefe exakt zeichenbar ist.
+    pub fn conform_to(&mut self, depth: ColorDepth) {
+        let mut out: Vec<Rgba> = Vec::with_capacity(self.colors.len());
+        for &c in &self.colors {
+            let c = depth.conform(c);
+            if !c.is_transparent() && !out.contains(&c) {
+                out.push(c);
+            }
+        }
+        self.colors = out;
     }
 
     pub fn is_full(&self) -> bool {

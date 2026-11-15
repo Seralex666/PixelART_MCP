@@ -114,12 +114,12 @@ impl Layer {
     }
 
     pub(crate) fn check_consistent(&self) -> Result<()> {
-        if self.pixels.len() != (self.width * self.height) as usize {
+        if self.pixels.len() as u64 != self.width as u64 * self.height as u64 {
             return Err(Error::InvalidPixelData(format!(
                 "Ebene '{}' hat {} Pixel, erwartet {}",
                 self.name,
                 self.pixels.len(),
-                self.width * self.height
+                self.width as u64 * self.height as u64
             )));
         }
         Ok(())

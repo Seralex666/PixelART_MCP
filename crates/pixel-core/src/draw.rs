@@ -4,6 +4,18 @@
 
 use crate::{Result, Rgba, Sprite};
 
+/// Größter Betrag, den eine Koordinate oder Größe haben darf. Formen dürfen weit
+/// über den Bildrand hinausragen, aber nicht beliebig weit, damit keine Operation
+/// Milliarden unsichtbarer Pixel durchläuft.
+pub const COORD_LIMIT: i64 = 16 * crate::MAX_SIZE as i64;
+
+fn check_coords(values: &[i64]) -> Result<()> {
+    match values.iter().find(|v| v.abs() > COORD_LIMIT) {
+        Some(&v) => Err(crate::Error::CoordOutOfRange(v)),
+        None => Ok(()),
+    }
+}
+
 /// Wohin gezeichnet wird: Frame und Ebene eines Sprites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Target {
@@ -29,6 +41,7 @@ pub fn pixels(s: &mut Sprite, t: Target, points: &[(i64, i64)], c: Rgba) -> Resu
 
 /// Linie nach Bresenham, 1 Pixel breit.
 pub fn line(s: &mut Sprite, t: Target, from: (i64, i64), to: (i64, i64), c: Rgba) -> Result<()> {
+    check_coords(&[from.0, from.1, to.0, to.1])?;
     let c = s.conform(c);
     let l = s.layer_mut(t.frame, t.layer)?;
     let (mut x, mut y) = from;
@@ -67,6 +80,7 @@ pub fn rect(
     c: Rgba,
     filled: bool,
 ) -> Result<()> {
+    check_coords(&[x, y, w as i64, h as i64])?;
     let c = s.conform(c);
     let l = s.layer_mut(t.frame, t.layer)?;
     if w == 0 || h == 0 {
@@ -100,44 +114,40 @@ pub fn ellipse(
     c: Rgba,
     filled: bool,
 ) -> Result<()> {
+    check_coords(&[x, y, w as i64, h as i64])?;
     let c = s.conform(c);
     let l = s.layer_mut(t.frame, t.layer)?;
     if w == 0 || h == 0 {
         return Ok(());
     }
-    // Pro Zeile die halbe Breite berechnen. Gerechnet wird in doppelter
-    // Auflösung, damit gerade und ungerade Größen symmetrisch bleiben.
+    // Pro Zeile wird die Spanne der Ellipse berechnet (relativ zu x), symmetrisch
+    // für gerade und ungerade Größen.
     let (wf, hf) = (w as f64, h as f64);
-    let half_width = |row: u32| -> Option<(i64, i64)> {
+    let span = |row: i64| -> Option<(i64, i64)> {
+        if row < 0 || row >= h as i64 {
+            return None;
+        }
         let cy = (row as f64 + 0.5) / hf * 2.0 - 1.0;
-        let span = (1.0 - cy * cy).max(0.0).sqrt() * wf / 2.0;
-        let left = (wf / 2.0 - span).round() as i64;
-        let right = (wf / 2.0 + span).round() as i64 - 1;
+        let half = (1.0 - cy * cy).max(0.0).sqrt() * wf / 2.0;
+        let left = (wf / 2.0 - half).round() as i64;
+        let right = (wf / 2.0 + half).round() as i64 - 1;
         (right >= left).then_some((left, right))
     };
-    let rows: Vec<Option<(i64, i64)>> = (0..h).map(half_width).collect();
-    for (row, span) in rows.iter().enumerate() {
-        let Some((left, right)) = *span else { continue };
-        let py = y + row as i64;
-        if filled {
-            for px in left..=right {
-                l.set_clipped(x + px, py, c);
-            }
+    // Nur sichtbare Zeilen und Spalten durchlaufen, egal wie groß die Ellipse ist.
+    let first_row = (-y).max(0);
+    let last_row = (l.height() as i64 - 1 - y).min(h as i64 - 1);
+    let (min_px, max_px) = (-x, l.width() as i64 - 1 - x);
+    for row in first_row..=last_row {
+        let Some((left, right)) = span(row) else {
             continue;
-        }
-        // Umriss: Randpixel der Zeile plus alles, was über die Nachbarzeilen hinausragt,
-        // damit der Umriss oben und unten geschlossen ist.
-        let neighbour = |r: Option<&Option<(i64, i64)>>| r.and_then(|s| *s);
-        let above = if row == 0 {
-            None
-        } else {
-            neighbour(rows.get(row - 1))
         };
-        let below = neighbour(rows.get(row + 1));
-        for px in left..=right {
+        let py = y + row;
+        let (above, below) = (span(row - 1), span(row + 1));
+        for px in left.max(min_px)..=right.min(max_px) {
+            // Umriss: Randpixel der Zeile plus alles, was über die Nachbarzeilen
+            // hinausragt, damit der Umriss oben und unten geschlossen ist.
             let inside = |n: Option<(i64, i64)>| n.is_some_and(|(nl, nr)| px > nl && px < nr);
-            let edge = px == left || px == right;
-            if edge || !inside(above) || !inside(below) {
+            if filled || px == left || px == right || !inside(above) || !inside(below) {
                 l.set_clipped(x + px, py, c);
             }
         }

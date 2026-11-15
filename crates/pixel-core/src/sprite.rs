@@ -91,13 +91,15 @@ impl Sprite {
             .position(|n| n.eq_ignore_ascii_case(name))
     }
 
-    /// Ersetzt die Palette und passt alle vorhandenen Pixel an die neue Palette
-    /// bzw. Farbtiefe an. Bei gesperrter Palette (Figuren) nicht erlaubt.
+    /// Ersetzt die Palette und passt sie und alle vorhandenen Pixel an die
+    /// Farbtiefe an. Bei gesperrter Palette (Figuren) nicht erlaubt.
     pub fn set_palette(&mut self, palette: Palette) -> Result<()> {
         if self.palette.locked {
             return Err(Error::PaletteLocked);
         }
         self.palette = palette;
+        self.palette.locked = false;
+        self.palette.conform_to(self.depth);
         if self.depth == ColorDepth::Indexed8 {
             // Im 8-Bit-Modus müssen alle Pixel aus der neuen Palette stammen.
             let pal = self.palette.clone();
@@ -124,32 +126,21 @@ impl Sprite {
     /// - 16 Bit: Reduktion auf RGB565.
     /// - 32 Bit: unverändert.
     ///
-    /// Bei gesperrter Palette (Figuren) wird in jeder Farbtiefe die nächste Palettenfarbe genommen.
+    /// Bei gesperrter Palette (Figuren) wird in jeder Farbtiefe die nächste Palettenfarbe
+    /// genommen. Die Farben einer gesperrten Palette liegen selbst in der Farbtiefe
+    /// (siehe [`Palette::conform_to`]), das Ergebnis erfüllt also beide Bedingungen.
     pub fn conform(&mut self, c: Rgba) -> Rgba {
+        let c = self.depth.conform(c);
         if c.is_transparent() {
             return Rgba::TRANSPARENT;
         }
         if self.palette.locked {
             return self.palette.nearest(c);
         }
-        match self.depth {
-            ColorDepth::Indexed8 => {
-                let c = if c.a < 128 {
-                    Rgba::TRANSPARENT
-                } else {
-                    Rgba { a: 255, ..c }
-                };
-                if c.is_transparent() {
-                    return c;
-                }
-                match self.palette.add(c) {
-                    Ok(_) => c,
-                    Err(_) => self.palette.nearest(c),
-                }
-            }
-            ColorDepth::Rgb565 => c.to_rgb565(),
-            ColorDepth::Rgba32 => c,
+        if self.depth == ColorDepth::Indexed8 && self.palette.add(c).is_err() {
+            return self.palette.nearest(c);
         }
+        c
     }
 
     /// Setzt einen Pixel mit Farbtiefen-Anpassung.
@@ -226,9 +217,10 @@ impl Sprite {
         Ok(())
     }
 
-    /// Stellt die Farbtiefe um und passt alle vorhandenen Pixel an.
+    /// Stellt die Farbtiefe um und passt die Palette und alle vorhandenen Pixel an.
     pub fn set_depth(&mut self, depth: ColorDepth) {
         self.depth = depth;
+        self.palette.conform_to(depth);
         let mut frames = std::mem::take(&mut self.frames);
         for f in &mut frames {
             for l in &mut f.layers {
@@ -236,6 +228,22 @@ impl Sprite {
             }
         }
         self.frames = frames;
+    }
+
+    /// Alle Farben, die tatsächlich in irgendeiner Ebene vorkommen (ohne Transparenz).
+    pub fn used_colors(&self) -> Vec<Rgba> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for f in &self.frames {
+            for l in &f.layers {
+                for &p in l.pixels() {
+                    if !p.is_transparent() && seen.insert(p) {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Alle Pixel eines Frames, Ebenen von unten nach oben verrechnet.
@@ -275,7 +283,8 @@ impl Sprite {
                 ));
             }
             for l in &f.layers {
-                l.check_consistent()?;
+                // Erst die Maße prüfen: sie stammen aus der Datei und dürfen die
+                // Pixelzahl-Prüfung nicht mit Riesenwerten füttern.
                 if l.width() != self.width || l.height() != self.height {
                     return Err(Error::SizeMismatch {
                         expected_w: self.width,
@@ -284,6 +293,7 @@ impl Sprite {
                         got_h: l.height(),
                     });
                 }
+                l.check_consistent()?;
             }
         }
         Ok(())

@@ -421,20 +421,7 @@ impl Studio {
             (None, None) => Palette::default_16(),
         };
         // Palettenfarben selbst an die Farbtiefe anpassen, damit sie exakt zeichenbar sind.
-        pal.colors = pal
-            .colors
-            .iter()
-            .map(|&c| match depth {
-                ColorDepth::Indexed8 => Rgba { a: 255, ..c },
-                ColorDepth::Rgb565 => c.to_rgb565(),
-                ColorDepth::Rgba32 => c,
-            })
-            .fold(Vec::new(), |mut acc, c| {
-                if !acc.contains(&c) {
-                    acc.push(c);
-                }
-                acc
-            });
+        pal.conform_to(depth);
         Ok(pal)
     }
 

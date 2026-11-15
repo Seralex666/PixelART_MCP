@@ -110,11 +110,7 @@ impl Project {
         let mut palette = self.character(id)?.palette().clone();
         palette.locked = false;
         for &c in colors {
-            let c = match depth {
-                crate::ColorDepth::Indexed8 => crate::Rgba { a: 255, ..c },
-                crate::ColorDepth::Rgb565 => c.to_rgb565(),
-                crate::ColorDepth::Rgba32 => c,
-            };
+            let c = depth.conform(c);
             if !c.is_transparent() {
                 palette.add(c)?;
             }
