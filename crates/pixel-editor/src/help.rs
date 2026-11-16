@@ -121,7 +121,7 @@ So arbeitest du damit:
 2. {project}
 3. Eine Figur legst du mit create_character an. Größe und Palette sind danach fest. Animationen (idle, walk, run, jump, attack, hurt, death) leitest du mit create_animation aus der Figur ab; jeder Frame startet als Kopie der Grundpose. So bleibt die Figur überall dieselbe.
 4. Freie Bilder wie Tiles, Items oder Szenen legst du mit create_image an (höchstens 1024×1024, Farbtiefe 8, 16 oder 32 Bit).
-5. Gezeichnet wird mit draw. Sieh dir das Ergebnis danach mit view an und lies bei Bedarf exakte Pixel mit get_pixels.
+5. Gezeichnet wird mit draw. Neben Pixeln, Formen und dem Textraster (grid) gibt es Techniken für mehr Tiefe: outline, shade, gradient, dither, noise, stamp und shader (Formel je Pixel). Ein Aufruf kann mehrere Frames zeichnen (frame: "all", Unterschiede über per_frame). Sieh dir das Ergebnis mit view an (grid und zoom_region helfen beim genauen Hinsehen), lies exakte Pixel mit get_pixels und nimm Fehlgriffe mit undo zurück.
 6. Braucht eine Figur eine weitere Farbe, nimm sie mit add_character_colors in ihre Palette auf.
 7. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner.
 8. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.

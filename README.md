@@ -17,10 +17,11 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 17 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 18 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
+| 6 | Pixel-Art-Techniken für Claude: Kontur, Licht, Raster, Verlauf, Körnung, Formel, Stempel, mehrere Frames je Aufruf | fertig |
 
 ## Aufbau
 
@@ -57,6 +58,31 @@ nach kurzer Zeit neu; „Rückgängig“ nimmt auch Claudes letzte Änderung am 
 
 Der Arbeitsordner ist, in dieser Reihenfolge: `--home <Ordner>`, die Umgebungsvariable `PIXELART_HOME`,
 ein Ordner `Projekte` neben dem Programm, sonst `Dokumente/PixelArt Studio`.
+
+## Zeichentechniken für Claude
+
+Das Werkzeug `draw` kennt neben Pixeln, Linien, Flächen und dem Textraster auch Techniken, die sonst viele
+einzelne Aufrufe oder ein Skript bräuchten. Alle arbeiten pixelgenau, ohne Glättung, und halten sich an
+gesperrte Paletten.
+
+| Op | Wirkung |
+|---|---|
+| `outline` | Kontur um alles, was auf der Ebene gezeichnet ist |
+| `shade` | Licht und Schatten aus einer Richtung, mit einer Farbreihe von dunkel nach hell |
+| `gradient` | Verlauf in harten Stufen, gerade oder rund, auf Wunsch gerastert |
+| `dither` | Rasterübergang zwischen zwei Farben (Bayer-Muster oder Schachbrett) |
+| `noise` | Körnung mit festem Startwert, also jedes Mal dasselbe Bild |
+| `shader` | Formel je Pixel mit `x`, `y`, `frame`, `dist()`, `noise()`, `rand()`: für Glut, Licht und Muster |
+| `stamp` | Ein Stück kopieren und einfügen, auch gespiegelt, gedreht, umgefärbt oder aus einem anderen Asset |
+
+Die Flächen-Ops nehmen einen Ausschnitt (`x`, `y`, `w`, `h`) und eine Maske (`mask`: alles, nur Gezeichnetes,
+nur Leeres oder nur eine bestimmte Farbe). Die Formel von `shader` kann nur rechnen: Es gibt keine Schleifen,
+keinen Zugriff auf Dateien und keinen fremden Code, und ihre Länge ist begrenzt.
+
+Ein Aufruf kann mehrere Frames auf einmal zeichnen (`frame`: Zahl, Liste oder `"all"`). `per_frame` legt fest,
+was sich von Frame zu Frame ändert: andere Farben oder zusätzliche Ops wie eine Verschiebung. `undo` nimmt die
+letzten Zeichen-Aufrufe zurück, solange das Bild inzwischen nicht anders geändert wurde. `view` zeigt auf Wunsch
+ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneinander.
 
 ## Bilder importieren
 
@@ -105,7 +131,7 @@ Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 
 Das fertige Windows-Programm liegt unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
 Es ist eine einzige Datei, `pixelart-studio.exe`: per Doppelklick der Editor, mit `--mcp` der MCP-Server.
-Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.5.0` pushen).
+Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.6.0` pushen).
 Selbst bauen: `cargo build --release`.
 
 ## Ausprobieren

@@ -221,6 +221,17 @@ impl Sprite {
         Ok(i + 1)
     }
 
+    /// Kopiert Frame `from` und fügt die Kopie an Position `at` ein. `at` darf
+    /// höchstens die Zahl der Frames sein (dann kommt die Kopie ans Ende).
+    pub fn insert_frame_copy(&mut self, from: usize, at: usize) -> Result<()> {
+        let f = self.frame(from)?.clone();
+        if at > self.frames.len() {
+            return Err(Error::NoSuchFrame(at));
+        }
+        self.frames.insert(at, f);
+        Ok(())
+    }
+
     pub fn remove_frame(&mut self, i: usize) -> Result<()> {
         if i >= self.frames.len() || self.frames.len() == 1 {
             return Err(Error::NoSuchFrame(i));
