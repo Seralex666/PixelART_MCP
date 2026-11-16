@@ -17,11 +17,12 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 18 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 21 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
 | 6 | Pixel-Art-Techniken für Claude: Kontur, Licht, Raster, Verlauf, Körnung, Formel, Stempel, mehrere Frames je Aufruf | fertig |
+| 7 | Prüf-Hinweise, Paletten aus Bildern, Farbreduktion, Projekt-Stil | fertig |
 
 ## Aufbau
 
@@ -83,6 +84,19 @@ Ein Aufruf kann mehrere Frames auf einmal zeichnen (`frame`: Zahl, Liste oder `"
 was sich von Frame zu Frame ändert: andere Farben oder zusätzliche Ops wie eine Verschiebung. `undo` nimmt die
 letzten Zeichen-Aufrufe zurück, solange das Bild inzwischen nicht anders geändert wurde. `view` zeigt auf Wunsch
 ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneinander.
+
+## Stil, Paletten und Prüf-Hinweise
+
+- **Projekt-Stil** (`set_style`): Palette, Lichtrichtung, Umrissfarbe und Notizen für ein ganzes Projekt.
+  Neue Bilder und Figuren starten mit der Palette, `shade` und `outline` nehmen Licht und Umrissfarbe von
+  dort, wenn ein Aufruf sie nicht nennt. Alte Projekte ohne Stil laden wie bisher.
+- **Paletten aus Bildern** (`palette_from_image`): liest die Hauptfarben einer Bilddatei oder eines Assets,
+  von dunkel nach hell. Ähnliche Farben fallen zusammen, es bleibt jeweils die häufigste, also keine Mischfarbe.
+- **Farben reduzieren** (`reduce_colors`): bringt ein Bild oder eine Figur samt Animationen auf weniger Farben,
+  nach derselben Regel. Seltene, deutlich andere Farben wie Glanzlichter bleiben erhalten.
+- **Prüf-Hinweise:** `get_project` und `view` nennen typische Versehen mit Koordinaten: einzelne verirrte
+  Pixel, Lücken im Umriss, Farben mit nur einem Pixel und Kacheln, deren Ränder nicht zusammenpassen. Es sind
+  Hinweise, keine Fehler; ein Sternenhimmel aus vielen Einzelpixeln zählt zum Beispiel nicht.
 
 ## Bilder importieren
 

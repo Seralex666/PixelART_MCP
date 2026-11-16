@@ -74,7 +74,8 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | Werkzeug | Zweck |
 |---|---|
 | `get_studio_info` | Arbeitsordner, Projekte, Vorlagen, Paletten, Animationsarten |
-| `create_project`, `get_project` | Projekt anlegen, Überblick samt Konstanz-Prüfung |
+| `create_project`, `get_project` | Projekt anlegen, Überblick samt Konstanz-Prüfung und Hinweisen auf Versehen (verirrte Pixel, Lücken im Umriss, Einzelfarben, Kachelränder) |
+| `set_style` | Stil des Projekts: Palette, Lichtrichtung, Umrissfarbe, Notizen |
 | `create_character` | Figur mit fester Größe und gesperrter Palette |
 | `create_animation` | Animation einer Figur; jeder Frame startet als Kopie der Grundpose |
 | `create_image` | Freies Bild (Tile, Item, Szene) aus Vorlage oder mit eigener Größe, gleich mit Ebenen und Frames |
@@ -84,6 +85,8 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `get_pixels` | Pixel exakt als Text lesen |
 | `edit_layers`, `edit_frames` | Ebenen und Frames verwalten, Frame-Dauer setzen |
 | `set_palette`, `add_character_colors` | Palette eines Bildes tauschen, Palette einer Figur erweitern |
+| `palette_from_image` | Hauptfarben einer Bilddatei oder eines Assets als Palette |
+| `reduce_colors` | Bild oder Figur samt Animationen auf weniger Farben bringen |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
 | `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen |
 | `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video |

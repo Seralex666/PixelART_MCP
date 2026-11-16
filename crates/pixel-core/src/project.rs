@@ -32,6 +32,47 @@ pub struct Project {
     pub animations: Vec<Animation>,
     #[serde(default)]
     pub images: Vec<Image>,
+    /// Der Stil des Projekts. Fehlt in Dateien aus älteren Versionen.
+    #[serde(default, skip_serializing_if = "Style::is_empty")]
+    pub style: Style,
+}
+
+/// Die Lichtrichtungen, die ein Stil kennt.
+pub const LIGHT_DIRS: [&str; 8] = [
+    "top-left",
+    "top",
+    "top-right",
+    "left",
+    "right",
+    "bottom-left",
+    "bottom",
+    "bottom-right",
+];
+
+/// Der Stil eines Projekts: was für alle seine Bilder gleich sein soll.
+/// Jede Angabe ist freiwillig. Neue Bilder und Figuren starten mit der Palette,
+/// und Zeichentechniken nehmen Lichtrichtung und Umrissfarbe von hier, wenn
+/// ein Aufruf sie nicht selbst nennt.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Style {
+    /// Die Farben des Projekts. Leer heißt: keine Vorgabe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub palette: Vec<crate::Rgba>,
+    /// Woher das Licht kommt, einer der Werte aus [`LIGHT_DIRS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_dir: Option<String>,
+    /// Die Farbe der Umrisse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outline: Option<crate::Rgba>,
+    /// Freie Notizen zum Stil, etwa "2 Pixel Umriss, keine reinen Schwarztöne".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+}
+
+impl Style {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Eine Abweichung, die die Konstanz einer Figur verletzt.
@@ -60,6 +101,7 @@ impl Project {
             characters: Vec::new(),
             animations: Vec::new(),
             images: Vec::new(),
+            style: Style::default(),
         }
     }
 
@@ -122,6 +164,28 @@ impl Project {
             a.sprite.palette = palette.clone();
         }
         Ok(n)
+    }
+
+    /// Bringt eine Figur und all ihre Animationen gemeinsam auf höchstens `max`
+    /// Farben. Die Palette bleibt gesperrt und überall dieselbe.
+    pub fn reduce_character_colors(
+        &mut self,
+        id: Uuid,
+        max: usize,
+    ) -> Result<crate::quant::Reduced> {
+        let at = self
+            .characters
+            .iter()
+            .position(|c| c.id == id)
+            .ok_or_else(|| not_found("Figur", id))?;
+        let mut sprites: Vec<&mut Sprite> = vec![&mut self.characters[at].base];
+        sprites.extend(
+            self.animations
+                .iter_mut()
+                .filter(|a| a.character_id == id)
+                .map(|a| &mut a.sprite),
+        );
+        crate::quant::reduce(&mut sprites, max)
     }
 
     // ---- Animationen ----
