@@ -4,6 +4,7 @@
 use crate::app::{section, App, MAX_FRAMES};
 use crate::doc::{AssetId, AssetKind, Res};
 use crate::help::{self, ConnectInfo};
+use crate::import_dialog::{self, ImportForm};
 use crate::tools::Tool;
 use eframe::egui::{self, RichText};
 use pixel_core::export::MAX_SCALE;
@@ -21,6 +22,7 @@ pub enum Dialog {
     RenameLayer { layer: usize, name: String },
     Delete(AssetId),
     Export(ExportForm),
+    Import(Box<ImportForm>),
     Connect,
     Shortcuts,
     About,
@@ -168,7 +170,7 @@ impl Default for ExportForm {
 }
 
 /// Was nach dem Zeichnen eines Dialogs geschehen soll.
-enum Outcome {
+pub(crate) enum Outcome {
     Keep,
     Close,
 }
@@ -188,6 +190,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::RenameLayer { layer, name } => rename_layer(app, ui, *layer, name),
             Dialog::Delete(id) => delete(app, ui, *id),
             Dialog::Export(form) => export(app, ui, form),
+            Dialog::Import(form) => import_dialog::show(app, ui, form),
             Dialog::Connect => connect(app, ui),
             Dialog::Shortcuts => shortcuts(ui),
             Dialog::About => about(app, ui),
@@ -210,7 +213,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Zeile mit „Abbrechen“ und einer Bestätigung. Gibt zurück, was gedrückt wurde.
-fn buttons(ui: &mut egui::Ui, confirm: &str, enabled: bool) -> (bool, bool) {
+pub(crate) fn buttons(ui: &mut egui::Ui, confirm: &str, enabled: bool) -> (bool, bool) {
     ui.add_space(10.0);
     let mut ok = false;
     let mut cancel = false;
@@ -228,7 +231,7 @@ fn buttons(ui: &mut egui::Ui, confirm: &str, enabled: bool) -> (bool, bool) {
 }
 
 /// Schließt den Dialog bei Erfolg, sonst bleibt er mit der Fehlermeldung offen.
-fn finish<T>(app: &mut App, result: Res<T>, done: impl FnOnce(&mut App, T)) -> Outcome {
+pub(crate) fn finish<T>(app: &mut App, result: Res<T>, done: impl FnOnce(&mut App, T)) -> Outcome {
     match result {
         Ok(value) => {
             done(app, value);
@@ -368,6 +371,20 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
     })
 }
 
+/// Deutscher Name einer Animationsart, mit dem Kürzel, das Claude benutzt.
+pub(crate) fn kind_label(k: &AnimationKind) -> &'static str {
+    match k {
+        AnimationKind::Idle => "Stehen (idle)",
+        AnimationKind::Walk => "Gehen (walk)",
+        AnimationKind::Run => "Rennen (run)",
+        AnimationKind::Jump => "Springen (jump)",
+        AnimationKind::Attack => "Angriff (attack)",
+        AnimationKind::Hurt => "Treffer (hurt)",
+        AnimationKind::Death => "Sterben (death)",
+        AnimationKind::Custom(_) => "Eigene",
+    }
+}
+
 fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outcome {
     ui.set_width(380.0);
     ui.heading("Neue Animation");
@@ -399,16 +416,7 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
         });
 
     section(ui, "Art");
-    let label = |k: &AnimationKind| match k {
-        AnimationKind::Idle => "Stehen (idle)",
-        AnimationKind::Walk => "Gehen (walk)",
-        AnimationKind::Run => "Rennen (run)",
-        AnimationKind::Jump => "Springen (jump)",
-        AnimationKind::Attack => "Angriff (attack)",
-        AnimationKind::Hurt => "Treffer (hurt)",
-        AnimationKind::Death => "Sterben (death)",
-        AnimationKind::Custom(_) => "Eigene",
-    };
+    let label = kind_label;
     let selected = f
         .kind
         .and_then(|i| AnimationKind::PRESETS.get(i))
@@ -885,6 +893,7 @@ fn shortcuts(ui: &mut egui::Ui) -> Outcome {
                 ("Strg+Z", "Rückgängig"),
                 ("Strg+Y", "Wiederholen"),
                 ("Strg+E", "Exportieren"),
+                ("Strg+I", "Bild importieren"),
             ];
             for (key, what) in rows {
                 ui.monospace(key);

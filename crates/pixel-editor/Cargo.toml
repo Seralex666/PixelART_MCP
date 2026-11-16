@@ -16,6 +16,7 @@ eframe = { version = "0.37", default-features = false, features = ["glow", "defa
 uuid.workspace = true
 image.workspace = true
 serde_json.workspace = true
+rfd = "0.18.0"
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -48,6 +48,8 @@ pub enum Error {
     Encode(String),
     #[error("{0}")]
     Video(String),
+    #[error("{0}")]
+    Import(String),
     #[error("WebM braucht eine gerade Vergrößerung (2, 4, 6 … bis {max}), damit die Pixel scharf bleiben", max = crate::export::MAX_SCALE)]
     OddVideoScale,
     #[error("ffmpeg wurde nicht gefunden. {help}", help = crate::video::FFMPEG_HELP)]

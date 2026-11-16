@@ -84,6 +84,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `edit_layers`, `edit_frames` | Ebenen und Frames verwalten, Frame-Dauer setzen |
 | `set_palette`, `add_character_colors` | Palette eines Bildes tauschen, Palette einer Figur erweitern |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
+| `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen |
 | `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video |
 | `delete_asset` | Figur, Animation oder Bild löschen |
 

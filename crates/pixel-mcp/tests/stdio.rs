@@ -154,6 +154,7 @@ fn lists_all_tools_with_schemas() {
         "set_palette",
         "add_character_colors",
         "export",
+        "import_image",
     ] {
         assert!(names.contains(&expected), "tool {expected} is missing");
     }
@@ -597,4 +598,138 @@ fn layer_settings_survive_new_frames() {
     )
     .unwrap();
     assert_eq!(px["rows"], json!(["..", ".."]));
+}
+
+#[test]
+fn import_brings_files_back_as_image_character_and_animation() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "Import"}));
+    // Eine kleine Figur zeichnen und als vergrößertes Bild und als Sheet exportieren.
+    c.ok(
+        "create_character",
+        json!({"project": "Import", "name": "Vorlage", "width": 4, "height": 4,
+               "palette": ["#111111", "#dd3333", "#33dd33"]}),
+    );
+    c.ok(
+        "draw",
+        json!({
+            "project": "Import", "asset": "Vorlage",
+            "ops": [{"op": "grid", "x": 0, "y": 0, "rows": ["ab..", "bc..", "..a.", "...c"],
+                     "legend": {"a": "#111111", "b": "#dd3333", "c": "#33dd33"}}],
+        }),
+    );
+    c.ok(
+        "create_animation",
+        json!({"project": "Import", "character": "Vorlage", "kind": "walk", "frames": 3}),
+    );
+    c.ok(
+        "draw",
+        json!({
+            "project": "Import", "asset": "Vorlage walk", "frame": 1,
+            "ops": [{"op": "pixels", "color": "#33dd33", "points": [[3, 0]]}],
+        }),
+    );
+    let file = |c: &mut Client, asset: &str, format: &str, scale: u32| -> String {
+        let r: Value = serde_json::from_str(
+            &c.ok(
+                "export",
+                json!({"project": "Import", "asset": asset, "format": format, "scale": scale}),
+            )
+            .text,
+        )
+        .unwrap();
+        r["files"][0].as_str().unwrap().to_string()
+    };
+    let big = file(&mut c, "Vorlage", "png", 8);
+    let sheet = file(&mut c, "Vorlage walk", "sheet", 4);
+    let pixels = |c: &mut Client, asset: &str, frame: u32| {
+        c.ok(
+            "get_pixels",
+            json!({"project": "Import", "asset": asset, "frame": frame}),
+        )
+        .text
+    };
+    let rows = |text: &str| -> Vec<String> {
+        text.lines()
+            .filter(|l| l.len() == 4 && l.chars().all(|ch| ch == '.' || ch.is_ascii_alphanumeric()))
+            .map(String::from)
+            .collect()
+    };
+
+    // Vergrößertes PNG als freies Bild: kommt in Originalgröße zurück.
+    let r = c.ok(
+        "import_image",
+        json!({"project": "Import", "path": big, "name": "Kopie"}),
+    );
+    assert!(
+        r.text.contains("as image 'Kopie'") && r.text.contains("4×4 px"),
+        "{}",
+        r.text
+    );
+    assert!(r.text.contains("scaled down 8×"), "{}", r.text);
+    assert!(r.image.is_some(), "the import shows a preview");
+    assert_eq!(
+        rows(&pixels(&mut c, "Kopie", 0)),
+        rows(&pixels(&mut c, "Vorlage", 0))
+    );
+
+    // Sheet als neue Figur samt Animation.
+    let r = c.ok(
+        "import_image",
+        json!({"project": "Import", "path": sheet, "as": "character", "name": "Held",
+               "columns": 3, "animation": "run"}),
+    );
+    assert!(r.text.contains("animation 'Held run'"), "{}", r.text);
+    assert_eq!(
+        rows(&pixels(&mut c, "Held run", 1)),
+        rows(&pixels(&mut c, "Vorlage walk", 1))
+    );
+
+    // Sheet als Animation der vorhandenen Figur: Frames werden von selbst
+    // in der Größe der Figur geschnitten.
+    let r = c.ok(
+        "import_image",
+        json!({"project": "Import", "path": sheet, "as": "animation",
+               "character": "Vorlage", "animation": "attack"}),
+    );
+    assert!(
+        r.text.contains("as animation 'Vorlage attack': 3 frame(s)"),
+        "{}",
+        r.text
+    );
+    let project: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "Import"})).text).unwrap();
+    assert_eq!(project["consistency_issues"], json!([]), "{project}");
+
+    // Fehler nennen den Grund.
+    assert!(c
+        .err(
+            "import_image",
+            json!({"project": "Import", "path": big, "name": "Kopie"})
+        )
+        .contains("already exists"));
+    assert!(c
+        .err(
+            "import_image",
+            json!({"project": "Import", "path": "/gibt/es/nicht.png"})
+        )
+        .contains("cannot import"));
+    c.ok(
+        "create_image",
+        json!({"project": "Import", "name": "Schief", "width": 5, "height": 5}),
+    );
+    c.ok(
+        "draw",
+        json!({
+            "project": "Import", "asset": "Schief",
+            "ops": [{"op": "pixels", "color": "#dd3333", "points": [[0, 0], [2, 3]]}],
+        }),
+    );
+    let crooked = file(&mut c, "Schief", "png", 1);
+    assert!(c
+        .err(
+            "import_image",
+            json!({"project": "Import", "path": crooked, "as": "animation", "character": "Held"}),
+        )
+        .contains("not a whole number"));
 }
