@@ -156,6 +156,9 @@ fn lists_all_tools_with_schemas() {
         "export",
         "import_image",
         "undo",
+        "set_style",
+        "palette_from_image",
+        "reduce_colors",
     ] {
         assert!(names.contains(&expected), "tool {expected} is missing");
     }
@@ -1283,4 +1286,213 @@ fn studio_info_is_in_english() {
         assert!(!info.contains(german), "found German text '{german}'");
     }
     assert!(info.contains("tiles for tile maps") && info.contains("Walk cycle"));
+}
+
+#[test]
+fn project_overview_points_out_likely_slips() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Box", "width": 16, "height": 16, "frames": 2}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Box", "frame": "all", "ops": [
+            {"op": "rect", "color": "#41a6f6", "x": 4, "y": 4, "w": 8, "h": 8, "filled": true},
+            {"op": "outline", "color": "#1a1c2c"}]}),
+    );
+    let clean: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "P"})).text).unwrap();
+    assert!(clean["images"][0].get("hints").is_none(), "{clean}");
+
+    // Ein verirrter Pixel in Frame 1 und eine Lücke im Umriss in beiden Frames.
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Box", "frame": 1, "ops": [
+            {"op": "pixels", "color": "#1a1c2c", "points": [[0, 15]]}]}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Box", "frame": "all", "ops": [
+            {"op": "pixels", "color": "#41a6f6", "points": [[3, 8]]}]}),
+    );
+    let o: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "P"})).text).unwrap();
+    let hints: Vec<&str> = o["images"][0]["hints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h.as_str().unwrap())
+        .collect();
+    assert!(
+        hints
+            .iter()
+            .any(|h| h.starts_with("frame 1: 1 stray pixel") && h.contains("(0,15)")),
+        "{hints:?}"
+    );
+    assert!(
+        hints
+            .iter()
+            .any(|h| h.starts_with("frame 0, 1: the outline (#1a1c2c)") && h.contains("(3,8)")),
+        "{hints:?}"
+    );
+    let view = c.ok("view", json!({"project": "P", "asset": "Box", "frame": 1}));
+    assert!(
+        view.text.contains("Hints:") && view.text.contains("stray pixel"),
+        "{}",
+        view.text
+    );
+}
+
+#[test]
+fn the_project_style_fills_in_palette_light_and_outline() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    assert!(c
+        .err("set_style", json!({"project": "P"}))
+        .contains("at least one"));
+    assert!(c
+        .err(
+            "set_style",
+            json!({"project": "P", "light_dir": "sideways"})
+        )
+        .contains("unknown light_dir"));
+    let set = c.ok(
+        "set_style",
+        json!({"project": "P", "palette": ["#000000", "#555555", "#aaaaaa", "#ffffff"],
+               "light_dir": "Top Left", "outline_color": "#000000", "notes": "1 px Umriss"}),
+    );
+    let v: Value = serde_json::from_str(&set.text).unwrap();
+    assert_eq!(v["light_dir"], "top-left");
+    assert_eq!(v["outline_color"], "#000000");
+    let o: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "P"})).text).unwrap();
+    assert_eq!(o["style"]["notes"], "1 px Umriss");
+    assert_eq!(o["style"]["palette"].as_array().unwrap().len(), 4);
+
+    // Neue Assets starten mit der Palette des Stils, außer sie nennen eine eigene.
+    let made = c.ok(
+        "create_character",
+        json!({"project": "P", "name": "Held", "width": 6, "height": 6}),
+    );
+    let v: Value = serde_json::from_str(&made.text).unwrap();
+    assert_eq!(v["palette"].as_array().unwrap().len(), 4);
+    assert_eq!(v["palette_source"], "project style");
+    let own = c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Eigen", "width": 4, "height": 4, "palette_preset": "gray8"}),
+    );
+    assert!(!own.text.contains("project style"), "{}", own.text);
+
+    // outline ohne Farbe und shade ohne Licht nehmen die Vorgaben des Stils.
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Held", "ops": [
+            {"op": "rect", "color": "#aaaaaa", "x": 1, "y": 1, "w": 4, "h": 4, "filled": true},
+            {"op": "shade", "ramp": ["#555555", "#aaaaaa", "#ffffff"], "mask": "#aaaaaa"},
+            {"op": "outline"}]}),
+    );
+    let key = [
+        ("#000000", 'k'),
+        ("#555555", 'd'),
+        ("#aaaaaa", 'm'),
+        ("#ffffff", 'w'),
+    ];
+    assert_eq!(
+        picture(&mut c, "Held", 0, 0, &key),
+        [".kkkk.", "kwwwwk", "kwmmdk", "kwmmdk", "kwdddk", ".kkkk."]
+    );
+
+    // Ohne Stil fehlt die Umrissfarbe.
+    c.ok("set_style", json!({"project": "P", "clear": true}));
+    let err = c.err(
+        "draw",
+        json!({"project": "P", "asset": "Held", "ops": [{"op": "outline"}]}),
+    );
+    assert!(err.contains("`color` is missing"), "{err}");
+    let o: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "P"})).text).unwrap();
+    assert!(o.get("style").is_none());
+}
+
+#[test]
+fn palettes_come_from_pictures_and_assets_shrink_to_fewer_colors() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    // Ein Bild mit vier dunklen Rottönen, zwei Grüntönen und einem hellen Glanzpunkt.
+    let file = c.home.join("vorlage.png");
+    std::fs::create_dir_all(&c.home).unwrap();
+    let mut img = image::RgbaImage::new(8, 2);
+    let reds = [[100, 0, 0], [104, 0, 0], [108, 0, 0], [112, 0, 0]];
+    for x in 0..8u32 {
+        let red = reds[(x % 4) as usize];
+        img.put_pixel(x, 0, image::Rgba([red[0], red[1], red[2], 255]));
+        let g = if x < 7 { [0, 160, 0] } else { [0, 164, 0] };
+        img.put_pixel(x, 1, image::Rgba([g[0], g[1], g[2], 255]));
+    }
+    img.put_pixel(7, 0, image::Rgba([255, 255, 255, 255]));
+    img.save(&file).unwrap();
+
+    let r = c.ok(
+        "palette_from_image",
+        json!({"path": file.to_string_lossy(), "max_colors": 3}),
+    );
+    let v: Value = serde_json::from_str(&r.text).unwrap();
+    // Der seltene Glanzpunkt bleibt, die ähnlichen Töne fallen zusammen.
+    let found: Vec<&str> = v["colors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap())
+        .collect();
+    assert_eq!(found.len(), 3, "{found:?}");
+    assert_eq!(found[2], "#ffffff");
+    assert!(
+        found[0].starts_with("#6") && found[1] == "#00a000",
+        "{found:?}"
+    );
+    assert_eq!(v["source_colors"], 7);
+    assert!(r.image.is_some());
+    assert!(c
+        .err("palette_from_image", json!({"project": "P"}))
+        .contains("give either `path`"));
+
+    c.ok(
+        "import_image",
+        json!({"project": "P", "path": file.to_string_lossy(), "name": "Bild"}),
+    );
+    let red = c.ok(
+        "reduce_colors",
+        json!({"project": "P", "asset": "Bild", "colors": 3}),
+    );
+    assert!(red.text.contains("from 7 to 3 colors"), "{}", red.text);
+    let after: std::collections::BTreeSet<String> = colors(&mut c, "Bild", 0, 0)
+        .into_iter()
+        .flatten()
+        .filter(|c| c != ".")
+        .collect();
+    assert_eq!(after.len(), 3);
+    assert!(
+        after.contains("#ffffff") && after.contains("#00a000"),
+        "{after:?}"
+    );
+    let again = c.ok(
+        "reduce_colors",
+        json!({"project": "P", "asset": "Bild", "colors": 8}),
+    );
+    assert!(again.text.contains("nothing was changed"), "{}", again.text);
+    // reduce_colors lässt sich wie ein Zeichenaufruf zurücknehmen.
+    c.ok("undo", json!({"project": "P"}));
+    let back: std::collections::BTreeSet<String> =
+        colors(&mut c, "Bild", 0, 0).into_iter().flatten().collect();
+    assert_eq!(back.len(), 7);
+
+    // Aus einem Asset liest die Palette genauso.
+    let from_asset = c.ok(
+        "palette_from_image",
+        json!({"project": "P", "asset": "Bild", "max_colors": 16}),
+    );
+    let v: Value = serde_json::from_str(&from_asset.text).unwrap();
+    assert_eq!(v["count"], 7);
 }

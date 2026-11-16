@@ -1,6 +1,6 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
-use crate::studio::{DrawOp, ImportArgs, PerFrame, Reply, Res, Studio, ViewOptions};
+use crate::studio::{DrawOp, ImportArgs, PerFrame, Reply, Res, Studio, StyleArgs, ViewOptions};
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -14,12 +14,13 @@ const INSTRUCTIONS: &str = r##"PixelArt Studio creates REAL pixel art: every ima
 
 Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
-2. create_project, then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
+2. create_project, optionally set_style (shared palette, light direction, outline color), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
 3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
 4. Add depth with the technique ops instead of placing every pixel by hand: `outline` around a shape, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
 5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
-7. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
+7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
+8. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
 Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
 
 Consistency rules:
@@ -285,6 +286,47 @@ pub struct AddCharacterColors {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct SetStyle {
+    /// Project name.
+    project: String,
+    /// The project's colors. New images and characters start with them unless they name a palette.
+    palette: Option<Vec<String>>,
+    /// Palette preset name from get_studio_info, instead of `palette`.
+    palette_preset: Option<String>,
+    /// Where the light comes from, e.g. "top-left". `shade` uses it when it gives no `light_dir`. "none" removes it.
+    light_dir: Option<String>,
+    /// Outline color. `outline` uses it when it gives no `color`, and the outline hints check against it. "none" removes it.
+    outline_color: Option<String>,
+    /// Free style notes for everyone drawing in this project, e.g. "1 px outline, no pure black". Up to 500 characters.
+    notes: Option<String>,
+    /// Remove the whole style first. Combine with other fields to start over.
+    #[serde(default)]
+    clear: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct PaletteFromImage {
+    /// Path of a PNG, JPG or GIF file on the user's computer. Give this, or `project` and `asset`.
+    path: Option<String>,
+    /// Project name, together with `asset`.
+    project: Option<String>,
+    /// Name or id of an image, character or animation in the project.
+    asset: Option<String>,
+    /// Most colors to return, 1 to 256. Default 16.
+    max_colors: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ReduceColors {
+    /// Project name.
+    project: String,
+    /// Name or id of an image or a character. A character is reduced together with all its animations.
+    asset: String,
+    /// Most colors to keep, 1 to 256.
+    colors: usize,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ImportImage {
     /// Project name.
     project: String,
@@ -358,7 +400,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Overview of a project: characters with palettes and animations, images, sizes, layers, frame counts, and any consistency issues.",
+        description = "Overview of a project: its style, characters with palettes and animations, images, sizes, layers, frame counts, consistency issues, and `hints` on likely slips per asset (stray pixels, gaps in an outline, colors used by a single pixel, tiles that do not repeat seamlessly).",
         annotations(title = "Project overview", read_only_hint = true)
     )]
     fn get_project(&self, Parameters(a): Parameters<ProjectOnly>) -> CallToolResult {
@@ -559,6 +601,49 @@ impl PixelServer {
         Parameters(a): Parameters<AddCharacterColors>,
     ) -> CallToolResult {
         self.run(|s| s.add_character_colors(&a.project, &a.character, &a.colors))
+    }
+
+    #[tool(
+        description = "Set the project style that all its assets share: palette, light direction, outline color and notes. New images and characters start with the palette, `shade` and `outline` use light direction and outline color when a call leaves them out, and get_project shows the style to everyone working on the project. Fields left out stay as they are.",
+        annotations(title = "Set project style", destructive_hint = false)
+    )]
+    fn set_style(&self, Parameters(a): Parameters<SetStyle>) -> CallToolResult {
+        self.run(|s| {
+            s.set_style(
+                &a.project,
+                &StyleArgs {
+                    palette_preset: a.palette_preset.as_deref(),
+                    palette: a.palette.as_deref(),
+                    light_dir: a.light_dir.as_deref(),
+                    outline_color: a.outline_color.as_deref(),
+                    notes: a.notes.as_deref(),
+                    clear: a.clear,
+                },
+            )
+        })
+    }
+
+    #[tool(
+        description = "Read the main colors of an image file or an asset as a palette, sorted dark to light, with a swatch preview. Similar colors are merged and the most used one of each group is kept, so the result only has colors that really occur. Use it to take over the colors of reference art or of an existing asset.",
+        annotations(title = "Palette from image", read_only_hint = true)
+    )]
+    fn palette_from_image(&self, Parameters(a): Parameters<PaletteFromImage>) -> CallToolResult {
+        self.run(|s| {
+            s.palette_from_image(
+                a.path.as_deref(),
+                a.project.as_deref(),
+                a.asset.as_deref(),
+                a.max_colors,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Reduce an image, or a character together with all its animations, to at most `colors` colors. The most similar colors are merged into the most used color of their group, so no new mixed colors appear and rare but distinct colors (highlights) survive. The palette becomes exactly the remaining colors. Returns a preview.",
+        annotations(title = "Reduce colors", destructive_hint = true)
+    )]
+    fn reduce_colors(&self, Parameters(a): Parameters<ReduceColors>) -> CallToolResult {
+        self.run(|s| s.reduce_colors(&a.project, &a.asset, a.colors))
     }
 
     #[tool(

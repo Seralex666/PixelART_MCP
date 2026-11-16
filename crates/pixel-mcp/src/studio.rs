@@ -8,7 +8,9 @@ use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
 use pixel_core::expr::Expr;
 use pixel_core::import::{self, Grid, NewColors, Shrink};
-use pixel_core::project::CharacterBundle;
+use pixel_core::lint::{self, Checks, Finding};
+use pixel_core::project::{CharacterBundle, Style};
+use pixel_core::quant;
 use pixel_core::workspace::{
     self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
 };
@@ -70,6 +72,8 @@ const MAX_LAYERS: usize = 64;
 const MAX_UNDO: usize = 20;
 /// Speichergrenze dafür: große Bilder mit vielen Frames belegen sonst sehr viel.
 const MAX_UNDO_BYTES: usize = 256 * 1024 * 1024;
+/// Längste Notiz im Projekt-Stil, in Zeichen.
+const MAX_STYLE_NOTES: usize = 500;
 
 pub struct Studio {
     ws: Workspace,
@@ -168,7 +172,8 @@ pub enum DrawOp {
     /// Outline around everything drawn on the layer, placed on the empty pixels next to it.
     /// Example: {"op": "outline", "color": "#1a1c2c"}
     Outline {
-        color: String,
+        /// Outline color. May be left out when the project style sets one (see set_style).
+        color: Option<String>,
         /// Width in pixels, 1 to 16. Default 1.
         thickness: Option<u32>,
         /// Also count corner neighbors. Makes the outline solid on diagonals. Default false.
@@ -181,7 +186,8 @@ pub enum DrawOp {
     /// Example: {"op": "shade", "light_dir": "top-left", "ramp": ["#333c57", "#566c86", "#94b0c2"], "mask": "#566c86"}
     Shade {
         /// Where the light comes from: top, bottom, left, right, top-left, top-right, bottom-left or bottom-right.
-        light_dir: String,
+        /// Default: the light direction of the project style, else top-left.
+        light_dir: Option<String>,
         /// Colors from darkest to lightest. The first half shades the edges away from the
         /// light (darkest at the rim), the second half lights the edges toward it (lightest
         /// at the rim). With an odd number of colors the middle one is the base color and
@@ -342,6 +348,17 @@ pub struct ImportArgs<'a> {
     pub keep_empty_frames: bool,
 }
 
+/// Angaben für [`Studio::set_style`]. Was fehlt, bleibt, wie es ist.
+#[derive(Default)]
+pub struct StyleArgs<'a> {
+    pub palette_preset: Option<&'a str>,
+    pub palette: Option<&'a [String]>,
+    pub light_dir: Option<&'a str>,
+    pub outline_color: Option<&'a str>,
+    pub notes: Option<&'a str>,
+    pub clear: bool,
+}
+
 impl Studio {
     pub fn new(home: PathBuf) -> Res<Self> {
         let ws = Workspace::open(&home)
@@ -449,18 +466,27 @@ impl Studio {
                 "palette_colors": s.palette.len(),
             })
         };
+        // Hinweise auf typische Versehen, nur wo es welche gibt.
+        let outline = p.style.outline;
+        let with_hints = |mut v: Value, s: &Sprite, seams: bool| {
+            let hints = hint_texts(s, &lint::check(s, Checks { outline, seams }));
+            if !hints.is_empty() {
+                v["hints"] = json!(hints);
+            }
+            v
+        };
         let characters: Vec<Value> = p
             .characters
             .iter()
             .map(|c| {
-                json!({
+                let v = json!({
                     "name": c.name,
                     "id": c.id,
                     "description": c.description,
                     "anchor": [c.anchor.0, c.anchor.1],
                     "base": sprite_info(&c.base),
                     "palette": c.palette().colors,
-                    "animations": p.animations_of(c.id).map(|a| json!({
+                    "animations": p.animations_of(c.id).map(|a| with_hints(json!({
                         "name": a.name,
                         "id": a.id,
                         "kind": a.kind.name(),
@@ -468,8 +494,9 @@ impl Studio {
                         "frame_ms": a.sprite.frames().iter().map(|f| f.duration_ms).collect::<Vec<_>>(),
                         "looping": a.looping,
                         "layers": a.sprite.layer_names(),
-                    })).collect::<Vec<_>>(),
-                })
+                    }), &a.sprite, false)).collect::<Vec<_>>(),
+                });
+                with_hints(v, &c.base, false)
             })
             .collect();
         let images: Vec<Value> = p
@@ -479,15 +506,92 @@ impl Studio {
                 let mut v = sprite_info(&i.sprite);
                 v["name"] = json!(i.name);
                 v["id"] = json!(i.id);
-                v
+                with_hints(v, &i.sprite, true)
             })
             .collect();
-        Ok(Reply::json(json!({
+        let mut overview = json!({
             "project": p.name,
             "characters": characters,
             "images": images,
             "consistency_issues": p.validate(),
-        })))
+        });
+        if !p.style.is_empty() {
+            overview["style"] = style_json(&p.style);
+        }
+        Ok(Reply::json(overview))
+    }
+
+    /// Legt den Stil des Projekts fest: Palette, Lichtrichtung, Umrissfarbe, Notizen.
+    pub fn set_style(&self, project: &str, a: &StyleArgs) -> Res {
+        let nothing = a.palette_preset.is_none()
+            && a.palette.is_none()
+            && a.light_dir.is_none()
+            && a.outline_color.is_none()
+            && a.notes.is_none();
+        if nothing && !a.clear {
+            return Err(
+                "give at least one of `palette`, `palette_preset`, `light_dir`, `outline_color`, `notes` or `clear`"
+                    .into(),
+            );
+        }
+        let (_lock, mut p) = self.load_locked(project)?;
+        if a.clear {
+            p.style = Style::default();
+        }
+        if a.palette_preset.is_some() || a.palette.is_some() {
+            p.style.palette =
+                Self::palette(a.palette_preset, a.palette, ColorDepth::Rgba32)?.colors;
+        }
+        let unset = |text: &str| matches!(text.trim().to_ascii_lowercase().as_str(), "" | "none");
+        if let Some(dir) = a.light_dir {
+            p.style.light_dir = if unset(dir) {
+                None
+            } else {
+                Some(direction_name(parse_direction(dir, "light_dir")?).to_string())
+            };
+        }
+        if let Some(color) = a.outline_color {
+            p.style.outline = if unset(color) {
+                None
+            } else {
+                Some(parse_color(color)?).filter(|c| !c.is_transparent())
+            };
+        }
+        if let Some(notes) = a.notes {
+            let notes = notes.trim();
+            if notes.chars().count() > MAX_STYLE_NOTES {
+                return Err(format!(
+                    "`notes` may have at most {MAX_STYLE_NOTES} characters"
+                ));
+            }
+            p.style.notes = notes.to_string();
+        }
+        self.save(project, &p)?;
+        if p.style.is_empty() {
+            return Ok(Reply::text(format!(
+                "Project '{}' has no style now. New images start with the default palette again.",
+                p.name
+            )));
+        }
+        let mut v = style_json(&p.style);
+        v["note"] = json!("Used from now on: create_image and create_character start with this palette unless they name one, `shade` takes this light direction unless it gives `light_dir`, `outline` takes this color unless it gives `color`, and the outline hints of view and get_project check against it. Existing assets are not changed.");
+        Ok(Reply::json(v))
+    }
+
+    /// Die Palette für ein neues Asset: die genannte, sonst die des Projekt-Stils,
+    /// sonst die Standardpalette. `true`, wenn sie aus dem Stil kommt.
+    fn palette_for_new(
+        p: &Project,
+        preset: Option<&str>,
+        colors: Option<&[String]>,
+        depth: ColorDepth,
+    ) -> Res<(Palette, bool)> {
+        if preset.is_none() && colors.is_none() && !p.style.palette.is_empty() {
+            let mut pal = Palette::new("Projekt-Stil", p.style.palette.clone());
+            pal.conform_to(depth);
+            return Ok((pal, true));
+        }
+        Ok((Self::palette(preset, colors, depth)?, false))
     }
 
     // ---------------------------------------------------------------- Assets
@@ -654,7 +758,12 @@ impl Studio {
         let name = Self::check_new_name(&p, name)?;
         let (w, h) = Self::size(template_id, width, height)?;
         let depth = Self::depth(depth_bits)?;
-        let pal = Self::palette(palette_preset, palette, depth)?;
+        let (pal, from_style) = Self::palette_for_new(&p, palette_preset, palette, depth)?;
+        let style_note = if from_style {
+            format!(" Palette: project style ({} colors).", pal.len())
+        } else {
+            String::new()
+        };
         let mut sprite = Sprite::new(w, h, depth, pal).map_err(e)?;
         Self::name_layers(&mut sprite, layers)?;
         let frames = frames.unwrap_or(1);
@@ -668,7 +777,7 @@ impl Studio {
         let id = p.add_image(name.clone(), sprite);
         self.save(project, &p)?;
         Ok(Reply::text(format!(
-            "Created image '{name}' ({w}×{h}, {} bit), id {id}. Layers bottom to top: {layer_names}. Frames: {frames}, all empty.",
+            "Created image '{name}' ({w}×{h}, {} bit), id {id}. Layers bottom to top: {layer_names}. Frames: {frames}, all empty.{style_note}",
             depth.bits()
         )))
     }
@@ -717,14 +826,14 @@ impl Studio {
         let name = Self::check_new_name(&p, name)?;
         let (w, h) = Self::size(template_id, width, height)?;
         let depth = Self::depth(depth_bits)?;
-        let pal = Self::palette(palette_preset, palette, depth)?;
+        let (pal, from_style) = Self::palette_for_new(&p, palette_preset, palette, depth)?;
         if pal.is_empty() {
             return Err("a character needs a palette with at least one color".into());
         }
         let mut ch = Character::new(name.clone(), w, h, depth, pal).map_err(e)?;
         ch.description = description.unwrap_or_default().to_string();
         Self::name_layers(&mut ch.base, layers)?;
-        let info = json!({
+        let mut info = json!({
             "created": name,
             "id": ch.id,
             "size": [w, h],
@@ -733,6 +842,9 @@ impl Studio {
             "palette": ch.palette().colors,
             "note": "The palette is now locked: every color you draw on this character or its animations snaps to the nearest palette color. Use add_character_colors to extend it. Draw the base pose next, then create animations from it.",
         });
+        if from_style {
+            info["palette_source"] = json!("project style");
+        }
         p.add_character(ch);
         self.save(project, &p)?;
         Ok(Reply::json(info))
@@ -1118,6 +1230,7 @@ impl Studio {
             }
         }
 
+        let style = p.style.clone();
         let s = Self::sprite_mut(&mut p, r)?;
         let before = s.clone();
         let frames = Self::frame_list(s, frame)?;
@@ -1152,6 +1265,7 @@ impl Studio {
             warnings: Vec::new(),
             swap: HashMap::new(),
             sources: &sources,
+            style,
         };
         for &f in &frames {
             let t = Target::new(f, l);
@@ -1210,33 +1324,38 @@ impl Studio {
             );
         }
         self.save(project, &p)?;
-        if before != after {
-            let mut history = self
-                .history
-                .lock()
-                .map_err(|_| "the undo history is unavailable".to_string())?;
-            history.push(Drawn {
-                project: workspace::name_key(project),
-                asset: r,
-                before,
-                after,
-            });
-            // Älteste Einträge fallen weg, wenn es zu viele oder zu große werden.
-            let bytes = |h: &[Drawn]| -> usize {
-                h.iter()
-                    .map(|d| sprite_bytes(&d.before) + sprite_bytes(&d.after))
-                    .sum()
-            };
-            while history.len() > MAX_UNDO
-                || (history.len() > 1 && bytes(&history) > MAX_UNDO_BYTES)
-            {
-                history.remove(0);
-            }
-        }
+        self.remember(project, r, before, after)?;
         Ok(Reply {
             text,
             image_png: Some(png),
         })
+    }
+
+    /// Merkt sich eine Änderung an einem Asset, damit `undo` sie zurücknehmen kann.
+    fn remember(&self, project: &str, asset: AssetRef, before: Sprite, after: Sprite) -> Res<()> {
+        if before == after {
+            return Ok(());
+        }
+        let mut history = self
+            .history
+            .lock()
+            .map_err(|_| "the undo history is unavailable".to_string())?;
+        history.push(Drawn {
+            project: workspace::name_key(project),
+            asset,
+            before,
+            after,
+        });
+        // Älteste Einträge fallen weg, wenn es zu viele oder zu große werden.
+        let bytes = |h: &[Drawn]| -> usize {
+            h.iter()
+                .map(|d| sprite_bytes(&d.before) + sprite_bytes(&d.after))
+                .sum()
+        };
+        while history.len() > MAX_UNDO || (history.len() > 1 && bytes(&history) > MAX_UNDO_BYTES) {
+            history.remove(0);
+        }
+        Ok(())
     }
 
     /// Nimmt die letzten `draw`-Aufrufe dieser Sitzung zurück, den jüngsten zuerst.
@@ -1337,6 +1456,16 @@ impl Studio {
         for note in notes {
             text.push(' ');
             text.push_str(&note);
+        }
+        if layer.is_none() {
+            let checks = Checks {
+                outline: p.style.outline,
+                seams: matches!(r, AssetRef::Image(_)),
+            };
+            let hints = hint_texts(s, &lint::check_frames(s, &frames, checks));
+            if !hints.is_empty() {
+                text.push_str(&format!(" Hints: {}.", hints.join("; ")));
+            }
         }
         Ok(Reply {
             text,
@@ -1683,6 +1812,141 @@ impl Studio {
         })))
     }
 
+    /// Liest die Farben einer Bilddatei oder eines Assets als Palette aus.
+    pub fn palette_from_image(
+        &self,
+        path: Option<&str>,
+        project: Option<&str>,
+        asset: Option<&str>,
+        max_colors: Option<usize>,
+    ) -> Res {
+        let max = max_colors.unwrap_or(16);
+        if !(1..=Palette::MAX_COLORS).contains(&max) {
+            return Err(format!(
+                "`max_colors` must be 1 to {}, got {max}",
+                Palette::MAX_COLORS
+            ));
+        }
+        let (source, (colors, found)) = match (path, project, asset) {
+            (Some(path), None, None) => {
+                let path = Path::new(path.trim());
+                let picture =
+                    import::read(path).map_err(|err| format!("cannot read the image: {err}"))?;
+                let pixels = picture.frames.iter().flat_map(|f| f.pixels.iter().copied());
+                (path.display().to_string(), quant::palette_of(pixels, max))
+            }
+            (None, Some(project), Some(asset)) => {
+                let p = self.load(project)?;
+                let r = Self::resolve(&p, asset)?;
+                let s = Self::sprite(&p, r)?;
+                let mut pixels = Vec::new();
+                for f in 0..s.frames().len() {
+                    pixels.extend(s.composite(f).map_err(e)?);
+                }
+                (Self::asset_name(&p, r), quant::palette_of(pixels, max))
+            }
+            _ => {
+                return Err(
+                    "give either `path` (an image file) or `project` and `asset`, not both".into(),
+                )
+            }
+        };
+        if colors.is_empty() {
+            return Err(format!("'{source}' has no visible pixels, so no colors"));
+        }
+        let note = if found > colors.len() {
+            format!(
+                "The source has {found} colors; similar ones were merged and the most used color of each group kept."
+            )
+        } else {
+            "These are all colors of the source.".to_string()
+        };
+        Ok(Reply {
+            text: serde_json::to_string_pretty(&json!({
+                "source": source,
+                "colors": colors,
+                "count": colors.len(),
+                "source_colors": found,
+                "note": format!("{note} Sorted dark to light, as in the picture. Pass the list as `palette` to create_image, create_character or set_style."),
+            }))
+            .unwrap_or_default(),
+            image_png: Some(swatches(&colors)?),
+        })
+    }
+
+    /// Bringt ein Bild oder eine Figur samt Animationen auf höchstens `colors` Farben.
+    pub fn reduce_colors(&self, project: &str, asset: &str, colors: usize) -> Res {
+        if !(1..=Palette::MAX_COLORS).contains(&colors) {
+            return Err(format!(
+                "`colors` must be 1 to {}, got {colors}",
+                Palette::MAX_COLORS
+            ));
+        }
+        let (_lock, mut p) = self.load_locked(project)?;
+        let r = Self::resolve(&p, asset)?;
+        let name = Self::asset_name(&p, r);
+        let before = Self::sprite(&p, r)?.clone();
+        let (report, tail) = match r {
+            AssetRef::Image(_) => {
+                let s = Self::sprite_mut(&mut p, r)?;
+                let report = quant::reduce(&mut [s], colors).map_err(e)?;
+                (report, " `undo` takes this back.".to_string())
+            }
+            AssetRef::Character(id) => {
+                let report = p.reduce_character_colors(id, colors).map_err(e)?;
+                let n = p.animations_of(id).count();
+                let tail = if n > 0 {
+                    format!(" Its {n} animation(s) were reduced with it and share the new palette. This cannot be undone with `undo`.")
+                } else {
+                    " `undo` takes this back.".to_string()
+                };
+                (report, tail)
+            }
+            AssetRef::Animation(id) => {
+                let owner = p.animation(id).map_err(e)?.character_id;
+                let owner = p
+                    .character(owner)
+                    .map(|c| c.name.clone())
+                    .unwrap_or_default();
+                return Err(format!(
+                    "an animation shares the palette of its character. Reduce the character '{owner}' instead; that covers all its animations."
+                ));
+            }
+        };
+        let s = Self::sprite(&p, r)?;
+        let frames: Vec<usize> = (0..s.frames().len()).collect();
+        let png = render_plain(s, &frames, None)?;
+        if report.after == report.before {
+            return Ok(Reply {
+                text: format!(
+                    "'{name}' already uses only {} color(s), nothing was changed.",
+                    report.before
+                ),
+                image_png: Some(png),
+            });
+        }
+        let after = s.clone();
+        self.save(project, &p)?;
+        // Nur was `undo` allein wiederherstellen kann, kommt in die Liste.
+        let alone = match r {
+            AssetRef::Character(id) => p.animations_of(id).next().is_none(),
+            _ => true,
+        };
+        if alone {
+            self.remember(project, r, before, after)?;
+        }
+        let list: Vec<String> = report.colors.iter().map(Rgba::to_string).collect();
+        Ok(Reply {
+            text: format!(
+                "Reduced '{name}' from {} to {} colors. Similar colors were merged into the most used color of each group, so no new mixed colors appear. The palette is now: {}.{tail}",
+                report.before,
+                report.after,
+                list.join(", ")
+            ),
+            image_png: Some(png),
+        })
+    }
+
     // ---------------------------------------------------------------- Export
 
     #[allow(clippy::too_many_arguments)]
@@ -1782,6 +2046,106 @@ pub fn parse_color(s: &str) -> Res<Rgba> {
         .map_err(|_| format!("invalid color '{s}': use #RRGGBB, #RRGGBBAA or \"transparent\""))
 }
 
+/// Der Stil eines Projekts, wie ihn das Modell zu sehen bekommt.
+fn style_json(style: &Style) -> Value {
+    let mut v = json!({});
+    if !style.palette.is_empty() {
+        v["palette"] = json!(style.palette);
+    }
+    if let Some(dir) = &style.light_dir {
+        v["light_dir"] = json!(dir);
+    }
+    if let Some(c) = style.outline {
+        v["outline_color"] = json!(c);
+    }
+    if !style.notes.is_empty() {
+        v["notes"] = json!(style.notes);
+    }
+    v
+}
+
+/// Der Name einer Richtung, wie ihn der Stil speichert.
+fn direction_name((dx, dy): (i64, i64)) -> &'static str {
+    match (dx.signum(), dy.signum()) {
+        (-1, -1) => "top-left",
+        (0, -1) => "top",
+        (1, -1) => "top-right",
+        (-1, 0) => "left",
+        (1, 0) => "right",
+        (-1, 1) => "bottom-left",
+        (0, 1) => "bottom",
+        _ => "bottom-right",
+    }
+}
+
+/// Prüf-Hinweise als Sätze. Bei mehreren Frames steht dabei, welche gemeint sind.
+fn hint_texts(s: &Sprite, hints: &[lint::Hint]) -> Vec<String> {
+    let places = |at: &[(u32, u32)], count: usize| {
+        let mut list: Vec<String> = at.iter().map(|(x, y)| format!("({x},{y})")).collect();
+        if count > at.len() {
+            list.push("…".into());
+        }
+        list.join(" ")
+    };
+    hints
+        .iter()
+        .map(|h| {
+            let what = match &h.finding {
+                Finding::StrayPixels { count, at } => format!(
+                    "{count} stray pixel(s) without any neighbor at {}",
+                    places(at, *count)
+                ),
+                Finding::OutlineGaps { color, count, at } => format!(
+                    "the outline ({color}) is interrupted by {count} pixel(s) of another color at {}",
+                    places(at, *count)
+                ),
+                Finding::SingleUseColors { colors } => {
+                    let list: Vec<String> = colors
+                        .iter()
+                        .map(|(c, (x, y))| format!("{c} at ({x},{y})"))
+                        .collect();
+                    format!(
+                        "color(s) used by one single pixel, maybe a slip: {}",
+                        list.join(", ")
+                    )
+                }
+                Finding::Seam { horizontal: true } => {
+                    "left and right edge do not match, tiling shows a vertical seam (check with view tile=true)".to_string()
+                }
+                Finding::Seam { horizontal: false } => {
+                    "top and bottom edge do not match, tiling shows a horizontal seam (check with view tile=true)".to_string()
+                }
+            };
+            if s.frames().len() > 1 {
+                format!("frame {}: {what}", list_frames(&h.frames))
+            } else {
+                what
+            }
+        })
+        .collect()
+}
+
+/// Ein Bild der Farben einer Palette: ein Feld je Farbe, höchstens 16 je Zeile.
+fn swatches(colors: &[Rgba]) -> Res<Vec<u8>> {
+    const CELL: u32 = 32;
+    const PER_ROW: usize = 16;
+    let columns = colors.len().clamp(1, PER_ROW) as u32;
+    let rows = colors.len().div_ceil(PER_ROW).max(1) as u32;
+    let mut img =
+        image::RgbaImage::from_pixel(columns * CELL, rows * CELL, image::Rgba([32, 32, 40, 255]));
+    for (i, c) in colors.iter().enumerate() {
+        let (cx, cy) = ((i % PER_ROW) as u32 * CELL, (i / PER_ROW) as u32 * CELL);
+        for y in 1..CELL - 1 {
+            for x in 1..CELL - 1 {
+                img.put_pixel(cx + x, cy + y, image::Rgba([c.r, c.g, c.b, 255]));
+            }
+        }
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(e)?;
+    Ok(out.into_inner())
+}
+
 fn note_snap(s: &mut Sprite, wanted: Rgba, snapped: &mut BTreeMap<String, String>) -> Rgba {
     let got = s.conform(wanted);
     if got != wanted && !wanted.is_transparent() {
@@ -1806,6 +2170,8 @@ struct DrawCtx<'a> {
     swap: HashMap<Rgba, Rgba>,
     /// Sprites anderer Assets, aus denen gestempelt wird, nach dem Namen in der Op.
     sources: &'a HashMap<String, Sprite>,
+    /// Der Stil des Projekts: Vorgaben für Ops, die Licht oder Umrissfarbe nicht nennen.
+    style: Style,
 }
 
 impl DrawCtx<'_> {
@@ -2039,7 +2405,16 @@ fn apply_op(s: &mut Sprite, t: Target, op: &DrawOp, ctx: &mut DrawCtx) -> Res<()
             thickness,
             diagonals,
         } => {
-            let c = ctx.color(s, color)?;
+            let c = match (color, ctx.style.outline) {
+                (Some(color), _) => ctx.color(s, color)?,
+                (None, Some(color)) => note_snap(s, color, &mut ctx.snapped),
+                (None, None) => {
+                    return Err(
+                        "`color` is missing and the project style sets no outline color (see set_style)"
+                            .into(),
+                    )
+                }
+            };
             let thickness = thickness.unwrap_or(1);
             if !(1..=16).contains(&thickness) {
                 return Err("`thickness` must be 1 to 16".into());
@@ -2057,6 +2432,10 @@ fn apply_op(s: &mut Sprite, t: Target, op: &DrawOp, ctx: &mut DrawCtx) -> Res<()
             ramp,
             area,
         } => {
+            let light_dir = light_dir
+                .as_deref()
+                .or(ctx.style.light_dir.as_deref())
+                .unwrap_or("top-left");
             let light = parse_direction(light_dir, "light_dir")?;
             let ramp = ctx.colors(s, ramp)?;
             let sel = select(s, t, area, Mask::Opaque)?;
