@@ -1,6 +1,6 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
-use crate::studio::{DrawOp, Reply, Res, Studio};
+use crate::studio::{DrawOp, ImportArgs, Reply, Res, Studio};
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -19,6 +19,7 @@ Typical workflow:
 4. Every draw call returns a preview image. Look at it and correct mistakes before continuing. Use get_pixels to read exact pixels back as text.
 5. create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves in each frame (shift op on one layer, small grid patches).
 6. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
+Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
 
 Consistency rules:
 - A character's palette is locked when it is created. Colors drawn on the character or its animations snap to the nearest palette color, so choose the full palette up front (skin, hair, clothes, outline, shadows, highlights). add_character_colors appends colors later without changing existing ones.
@@ -249,6 +250,39 @@ pub struct AddCharacterColors {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct ImportImage {
+    /// Project name.
+    project: String,
+    /// Full path of a PNG, JPG or GIF file on the user's computer.
+    path: String,
+    /// What to create: "image" (default), "character" (frame 0 becomes the base pose and the file's colors become the locked palette) or "animation" (of an existing character, see `character`).
+    #[serde(rename = "as")]
+    kind: Option<String>,
+    /// Name of the new asset. Default: the file name; for animations "<character> <kind>".
+    name: Option<String>,
+    /// For as="animation": name or id of the character the animation belongs to. Frames must have the character's size.
+    character: Option<String>,
+    /// Animation kind: idle, walk, run, jump, attack, hurt, death or a custom name. For as="animation" it sets the kind (default: the file name). For as="character" with a multi-frame file it also keeps all frames as an animation of the new character.
+    animation: Option<String>,
+    /// Sprite sheet: width of one frame in true pixels (after downscale). Use with frame_height.
+    frame_width: Option<u32>,
+    /// Sprite sheet: height of one frame in true pixels (after downscale).
+    frame_height: Option<u32>,
+    /// Sprite sheet: number of frames per row. Alternative to frame_width/frame_height.
+    columns: Option<u32>,
+    /// Sprite sheet: number of rows. Default 1.
+    rows: Option<u32>,
+    /// Integer factor to scale the file down by. Default: detect automatically, so pixel art that was saved enlarged (every pixel a block of N×N) comes in at its true size. 1 keeps the file as it is.
+    downscale: Option<u32>,
+    /// 8, 16 or 32 (default). Ignored for animations, which use their character's depth.
+    color_depth_bits: Option<u8>,
+    /// For as="animation": "add" (default) appends colors the character does not have yet to its palette, so the frames stay pixel exact; "snap" replaces them with the nearest palette color.
+    new_colors: Option<String>,
+    /// Keep fully transparent frames at the end of a sprite sheet. Default false.
+    keep_empty_frames: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct Export {
     /// Project name.
     project: String,
@@ -455,6 +489,31 @@ impl PixelServer {
         Parameters(a): Parameters<AddCharacterColors>,
     ) -> CallToolResult {
         self.run(|s| s.add_character_colors(&a.project, &a.character, &a.colors))
+    }
+
+    #[tool(
+        description = "Import an existing PNG, JPG or GIF file from the user's computer as an image, a character or an animation of a character. Splits sprite sheets into frames, reads the frames and timing of animated GIFs, and brings enlarged pixel art back to its true pixel size. Returns a preview.",
+        annotations(title = "Import image", destructive_hint = false)
+    )]
+    fn import_image(&self, Parameters(a): Parameters<ImportImage>) -> CallToolResult {
+        self.run(|s| {
+            s.import_image(&ImportArgs {
+                project: &a.project,
+                path: &a.path,
+                name: a.name.as_deref(),
+                kind: a.kind.as_deref(),
+                character: a.character.as_deref(),
+                animation: a.animation.as_deref(),
+                frame_width: a.frame_width,
+                frame_height: a.frame_height,
+                columns: a.columns,
+                rows: a.rows,
+                downscale: a.downscale,
+                depth_bits: a.color_depth_bits,
+                new_colors: a.new_colors.as_deref(),
+                keep_empty_frames: a.keep_empty_frames.unwrap_or(false),
+            })
+        })
     }
 
     #[tool(

@@ -5,6 +5,7 @@
 //! und nach einem Absturz geht nichts verloren.
 
 use pixel_core::draw::{self, Target};
+use pixel_core::import::{self, Grid, NewColors, Shrink};
 use pixel_core::project::CharacterBundle;
 use pixel_core::workspace::{
     self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
@@ -138,6 +139,26 @@ pub enum DrawOp {
     FlipH,
     /// Erase the whole layer.
     Clear,
+}
+
+/// Angaben für [`Studio::import_image`].
+#[derive(Default)]
+pub struct ImportArgs<'a> {
+    pub project: &'a str,
+    pub path: &'a str,
+    pub name: Option<&'a str>,
+    /// "image", "character" oder "animation".
+    pub kind: Option<&'a str>,
+    pub character: Option<&'a str>,
+    pub animation: Option<&'a str>,
+    pub frame_width: Option<u32>,
+    pub frame_height: Option<u32>,
+    pub columns: Option<u32>,
+    pub rows: Option<u32>,
+    pub downscale: Option<u32>,
+    pub depth_bits: Option<u8>,
+    pub new_colors: Option<&'a str>,
+    pub keep_empty_frames: bool,
 }
 
 impl Studio {
@@ -531,6 +552,167 @@ impl Studio {
         p.animations.push(anim);
         self.save(project, &p)?;
         Ok(Reply::json(info))
+    }
+
+    /// Holt eine Bilddatei von der Platte als Bild, Figur oder Animation ins Projekt.
+    pub fn import_image(&self, a: &ImportArgs) -> Res {
+        let (_lock, mut p) = self.load_locked(a.project)?;
+        let path = Path::new(a.path.trim());
+        let file = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let picture = import::read(path).map_err(|err| format!("cannot import: {err}"))?;
+        let grid = match (a.frame_width, a.frame_height, a.columns, a.rows) {
+            (None, None, None, None) => Grid::Whole,
+            (Some(width), Some(height), None, None) => Grid::Cells { width, height },
+            (None, None, columns, rows) => Grid::Count {
+                columns: columns.unwrap_or(1),
+                rows: rows.unwrap_or(1),
+            },
+            _ => {
+                return Err("to split a sprite sheet give either frame_width and frame_height, or columns and/or rows".into())
+            }
+        };
+        let shrink = match a.downscale {
+            None | Some(0) => Shrink::Auto,
+            Some(k) => Shrink::By(k),
+        };
+        let options = import::Options {
+            shrink,
+            grid,
+            keep_empty: a.keep_empty_frames,
+        };
+        let mut ready = import::prepare(&picture, options).map_err(e)?;
+        let default_name = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let wanted = a.name.map(str::trim).filter(|n| !n.is_empty());
+        let depth = Self::depth(a.depth_bits)?;
+        let mut notes = Vec::new();
+        if ready.shrunk_by > 1 {
+            notes.push(format!(
+                "The file was {}×{} px; it was scaled down {}× to its true pixel size.",
+                picture.width, picture.height, ready.shrunk_by
+            ));
+        }
+
+        let (created, report) = match a.kind.unwrap_or("image").to_ascii_lowercase().as_str() {
+            "image" => {
+                let name = Self::check_new_name(&p, wanted.unwrap_or(&default_name))?;
+                let (id, report) =
+                    import::add_image(&mut p, &name, &ready.picture, depth).map_err(e)?;
+                (AssetRef::Image(id), report)
+            }
+            "character" => {
+                let name = Self::check_new_name(&p, wanted.unwrap_or(&default_name))?;
+                let animation = a.animation.map(|k| AnimationKind::parse(k.trim()));
+                if let (Some(kind), true) = (&animation, ready.picture.frames.len() > 1) {
+                    Self::check_new_name(&p, &format!("{name} {}", kind.name()))?;
+                }
+                let (made, report) =
+                    import::add_character(&mut p, &name, &ready.picture, depth, animation)
+                        .map_err(e)?;
+                match made.animation {
+                    Some(id) => notes.push(format!(
+                        "Frame 0 became the base pose; all {} frames became the animation '{}'.",
+                        ready.picture.frames.len(),
+                        p.animation(id).map_err(e)?.name
+                    )),
+                    None if ready.picture.frames.len() > 1 => notes.push(
+                        "Only frame 0 was used as the base pose. Pass `animation` (e.g. \"walk\") to also keep all frames as an animation.".into(),
+                    ),
+                    None => {}
+                }
+                (AssetRef::Character(made.character), report)
+            }
+            "animation" => {
+                let character = a.character.ok_or(
+                    "importing an animation needs `character`: the character it belongs to",
+                )?;
+                let AssetRef::Character(cid) = Self::resolve(&p, character)? else {
+                    return Err(format!("'{character}' is not a character"));
+                };
+                let hero = p.character(cid).map_err(e)?;
+                let (w, h) = hero.size();
+                // Ohne Angabe wird ein Spritesheet in Frames von der Größe der Figur geteilt.
+                if grid == Grid::Whole {
+                    let (fw, fh) = (ready.picture.width, ready.picture.height);
+                    let shrunk = ready.shrunk_by > 1;
+                    ready.cut_to_frames(w, h, a.keep_empty_frames).map_err(|_| {
+                        format!(
+                            "the file is {fw}×{fh} px{}, which is not a whole number of {w}×{h} frames of character '{}'. Give frame_width/frame_height, columns/rows or downscale.",
+                            if shrunk { " after scaling down" } else { "" },
+                            hero.name
+                        )
+                    })?;
+                }
+                let kind = AnimationKind::parse(a.animation.unwrap_or(&default_name).trim());
+                let name = match wanted {
+                    Some(name) => name.to_string(),
+                    None => format!("{} {}", hero.name, kind.name()),
+                };
+                let name = Self::check_new_name(&p, &name)?;
+                let new_colors = match a.new_colors.unwrap_or("add").to_ascii_lowercase().as_str() {
+                    "add" => NewColors::Add,
+                    "snap" => NewColors::Snap,
+                    other => return Err(format!("unknown new_colors '{other}', use add or snap")),
+                };
+                let (id, report, added) = import::add_animation(
+                    &mut p,
+                    cid,
+                    Some(&name),
+                    kind,
+                    &ready.picture,
+                    new_colors,
+                )
+                .map_err(e)?;
+                if added > 0 {
+                    notes.push(format!(
+                        "{added} new color(s) were added to the character's palette."
+                    ));
+                }
+                (AssetRef::Animation(id), report)
+            }
+            other => {
+                return Err(format!(
+                    "unknown `as` value '{other}', use image, character or animation"
+                ))
+            }
+        };
+        if report.changed > 0 {
+            notes.push(format!(
+                "{} of {} colors were changed to fit the color depth or palette.",
+                report.changed, report.source_colors
+            ));
+        }
+        self.save(a.project, &p)?;
+        let s = Self::sprite(&p, created)?;
+        let shown: Vec<usize> = (0..s.frames().len().min(16)).collect();
+        notes.insert(
+            0,
+            format!(
+                "Imported '{file}' as {} '{}': {} frame(s) of {}×{} px, {} bit, {} colors.",
+                created.kind(),
+                Self::asset_name(&p, created),
+                s.frames().len(),
+                s.width(),
+                s.height(),
+                s.depth.bits(),
+                report.colors,
+            ),
+        );
+        if shown.len() < s.frames().len() {
+            notes.push(format!(
+                "The preview shows the first {} frames.",
+                shown.len()
+            ));
+        }
+        Ok(Reply {
+            text: notes.join(" "),
+            image_png: Some(preview_png(s, &shown, None)?),
+        })
     }
 
     pub fn delete_asset(&self, project: &str, asset: &str) -> Res {

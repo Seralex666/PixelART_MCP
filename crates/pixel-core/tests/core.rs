@@ -1029,3 +1029,323 @@ mod workspace {
         assert!(ws.lock("../x").is_err());
     }
 }
+
+mod import {
+    use pixel_core::import::{
+        self, add_animation, add_character, add_image, prepare, Colors, Grid, NewColors, Options,
+        Shrink,
+    };
+    use pixel_core::{export, AnimationKind, ColorDepth, Error, Palette, Project, Rgba, Sprite};
+
+    /// Ein kleines Bild, in dem jeder Pixel eine andere Farbe hat.
+    fn motif(width: u32, height: u32, frames: usize) -> Sprite {
+        let mut s = Sprite::new(width, height, ColorDepth::Rgba32, Palette::default()).unwrap();
+        for f in 0..frames {
+            if f > 0 {
+                s.add_frame();
+            }
+            for y in 0..height as i64 {
+                for x in 0..width as i64 {
+                    if (x, y) != (0, 0) {
+                        let c = Rgba::rgb(40 * x as u8 + 10, 50 * y as u8 + 10, 60 * f as u8 + 5);
+                        s.set_pixel(f, 0, x, y, c).unwrap();
+                    }
+                }
+            }
+        }
+        s
+    }
+
+    #[test]
+    fn upscaled_pixel_art_comes_back_in_its_true_size() {
+        let s = motif(4, 3, 1);
+        let big = import::decode(&export::frame_png(&s, 0, 8).unwrap()).unwrap();
+        assert_eq!((big.width, big.height, big.frames.len()), (32, 24, 1));
+        assert_eq!(big.pixel_scale(), 8);
+        let ready = prepare(&big, Options::default()).unwrap();
+        assert_eq!(ready.shrunk_by, 8);
+        assert_eq!((ready.picture.width, ready.picture.height), (4, 3));
+        assert_eq!(ready.picture.frames[0].pixels, s.composite(0).unwrap());
+
+        // In Originalgröße gibt es nichts zu verkleinern.
+        let true_size = import::decode(&export::frame_png(&s, 0, 1).unwrap()).unwrap();
+        assert_eq!(true_size.pixel_scale(), 1);
+        // Ein einfarbiges Bild verrät seine Vergrößerung nicht und bleibt, wie es ist.
+        let mut plain = Sprite::new(8, 8, ColorDepth::Rgba32, Palette::default()).unwrap();
+        plain.layer_mut(0, 0).unwrap().fill(Rgba::rgb(9, 9, 9));
+        let plain = import::decode(&export::frame_png(&plain, 0, 4).unwrap()).unwrap();
+        assert_eq!(plain.pixel_scale(), 1);
+
+        let keep = Options {
+            shrink: Shrink::By(1),
+            ..Options::default()
+        };
+        assert_eq!(prepare(&big, keep).unwrap().picture.width, 32);
+        let odd = Options {
+            shrink: Shrink::By(5),
+            ..Options::default()
+        };
+        assert!(matches!(prepare(&big, odd), Err(Error::Import(_))));
+    }
+
+    #[test]
+    fn a_spritesheet_is_cut_into_its_frames() {
+        let s = motif(4, 4, 3);
+        // Drei Frames in zwei Spalten: die vierte Zelle bleibt leer.
+        let (png, _) = export::sheet_png(&s, 2, 2).unwrap();
+        let sheet = import::decode(&png).unwrap();
+        assert_eq!((sheet.width, sheet.height), (16, 16));
+        for grid in [
+            Grid::Cells {
+                width: 4,
+                height: 4,
+            },
+            Grid::Count {
+                columns: 2,
+                rows: 2,
+            },
+        ] {
+            let ready = prepare(
+                &sheet,
+                Options {
+                    grid,
+                    ..Options::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(ready.shrunk_by, 2);
+            assert_eq!(ready.dropped_empty, 1, "die leere Zelle am Ende entfällt");
+            assert_eq!(ready.picture.frames.len(), 3);
+            for (i, frame) in ready.picture.frames.iter().enumerate() {
+                assert_eq!(frame.pixels, s.composite(i).unwrap(), "Frame {i}");
+            }
+        }
+        let keep = Options {
+            grid: Grid::Count {
+                columns: 2,
+                rows: 2,
+            },
+            keep_empty: true,
+            ..Options::default()
+        };
+        assert_eq!(prepare(&sheet, keep).unwrap().picture.frames.len(), 4);
+        let crooked = Options {
+            grid: Grid::Cells {
+                width: 3,
+                height: 4,
+            },
+            ..Options::default()
+        };
+        assert!(matches!(prepare(&sheet, crooked), Err(Error::Import(_))));
+    }
+
+    #[test]
+    fn an_animated_gif_brings_its_frames_and_timing() {
+        let mut s = motif(4, 4, 2);
+        s.frame_mut(0).unwrap().duration_ms = 120;
+        s.frame_mut(1).unwrap().duration_ms = 250;
+        let (gif, _) = export::animation_gif(&s, 1, true).unwrap();
+        let picture = import::decode(&gif).unwrap();
+        assert!(picture.timed);
+        let durations: Vec<u32> = picture.frames.iter().map(|f| f.duration_ms).collect();
+        assert_eq!(durations, [120, 250]);
+        for (i, frame) in picture.frames.iter().enumerate() {
+            assert_eq!(frame.pixels, s.composite(i).unwrap(), "Frame {i}");
+        }
+        let split = Options {
+            grid: Grid::Count {
+                columns: 2,
+                rows: 1,
+            },
+            ..Options::default()
+        };
+        assert!(prepare(&picture, split).is_err(), "ein GIF ist kein Sheet");
+
+        assert!(matches!(
+            import::decode(b"kein Bild"),
+            Err(Error::Import(_))
+        ));
+    }
+
+    #[test]
+    fn colors_follow_the_color_depth() {
+        let mut s = Sprite::new(20, 20, ColorDepth::Rgba32, Palette::default()).unwrap();
+        for i in 0..400i64 {
+            let c = Rgba::rgb((i % 20 * 12) as u8, (i / 20 * 12) as u8, 200);
+            s.set_pixel(0, 0, i % 20, i / 20, c).unwrap();
+        }
+        s.set_pixel(0, 0, 0, 0, Rgba::new(255, 0, 0, 100)).unwrap();
+        let picture = import::decode(&export::frame_png(&s, 0, 1).unwrap()).unwrap();
+
+        let (full, report) = picture.to_sprite(ColorDepth::Rgba32, Colors::Open).unwrap();
+        assert_eq!(full.composite(0).unwrap(), s.composite(0).unwrap());
+        assert_eq!(
+            (report.source_colors, report.colors, report.changed),
+            (400, 400, 0)
+        );
+        assert_eq!(full.palette.len(), 256, "die häufigsten Farben als Vorrat");
+
+        let (indexed, report) = picture
+            .to_sprite(ColorDepth::Indexed8, Colors::Open)
+            .unwrap();
+        assert!(report.colors <= 256 && report.changed > 0);
+        let px = indexed.composite(0).unwrap();
+        assert_eq!(
+            px[0],
+            Rgba::TRANSPARENT,
+            "8 Bit kennt keine halbe Deckkraft"
+        );
+        assert!(px[1..].iter().all(|p| indexed.palette.contains(*p)));
+        let original = s.composite(0).unwrap();
+        for (got, want) in px.iter().zip(&original).skip(1) {
+            assert!(got.distance_sq(*want) < 9 * 16 * 16, "{got} statt {want}");
+        }
+
+        let (high, _) = picture.to_sprite(ColorDepth::Rgb565, Colors::Open).unwrap();
+        for p in high.composite(0).unwrap() {
+            assert_eq!(p, p.to_rgb565(), "nur Farben, die 16 Bit darstellen kann");
+        }
+
+        // Eine Figur fasst höchstens 256 Farben, auch in 32 Bit.
+        let (limited, report) = picture
+            .to_sprite(ColorDepth::Rgba32, Colors::Limited)
+            .unwrap();
+        assert!(report.colors <= 256);
+        assert!(limited.used_colors().len() <= 256);
+    }
+
+    #[test]
+    fn a_file_becomes_an_image_or_a_character_with_animation() {
+        let s = motif(4, 4, 3);
+        let (png, _) = export::sheet_png(&s, 0, 1).unwrap();
+        let options = Options {
+            grid: Grid::Count {
+                columns: 3,
+                rows: 1,
+            },
+            ..Options::default()
+        };
+        let picture = prepare(&import::decode(&png).unwrap(), options)
+            .unwrap()
+            .picture;
+        let mut p = Project::new("Test");
+
+        let (image, _) = add_image(&mut p, "Kachel", &picture, ColorDepth::Rgba32).unwrap();
+        let image = p.image(image).unwrap();
+        assert_eq!(image.name, "Kachel");
+        assert_eq!(image.sprite.frames().len(), 3);
+        assert!(!image.sprite.palette.locked);
+
+        let (made, _) = add_character(
+            &mut p,
+            "Held",
+            &picture,
+            ColorDepth::Rgba32,
+            Some(AnimationKind::Walk),
+        )
+        .unwrap();
+        let hero = p.character(made.character).unwrap();
+        assert_eq!(hero.base.frames().len(), 1, "die Grundpose ist ein Frame");
+        assert_eq!(hero.base.composite(0).unwrap(), s.composite(0).unwrap());
+        assert!(hero.palette().locked);
+        let walk = p.animation(made.animation.unwrap()).unwrap();
+        assert_eq!(walk.name, "Held walk");
+        assert_eq!(walk.sprite.frames().len(), 3);
+        assert_eq!(walk.sprite.composite(2).unwrap(), s.composite(2).unwrap());
+        assert_eq!(
+            walk.sprite.frames()[0].duration_ms,
+            100,
+            "Standard für walk"
+        );
+        assert!(p.validate().is_empty(), "{:?}", p.validate());
+
+        // Ohne gewünschte Animation entsteht nur die Figur.
+        let (only, _) = add_character(&mut p, "Zwei", &picture, ColorDepth::Rgba32, None).unwrap();
+        assert_eq!(only.animation, None);
+    }
+
+    #[test]
+    fn an_imported_animation_keeps_its_character_consistent() {
+        let mut p = Project::new("Test");
+        let base = motif(4, 4, 1);
+        let base_picture = import::decode(&export::frame_png(&base, 0, 1).unwrap()).unwrap();
+        let (made, _) =
+            add_character(&mut p, "Held", &base_picture, ColorDepth::Rgba32, None).unwrap();
+        let hero = made.character;
+        let known = p.character(hero).unwrap().palette().len();
+
+        // Zwei Frames der Figur, im zweiten ein Pixel in einer neuen Farbe.
+        let mut moved = motif(4, 4, 1);
+        moved.duplicate_frame(0).unwrap();
+        moved.set_pixel(1, 0, 0, 0, Rgba::rgb(255, 0, 255)).unwrap();
+        let (png, _) = export::sheet_png(&moved, 0, 1).unwrap();
+        let options = Options {
+            grid: Grid::Cells {
+                width: 4,
+                height: 4,
+            },
+            ..Options::default()
+        };
+        let picture = prepare(&import::decode(&png).unwrap(), options)
+            .unwrap()
+            .picture;
+
+        // Anpassen: die Palette bleibt, die fremde Farbe wird zur ähnlichsten.
+        let (snapped, report, added) = add_animation(
+            &mut p,
+            hero,
+            None,
+            AnimationKind::Idle,
+            &picture,
+            NewColors::Snap,
+        )
+        .unwrap();
+        assert_eq!((added, report.changed), (0, 1));
+        assert_eq!(p.character(hero).unwrap().palette().len(), known);
+        let snapped = p.animation(snapped).unwrap();
+        assert_eq!(snapped.name, "Held idle");
+        assert_eq!(
+            snapped.sprite.frames()[0].duration_ms,
+            200,
+            "Standard für idle"
+        );
+        let pixel = snapped.sprite.composite(1).unwrap()[0];
+        assert!(
+            pixel != Rgba::rgb(255, 0, 255) && p.character(hero).unwrap().palette().contains(pixel)
+        );
+
+        // Aufnehmen: die Figur lernt die Farbe, in allen ihren Animationen.
+        let (exact, report, added) = add_animation(
+            &mut p,
+            hero,
+            Some("Zauber"),
+            AnimationKind::Attack,
+            &picture,
+            NewColors::Add,
+        )
+        .unwrap();
+        assert_eq!((added, report.changed), (1, 0));
+        assert_eq!(p.character(hero).unwrap().palette().len(), known + 1);
+        let exact = p.animation(exact).unwrap();
+        assert_eq!(exact.name, "Zauber");
+        assert_eq!(
+            exact.sprite.composite(1).unwrap(),
+            moved.composite(1).unwrap()
+        );
+        assert!(p.validate().is_empty(), "{:?}", p.validate());
+
+        // Eine andere Größe passt nicht zur Figur.
+        let wrong = import::decode(&export::frame_png(&motif(5, 4, 1), 0, 1).unwrap()).unwrap();
+        let err = add_animation(
+            &mut p,
+            hero,
+            None,
+            AnimationKind::Run,
+            &wrong,
+            NewColors::Add,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("5×4"), "{err}");
+        assert_eq!(p.animations.len(), 2, "nichts wurde angelegt");
+    }
+}

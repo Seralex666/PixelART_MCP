@@ -19,6 +19,7 @@ mod canvas;
 mod dialogs;
 mod doc;
 mod help;
+mod import_dialog;
 mod tools;
 
 use eframe::egui;

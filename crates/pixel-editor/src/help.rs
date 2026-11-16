@@ -124,6 +124,7 @@ So arbeitest du damit:
 5. Gezeichnet wird mit draw. Sieh dir das Ergebnis danach mit view an und lies bei Bedarf exakte Pixel mit get_pixels.
 6. Braucht eine Figur eine weitere Farbe, nimm sie mit add_character_colors in ihre Palette auf.
 7. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner.
+8. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             name = SERVER_NAME,

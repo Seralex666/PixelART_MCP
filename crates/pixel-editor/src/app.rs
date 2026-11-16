@@ -4,6 +4,7 @@ use crate::canvas;
 use crate::dialogs::{self, Dialog, ExportForm, NewAnimation, NewSprite};
 use crate::doc::{AssetEntry, AssetId, AssetKind, Doc, Res};
 use crate::help;
+use crate::import_dialog::ImportForm;
 use crate::tools::{Brush, Stroke, Tool, MAX_BRUSH};
 use eframe::egui::{self, Color32, Key, RichText, Sense, StrokeKind};
 use pixel_core::draw::{self, Target};
@@ -136,6 +137,12 @@ impl App {
             Ok("connect") => app.dialog = Dialog::Connect,
             Ok("export") => app.dialog = Dialog::Export(ExportForm::default()),
             Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
+            Ok(other) => {
+                // „import:<datei>“ öffnet den Import-Dialog mit dieser Datei.
+                if let Some(path) = other.strip_prefix("import:") {
+                    app.import_dialog(Some(path.into()));
+                }
+            }
             _ => {}
         }
         app
@@ -385,6 +392,8 @@ impl App {
                 self.undo(true);
             } else if pressed(Key::E) && self.sel.is_some() {
                 self.dialog = Dialog::Export(ExportForm::default());
+            } else if pressed(Key::I) {
+                self.import_dialog(None);
             }
             return;
         }
@@ -491,6 +500,12 @@ impl App {
                 }
                 ui.separator();
                 if ui
+                    .add_enabled(has_doc, egui::Button::new("Bild importieren…  Strg+I"))
+                    .clicked()
+                {
+                    self.import_dialog(None);
+                }
+                if ui
                     .add_enabled(has_sel, egui::Button::new("Exportieren…  Strg+E"))
                     .clicked()
                 {
@@ -594,6 +609,28 @@ impl App {
     pub fn open_dialog(&mut self, dialog: Dialog) {
         self.dialog = dialog;
         self.dialog_error = None;
+    }
+
+    /// Öffnet den Import-Dialog, auf Wunsch gleich mit einer Datei.
+    pub fn import_dialog(&mut self, path: Option<std::path::PathBuf>) {
+        let Some(doc) = &self.doc else {
+            self.error("Lege erst ein Projekt an, dann lassen sich Bilder importieren");
+            return;
+        };
+        // Vorauswahl für Animationen: die Figur, an der gerade gearbeitet wird.
+        let character = self.sel.and_then(|id| doc.character_of(id));
+        self.open_dialog(Dialog::Import(Box::new(ImportForm::new(path, character))));
+    }
+
+    /// Eine Bilddatei, die ins Fenster gezogen wurde, öffnet den Import-Dialog.
+    fn dropped_files(&mut self, ctx: &egui::Context) {
+        if !matches!(self.dialog, Dialog::None) || self.stroke.is_some() {
+            return;
+        }
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        if let Some(path) = dropped {
+            self.import_dialog(Some(path));
+        }
     }
 
     fn new_animation_dialog(&mut self, character: Option<uuid::Uuid>) {
@@ -1135,6 +1172,7 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         self.tick(&ctx);
         self.shortcuts(&ctx);
+        self.dropped_files(&ctx);
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         egui::Panel::top("tools").show(ui, |ui| self.tool_bar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));

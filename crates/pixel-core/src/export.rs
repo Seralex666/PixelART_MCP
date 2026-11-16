@@ -259,68 +259,20 @@ pub fn animation_gif(s: &Sprite, scale: u32, looping: bool) -> Result<(Vec<u8>, 
 
 /// Reduziert Bilder mit mehr als 256 Farben auf eine gemeinsame Tabelle mit
 /// höchstens 255 Farben und einem Eintrag für Transparenz.
-///
-/// Verfahren "Median Cut": Alle Farben liegen zuerst in einer Kiste. Die Kiste
-/// mit der größten Farbspanne wird immer wieder an ihrer Mitte geteilt, bis es
-/// 255 Kisten sind. Jede Kiste ergibt eine Farbe, den Durchschnitt ihres Inhalts.
 fn quantize(frames: &[Vec<Rgba>]) -> Indexed {
     let mut counts = std::collections::HashMap::new();
     for &c in frames.iter().flatten().filter(|c| !c.is_transparent()) {
         *counts.entry(c).or_insert(0u64) += 1;
     }
-    let mut all: Vec<(Rgba, u64)> = counts.into_iter().collect();
-    // Feste Reihenfolge, damit derselbe Export immer dieselbe Datei ergibt.
-    all.sort_unstable_by_key(|(c, _)| c.to_array());
-    let channel = |c: Rgba, i: usize| c.to_array()[i];
-    // Größte Spanne einer Kiste und der Farbkanal, in dem sie liegt.
-    let spread = |b: &[(Rgba, u64)]| {
-        (0..3)
-            .map(|i| {
-                let values = b.iter().map(|(c, _)| channel(*c, i));
-                let (lo, hi) = values.fold((255, 0), |(lo, hi), v| (lo.min(v), hi.max(v)));
-                (hi.saturating_sub(lo), i)
-            })
-            .max()
-            .unwrap_or((0, 0))
-    };
-    let mut boxes = vec![all];
-    while boxes.len() < 255 {
-        let Some((at, (_, by))) = boxes
-            .iter()
-            .enumerate()
-            .filter(|(_, b)| b.len() > 1)
-            .map(|(i, b)| (i, spread(b)))
-            .max_by_key(|&(_, (range, _))| range)
-        else {
-            break;
-        };
-        let b = &mut boxes[at];
-        b.sort_unstable_by_key(|(c, _)| (channel(*c, by), c.to_array()));
-        // Teilen, wo die Hälfte der Pixel erreicht ist, aber nie am Rand.
-        let half = b.iter().map(|(_, n)| n).sum::<u64>() / 2;
-        let mut seen = 0;
-        let mut cut = b.len() - 1;
-        for (i, (_, n)) in b.iter().enumerate() {
-            seen += n;
-            if seen >= half {
-                cut = (i + 1).min(b.len() - 1);
-                break;
-            }
-        }
-        let upper = b.split_off(cut.max(1));
-        boxes.push(upper);
-    }
     let mut colors = vec![Rgba::TRANSPARENT];
     let mut lookup = std::collections::HashMap::new();
-    for (i, b) in boxes.iter().enumerate() {
-        let total = b.iter().map(|(_, n)| n).sum::<u64>().max(1);
-        let mean = |ch: usize| {
-            let sum: u64 = b.iter().map(|(c, n)| u64::from(channel(*c, ch)) * n).sum();
-            ((sum + total / 2) / total) as u8
-        };
-        colors.push(Rgba::rgb(mean(0), mean(1), mean(2)));
-        for (c, _) in b {
-            lookup.insert(*c, i as u8 + 1);
+    for (i, group) in crate::quant::median_cut(counts.into_iter().collect(), 255)
+        .into_iter()
+        .enumerate()
+    {
+        colors.push(group.mean);
+        for c in group.members {
+            lookup.insert(c, i as u8 + 1);
         }
     }
     let frames = frames

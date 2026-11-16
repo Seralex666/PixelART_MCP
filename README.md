@@ -9,6 +9,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 - **Farbtiefe:** 8 Bit (Palette mit bis zu 256 Farben), 16 Bit (RGB565) oder 32 Bit (RGBA).
 - **Konstanz:** Figuren sind feste Assets mit gesperrter Palette. Animationen (Idle, Walk, Run, Jump, Attack, Hurt, Death) werden aus der Figur abgeleitet und gegen sie geprüft.
 - **Export:** PNG (auch mit Palette), JPG, Spritesheets mit JSON-Metadaten, animierte GIFs und WebM-Videos.
+- **Import:** Vorhandene PNG-, JPG- und GIF-Dateien werden zu Bildern, Figuren oder Animationen, auch aus Spritesheets.
 - **MCP:** Claude zeichnet in denselben Projektdateien, die du im Editor öffnest.
 
 ## Stand
@@ -16,9 +17,10 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 16 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 17 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
+| 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
 
 ## Aufbau
 
@@ -47,6 +49,7 @@ Wichtige Typen in `pixel-core`:
 - Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben
 - Palette, Ebenen, Timeline mit Vorschaubildern und Animationsvorschau
 - Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG, Spritesheet, GIF oder WebM
+- Bilder importieren (Strg+I oder Datei ins Fenster ziehen), siehe unten
 - Gespeichert wird nach jeder Änderung von selbst, Rückgängig mit Strg+Z
 
 Editor und MCP-Server arbeiten im selben Arbeitsordner. Zeichnet Claude, lädt der Editor das Projekt
@@ -54,6 +57,23 @@ nach kurzer Zeit neu; „Rückgängig“ nimmt auch Claudes letzte Änderung am 
 
 Der Arbeitsordner ist, in dieser Reihenfolge: `--home <Ordner>`, die Umgebungsvariable `PIXELART_HOME`,
 ein Ordner `Projekte` neben dem Programm, sonst `Dokumente/PixelArt Studio`.
+
+## Bilder importieren
+
+Mit Strg+I, über Datei → Bild importieren oder indem du eine Datei ins Fenster ziehst. Claude benutzt
+dafür das Werkzeug `import_image`. Gelesen werden PNG, JPG und GIF.
+
+- **Als Bild:** ein freies Bild, zum Beispiel ein Tile.
+- **Als neue Figur:** Die Datei legt Größe und Palette fest. Hat sie mehrere Frames, wird der erste die
+  Grundpose, und auf Wunsch werden alle Frames zusätzlich eine Animation.
+- **Als Animation einer Figur:** Die Frames müssen so groß sein wie die Figur. Farben, die die Figur noch
+  nicht hat, kommen in ihre Palette oder werden an die vorhandenen angepasst.
+
+Vergrößerte Pixel-Art (jeder Pixel ein Block aus 4×4 oder 8×8 Bildpunkten) wird erkannt und auf ihre
+echte Größe gebracht. Spritesheets teilst du nach Spalten und Zeilen oder nach Framegröße; bei einer
+Animation reicht die Größe der Figur. Leere Frames am Ende entfallen. Ein animiertes GIF bringt seine
+Frames und deren Dauer mit. Hat eine Datei mehr Farben, als Farbtiefe oder Palette fassen, werden
+ähnliche Farben zusammengelegt; das Ergebnis nennt, wie viele sich geändert haben.
 
 ## Exportformate
 
@@ -85,7 +105,7 @@ Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 
 Das fertige Windows-Programm liegt unter [Releases](https://github.com/Seralex666/PixelART_MCP/releases).
 Es ist eine einzige Datei, `pixelart-studio.exe`: per Doppelklick der Editor, mit `--mcp` der MCP-Server.
-Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.4.0` pushen).
+Gebaut wird sie auf GitHub über den Workflow „Release“ (von Hand starten oder einen Tag wie `v0.5.0` pushen).
 Selbst bauen: `cargo build --release`.
 
 ## Ausprobieren

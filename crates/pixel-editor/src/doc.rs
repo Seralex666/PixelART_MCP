@@ -1,6 +1,7 @@
 //! Das geöffnete Projekt im Editor: Bearbeiten, Rückgängig, Speichern und der
 //! Abgleich mit Änderungen, die der MCP-Server in dieselbe Datei schreibt.
 
+use pixel_core::import::{self, NewColors, Picture, Report};
 use pixel_core::workspace::{check_asset_name, ExportFormat, Exported, NameClash, Workspace};
 use pixel_core::{Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba, Sprite};
 use std::time::SystemTime;
@@ -63,6 +64,32 @@ pub struct AssetEntry {
 /// Was sich geändert hat. Hat der MCP-Server die Datei inzwischen ebenfalls
 /// geändert, wird beim Speichern genau diese eine Änderung auf seinen Stand
 /// angewendet, statt ihn zu überschreiben.
+/// Als was eine Bilddatei ins Projekt kommt.
+pub enum ImportAs {
+    Image {
+        depth: ColorDepth,
+    },
+    /// Der erste Frame wird die Grundpose. Mit `animation` werden bei mehreren
+    /// Frames alle zusätzlich zu einer Animation der neuen Figur.
+    Character {
+        depth: ColorDepth,
+        animation: Option<AnimationKind>,
+    },
+    Animation {
+        character: Uuid,
+        kind: AnimationKind,
+        new_colors: NewColors,
+    },
+}
+
+/// Ergebnis eines Imports.
+pub struct Imported {
+    pub id: AssetId,
+    pub report: Report,
+    /// Wie viele Farben neu in die Palette der Figur kamen.
+    pub added_colors: usize,
+}
+
 enum Change {
     /// Ein neues Asset.
     Create(AssetId),
@@ -84,6 +111,8 @@ enum Change {
         color: Rgba,
     },
     Remove(AssetId),
+    /// Mehrere Änderungen, die zusammengehören, in dieser Reihenfolge.
+    Batch(Vec<Change>),
 }
 
 struct UndoStep {
@@ -569,6 +598,83 @@ impl Doc {
         self.commit(Change::AddColor { character, color })
     }
 
+    /// Holt eine gelesene und zugeschnittene Bilddatei ins Projekt.
+    pub fn import(&mut self, name: &str, picture: &Picture, target: ImportAs) -> Res<Imported> {
+        self.poll(None);
+        match target {
+            ImportAs::Image { depth } => {
+                let name = self.check_name(name, None)?;
+                let (id, report) =
+                    import::add_image(&mut self.project, &name, picture, depth).map_err(e)?;
+                let id = AssetId::new(AssetKind::Image, id);
+                self.commit(Change::Create(id))?;
+                Ok(Imported {
+                    id,
+                    report,
+                    added_colors: 0,
+                })
+            }
+            ImportAs::Character { depth, animation } => {
+                let name = self.check_name(name, None)?;
+                let animation = animation.filter(|_| picture.frames.len() > 1);
+                if let Some(kind) = &animation {
+                    self.check_name(&format!("{name} {}", kind.name()), None)?;
+                }
+                let (made, report) =
+                    import::add_character(&mut self.project, &name, picture, depth, animation)
+                        .map_err(e)?;
+                let id = AssetId::new(AssetKind::Character, made.character);
+                let mut changes = vec![Change::Create(id)];
+                changes.extend(
+                    made.animation
+                        .map(|a| Change::Create(AssetId::new(AssetKind::Animation, a))),
+                );
+                self.commit(Change::Batch(changes))?;
+                Ok(Imported {
+                    id,
+                    report,
+                    added_colors: 0,
+                })
+            }
+            ImportAs::Animation {
+                character,
+                kind,
+                new_colors,
+            } => {
+                let hero = self.project.character(character).map_err(e)?;
+                let wanted = match name.trim() {
+                    "" => format!("{} {}", hero.name, kind.name()),
+                    name => name.to_string(),
+                };
+                let name = self.check_name(&wanted, None)?;
+                let known = hero.palette().len();
+                let (id, report, added_colors) = import::add_animation(
+                    &mut self.project,
+                    character,
+                    Some(&name),
+                    kind,
+                    picture,
+                    new_colors,
+                )
+                .map_err(e)?;
+                // Erst die neuen Farben der Figur, dann die Animation, die sie benutzt.
+                let palette = self.project.character(character).map_err(e)?.palette();
+                let mut changes: Vec<Change> = palette.colors[known..]
+                    .iter()
+                    .map(|&color| Change::AddColor { character, color })
+                    .collect();
+                let id = AssetId::new(AssetKind::Animation, id);
+                changes.push(Change::Create(id));
+                self.commit(Change::Batch(changes))?;
+                Ok(Imported {
+                    id,
+                    report,
+                    added_colors,
+                })
+            }
+        }
+    }
+
     pub fn export(
         &self,
         id: AssetId,
@@ -632,6 +738,13 @@ fn replay(change: &Change, disk: &mut Project, ours: &Project) -> Option<String>
             drop(disk.add_character_colors(*character, &[*color]));
         }
         Change::Remove(id) => remove(disk, *id),
+        Change::Batch(changes) => {
+            let notices: Vec<String> = changes
+                .iter()
+                .filter_map(|change| replay(change, disk, ours))
+                .collect();
+            return (!notices.is_empty()).then(|| notices.join(" "));
+        }
     }
     None
 }
@@ -1040,5 +1153,76 @@ mod tests {
         assert_eq!(doc.looping(jump), Some(false));
         doc.set_looping(jump.id, true).unwrap();
         assert_eq!(Doc::open(&ws, "Test").unwrap().looping(jump), Some(true));
+    }
+    #[test]
+    fn imports_arrive_on_disk_together_with_what_they_need() {
+        let ws = workspace();
+        let mut doc = Doc::open(&ws, "Test").unwrap();
+        // Zwei Frames 2×2: links oben rot, im zweiten Frame zusätzlich blau.
+        let frame = |extra: Rgba| import::PictureFrame {
+            pixels: vec![RED, extra, Rgba::TRANSPARENT, Rgba::TRANSPARENT],
+            duration_ms: 100,
+        };
+        let picture = Picture {
+            width: 2,
+            height: 2,
+            frames: vec![frame(Rgba::TRANSPARENT), frame(Rgba::rgb(0, 0, 255))],
+            timed: false,
+        };
+        let hero = doc
+            .import(
+                "Held",
+                &picture,
+                ImportAs::Character {
+                    depth: ColorDepth::Rgba32,
+                    animation: Some(AnimationKind::Walk),
+                },
+            )
+            .unwrap();
+        assert_eq!(hero.id.kind, AssetKind::Character);
+
+        // Währenddessen ändert jemand anderes die Datei: Der Import muss auf
+        // dessen Stand aufsetzen und die neue Farbe der Figur mitbringen.
+        let mut outside = ws.load("Test").unwrap();
+        outside.add_image(
+            "Von außen",
+            Sprite::new(4, 4, ColorDepth::Rgba32, Palette::default_16()).unwrap(),
+        );
+        ws.save("Test", &outside).unwrap();
+        let green = Rgba::rgb(0, 255, 0);
+        let mut with_green = picture.clone();
+        with_green.frames[1].pixels[3] = green;
+        let attack = doc
+            .import(
+                "",
+                &with_green,
+                ImportAs::Animation {
+                    character: hero.id.id,
+                    kind: AnimationKind::Attack,
+                    new_colors: NewColors::Add,
+                },
+            )
+            .unwrap();
+        assert_eq!(attack.added_colors, 1);
+
+        let saved = ws.load("Test").unwrap();
+        let names: Vec<&str> = saved.animations.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Held walk", "Held attack"]);
+        assert_eq!(saved.images.len(), 1, "die Änderung von außen bleibt");
+        assert!(saved
+            .character(hero.id.id)
+            .unwrap()
+            .palette()
+            .contains(green));
+        assert!(saved.validate().is_empty(), "{:?}", saved.validate());
+        assert!(doc
+            .import(
+                "Held",
+                &picture,
+                ImportAs::Image {
+                    depth: ColorDepth::Rgba32
+                }
+            )
+            .is_err());
     }
 }

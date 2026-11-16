@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/pixel-core", "crates/pixel-mcp", "crates/pixel-editor"]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 repository = "https://github.com/Seralex666/PixelART_MCP"
 
@@ -17,7 +17,7 @@ flate2 = "1"
 dirs = "7"
 gif = "0.14"
 png = "0.18"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 
 [profile.release]
 lto = "thin"
