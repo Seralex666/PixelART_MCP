@@ -155,6 +155,7 @@ fn lists_all_tools_with_schemas() {
         "add_character_colors",
         "export",
         "import_image",
+        "undo",
     ] {
         assert!(names.contains(&expected), "tool {expected} is missing");
     }
@@ -166,6 +167,23 @@ fn lists_all_tools_with_schemas() {
         );
         assert!(!t["description"].as_str().unwrap().is_empty());
     }
+    // Jede Zeichen-Op steht mit Beschreibung und Beispiel im Schema von draw.
+    let draw = tools.iter().find(|t| t["name"] == "draw").unwrap();
+    let schema = draw["inputSchema"].to_string();
+    for op in [
+        "outline", "shade", "dither", "gradient", "noise", "shader", "stamp", "grid", "flip_v",
+    ] {
+        assert!(
+            schema.contains(&format!("\"{op}\"")),
+            "op {op} is not in the draw schema"
+        );
+        assert!(
+            ["grid", "flip_v"].contains(&op)
+                || schema.contains(&format!("\\\"op\\\": \\\"{op}\\\"")),
+            "op {op} has no example in the draw schema"
+        );
+    }
+    assert!(schema.contains("per_frame") && schema.contains("light_dir"));
 }
 
 #[test]
@@ -732,4 +750,537 @@ fn import_brings_files_back_as_image_character_and_animation() {
             json!({"project": "Import", "path": crooked, "as": "animation", "character": "Held"}),
         )
         .contains("not a whole number"));
+}
+
+/// Die Farben einer Ebene als Zeilen, je Pixel ein Farbwert ("." = durchsichtig).
+fn colors(c: &mut Client, asset: &str, frame: usize, layer: usize) -> Vec<Vec<String>> {
+    let px: Value = serde_json::from_str(
+        &c.ok(
+            "get_pixels",
+            json!({"project": "P", "asset": asset, "frame": frame, "layer": layer}),
+        )
+        .text,
+    )
+    .unwrap();
+    px["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            row.as_str()
+                .unwrap()
+                .chars()
+                .map(|ch| match px["legend"][ch.to_string()].as_str().unwrap() {
+                    "transparent" => ".".to_string(),
+                    color => color.to_string(),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Dasselbe kompakt: jede Farbe wird über `key` zu einem Buchstaben.
+fn picture(
+    c: &mut Client,
+    asset: &str,
+    frame: usize,
+    layer: usize,
+    key: &[(&str, char)],
+) -> Vec<String> {
+    colors(c, asset, frame, layer)
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|color| match key.iter().find(|(k, _)| k == color) {
+                    Some((_, ch)) => *ch,
+                    None if color == "." => '.',
+                    None => panic!("unexpected color {color}"),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn image_size(png: &[u8]) -> (u32, u32) {
+    let img = image::load_from_memory(png).unwrap();
+    (img.width(), img.height())
+}
+
+#[test]
+fn one_call_sets_up_an_image_and_draws_on_several_frames() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    let made = c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Block", "width": 4, "height": 2, "layers": ["stein", "glut"], "frames": 4}),
+    );
+    assert!(
+        made.text.contains("stein, glut") && made.text.contains("Frames: 4"),
+        "{}",
+        made.text
+    );
+
+    // Ein Aufruf zeichnet auf alle vier Frames; per_frame ändert Farbe oder verschiebt.
+    let red = "#ff0000";
+    let drawn = c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Block", "frame": "all", "layer": "glut",
+            "ops": [{"op": "rect", "color": red, "x": 0, "y": 0, "w": 2, "h": 2, "filled": true}],
+            "per_frame": [
+                {},
+                {"colors": {"#ff0000": "#00ff00"}},
+                {"ops": [{"op": "shift", "dx": 2, "dy": 0}]},
+                {"frame": 3, "colors": {"#FF0000": "#0000ff"}, "ops": [{"op": "pixels", "color": red, "points": [[3, 1]]}]},
+            ]}),
+    );
+    assert!(drawn.text.contains("frames 0, 1, 2, 3"), "{}", drawn.text);
+    let key = [("#ff0000", 'r'), ("#00ff00", 'g'), ("#0000ff", 'b')];
+    assert_eq!(picture(&mut c, "Block", 0, 1, &key), ["rr..", "rr.."]);
+    assert_eq!(picture(&mut c, "Block", 1, 1, &key), ["gg..", "gg.."]);
+    assert_eq!(picture(&mut c, "Block", 2, 1, &key), ["..rr", "..rr"]);
+    assert_eq!(picture(&mut c, "Block", 3, 1, &key), ["bb..", "bb.r"]);
+    assert_eq!(picture(&mut c, "Block", 0, 0, &key), ["....", "...."]);
+    // Die Vorschau zeigt alle vier Frames nebeneinander.
+    let (w, h) = image_size(drawn.image.as_ref().unwrap());
+    assert!(w > 6 * h, "preview is {w}×{h}");
+
+    // Eine Liste wählt einzelne Frames.
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Block", "frame": [0, 2], "layer": 0,
+            "ops": [{"op": "pixels", "color": red, "points": [[0, 0]]}]}),
+    );
+    assert_eq!(picture(&mut c, "Block", 2, 0, &key)[0], "r...");
+    assert_eq!(picture(&mut c, "Block", 1, 0, &key)[0], "....");
+
+    let err = c.err(
+        "draw",
+        json!({"project": "P", "asset": "Block", "frame": [0, 1], "per_frame": [{"frame": 3, "ops": [{"op": "clear"}]}]}),
+    );
+    assert!(err.contains("not among the frames"), "{err}");
+    let err = c.err(
+        "draw",
+        json!({"project": "P", "asset": "Block", "frame": [1, 1], "ops": [{"op": "clear"}]}),
+    );
+    assert!(err.contains("listed twice"), "{err}");
+    let err = c.err(
+        "draw",
+        json!({"project": "P", "asset": "Block", "frame": 9, "ops": [{"op": "clear"}]}),
+    );
+    assert!(err.contains("frame 9 does not exist"), "{err}");
+    let err = c.err(
+        "create_image",
+        json!({"project": "P", "name": "Zu viel", "width": 4, "height": 4, "frames": 0}),
+    );
+    assert!(err.contains("1 to 256"), "{err}");
+    let err = c.err(
+        "create_image",
+        json!({"project": "P", "name": "Doppelt", "width": 4, "height": 4, "layers": ["a", "A"]}),
+    );
+    assert!(err.contains("given twice"), "{err}");
+}
+
+#[test]
+fn frames_are_added_and_duplicated_several_at_once() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "B", "width": 2, "height": 1}),
+    );
+    c.ok("draw", json!({"project": "P", "asset": "B", "ops": [{"op": "pixels", "color": "#ff0000", "points": [[0, 0]]}]}));
+    let r = c.ok(
+        "edit_frames",
+        json!({"project": "P", "asset": "B", "action": "duplicate", "frame": 0, "count": 3}),
+    );
+    assert!(
+        r.text.contains("frames 1 to 3") && r.text.contains("4 frame(s)"),
+        "{}",
+        r.text
+    );
+    let key = [("#ff0000", 'r'), ("#00ff00", 'g')];
+    for f in 0..4 {
+        assert_eq!(picture(&mut c, "B", f, 0, &key), ["r."]);
+    }
+    // Frame 3 grün färben und zweimal ganz nach vorn kopieren.
+    c.ok("draw", json!({"project": "P", "asset": "B", "frame": 3, "ops": [{"op": "replace_color", "from": "#ff0000", "to": "#00ff00"}]}));
+    c.ok("edit_frames", json!({"project": "P", "asset": "B", "action": "duplicate", "frame": 3, "count": 2, "insert_at": 0}));
+    let all: Vec<String> = (0..6)
+        .map(|f| picture(&mut c, "B", f, 0, &key)[0].clone())
+        .collect();
+    assert_eq!(all, ["g.", "g.", "r.", "r.", "r.", "g."]);
+    let r = c.ok(
+        "edit_frames",
+        json!({"project": "P", "asset": "B", "action": "add", "count": 2}),
+    );
+    assert!(r.text.contains("8 frame(s)"), "{}", r.text);
+    let err = c.err(
+        "edit_frames",
+        json!({"project": "P", "asset": "B", "action": "add", "count": 300}),
+    );
+    assert!(err.contains("only 248 more fit"), "{err}");
+    let err = c.err(
+        "edit_frames",
+        json!({"project": "P", "asset": "B", "action": "duplicate", "frame": 0, "insert_at": 99}),
+    );
+    assert!(err.contains("past the end"), "{err}");
+}
+
+#[test]
+fn technique_ops_are_pixel_exact() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    let (dark, base, light, ink) = ("#333c57", "#566c86", "#94b0c2", "#1a1c2c");
+    let key = [
+        (dark, 'd'),
+        (base, 'b'),
+        (light, 'l'),
+        (ink, 'k'),
+        ("#000000", '0'),
+        ("#ffffff", '1'),
+        ("#ff0000", 'r'),
+        ("#00ff00", 'g'),
+    ];
+
+    // Kontur und Licht um ein 4×4-Quadrat in einem 6×6-Bild.
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Stein", "width": 6, "height": 6}),
+    );
+    let r = c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Stein", "ops": [
+            {"op": "rect", "color": base, "x": 1, "y": 1, "w": 4, "h": 4, "filled": true},
+            {"op": "shade", "light_dir": "top-left", "ramp": [dark, base, light]},
+            {"op": "outline", "color": ink},
+        ]}),
+    );
+    assert!(!r.text.contains("Warning"), "{}", r.text);
+    assert_eq!(
+        picture(&mut c, "Stein", 0, 0, &key),
+        [".kkkk.", "kllllk", "klbbdk", "klbbdk", "kldddk", ".kkkk."]
+    );
+    // Mit Eck-Nachbarn schließt die Kontur auch die Ecken; eine Maske trifft nur eine Farbe.
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Stein", "ops": [
+            {"op": "replace_color", "from": ink, "to": "transparent"},
+            {"op": "outline", "color": ink, "diagonals": true},
+            {"op": "noise", "colors": ["#ff0000"], "density": 1.0, "mask": base},
+        ]}),
+    );
+    assert_eq!(
+        picture(&mut c, "Stein", 0, 0, &key),
+        ["kkkkkk", "kllllk", "klrrdk", "klrrdk", "kldddk", "kkkkkk"]
+    );
+
+    // Verlauf in harten Stufen, linear und rund.
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Verlauf", "width": 4, "height": 1}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Verlauf", "ops": [
+        {"op": "gradient", "colors": ["#000000", "#ffffff"], "direction": "right"}]}),
+    );
+    assert_eq!(picture(&mut c, "Verlauf", 0, 0, &key), ["0011"]);
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Verlauf", "ops": [
+        {"op": "gradient", "colors": ["#ffffff", "#000000"], "center": [0, 0], "radius": 2}]}),
+    );
+    assert_eq!(picture(&mut c, "Verlauf", 0, 0, &key), ["1000"]);
+    // Raster: nur die zwei Farben, links mehr von der ersten, und jedes Mal dasselbe Bild.
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Raster", "width": 8, "height": 8}),
+    );
+    let dither = json!({"project": "P", "asset": "Raster", "ops": [
+        {"op": "dither", "from_color": "#000000", "to_color": "#ffffff", "direction": "right", "pattern": "bayer4"}]});
+    c.ok("draw", dither.clone());
+    let first = picture(&mut c, "Raster", 0, 0, &key);
+    c.ok("draw", dither);
+    assert_eq!(first, picture(&mut c, "Raster", 0, 0, &key));
+    let whites = |rows: &[String], cols: std::ops::Range<usize>| -> usize {
+        rows.iter()
+            .map(|r| r[cols.clone()].matches('1').count())
+            .sum()
+    };
+    assert_eq!(whites(&first, 0..1), 0);
+    assert_eq!(whites(&first, 7..8), 8);
+    assert!(whites(&first, 1..4) < whites(&first, 4..7), "{first:?}");
+
+    // Körnung: gleicher Startwert, gleiches Bild; anderer Startwert, anderes Bild.
+    let noise = |seed: u64| {
+        json!({"project": "P", "asset": "Raster", "ops": [
+        {"op": "clear"},
+        {"op": "noise", "colors": ["#ff0000", "#00ff00"], "density": 0.5, "seed": seed}]})
+    };
+    c.ok("draw", noise(1));
+    let a = picture(&mut c, "Raster", 0, 0, &key);
+    c.ok("draw", noise(2));
+    let b = picture(&mut c, "Raster", 0, 0, &key);
+    c.ok("draw", noise(1));
+    assert_eq!(a, picture(&mut c, "Raster", 0, 0, &key));
+    assert_ne!(a, b);
+    let hit: usize = a
+        .iter()
+        .map(|r| r.chars().filter(|ch| *ch != '.').count())
+        .sum();
+    assert!((16..=48).contains(&hit), "density 0.5 hit {hit} of 64");
+
+    // Formel je Pixel: Index in die Farbliste, negativ lässt den Pixel stehen, Frames zählen mit.
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Formel", "width": 4, "height": 1, "frames": 2}),
+    );
+    c.ok("draw", json!({"project": "P", "asset": "Formel", "frame": "all", "ops": [
+        {"op": "shader", "formula": "x == 3 ? -1 : x + frame", "colors": ["#000000", "#ff0000", "#ffffff"]}]}));
+    assert_eq!(picture(&mut c, "Formel", 0, 0, &key), ["0r1."]);
+    assert_eq!(picture(&mut c, "Formel", 1, 0, &key), ["r11."]);
+    let err = c.err(
+        "draw",
+        json!({"project": "P", "asset": "Formel", "ops": [
+        {"op": "shader", "formula": "system(1)", "colors": ["#000000"]}]}),
+    );
+    assert!(
+        err.contains("unknown function 'system'") && err.contains("nothing was saved"),
+        "{err}"
+    );
+
+    // Stempel: ein Stück kopieren, spiegeln und umfärben.
+    c.ok("draw", json!({"project": "P", "asset": "Verlauf", "ops": [
+        {"op": "clear"},
+        {"op": "grid", "rows": ["0r"], "legend": {"0": "#000000", "r": "#ff0000"}},
+        {"op": "stamp", "src": [0, 0, 2, 1], "x": 2, "y": 0, "flip_h": true, "color_map": {"#000000": "#ffffff"}}]}));
+    assert_eq!(picture(&mut c, "Verlauf", 0, 0, &key), ["0rr1"]);
+    // Aus einem anderen Asset, gedreht: aus der Zeile wird eine Spalte.
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Ziel", "width": 2, "height": 4}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Ziel", "ops": [
+        {"op": "stamp", "from_asset": "Verlauf", "x": 1, "y": 0, "rotate": 90}]}),
+    );
+    assert_eq!(
+        picture(&mut c, "Ziel", 0, 0, &key),
+        [".0", ".r", ".r", ".1"]
+    );
+
+    // Hinweise statt stiller Fehlschläge.
+    let r = c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Ziel", "ops": [
+        {"op": "shade", "light_dir": "top", "ramp": [dark, light], "mask": "#123456"}]}),
+    );
+    assert!(
+        r.text
+            .contains("no pixel in the area matches mask '#123456'"),
+        "{}",
+        r.text
+    );
+    for (op, needle) in [
+        (
+            json!({"op": "shade", "light_dir": "north", "ramp": [dark, light]}),
+            "unknown light_dir",
+        ),
+        (
+            json!({"op": "shade", "light_dir": "top", "ramp": [dark]}),
+            "at least 2 colors",
+        ),
+        (
+            json!({"op": "dither", "from_color": dark, "to_color": light, "pattern": "dots"}),
+            "unknown pattern",
+        ),
+        (
+            json!({"op": "noise", "colors": [dark], "density": 2}),
+            "between 0 and 1",
+        ),
+        (
+            json!({"op": "stamp", "x": 0, "y": 0, "rotate": 45}),
+            "0, 90, 180 or 270",
+        ),
+        (
+            json!({"op": "gradient", "colors": [dark, light], "mask": "bunt"}),
+            "invalid mask",
+        ),
+        (
+            json!({"op": "stamp", "x": 0, "y": 0, "from_asset": "Fehlt"}),
+            "Fehlt",
+        ),
+    ] {
+        let err = c.err(
+            "draw",
+            json!({"project": "P", "asset": "Ziel", "ops": [op]}),
+        );
+        assert!(err.contains(needle), "expected '{needle}' in: {err}");
+    }
+}
+
+#[test]
+fn technique_ops_respect_a_locked_palette() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_character",
+        json!({"project": "P", "name": "Held", "width": 8, "height": 8, "palette": ["#000000", "#ffffff"]}),
+    );
+    // Der Verlauf mischt Grautöne; auf der Figur bleiben nur ihre zwei Farben.
+    let r = c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Held", "ops": [
+        {"op": "gradient", "colors": ["#000000", "#ffffff"], "steps": 8, "direction": "right"},
+        {"op": "noise", "colors": ["#ff0000"], "density": 0.3, "seed": 3}]}),
+    );
+    assert!(r.text.contains("#ff0000→"), "{}", r.text);
+    let used: std::collections::BTreeSet<String> =
+        colors(&mut c, "Held", 0, 0).into_iter().flatten().collect();
+    assert_eq!(used.into_iter().collect::<Vec<_>>(), ["#000000", "#ffffff"]);
+}
+
+#[test]
+fn undo_takes_back_draw_calls_but_never_foreign_changes() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "B", "width": 2, "height": 1}),
+    );
+    let key = [("#ff0000", 'r'), ("#00ff00", 'g')];
+    let dot = |x: i64, color: &str| json!({"project": "P", "asset": "B", "ops": [{"op": "pixels", "color": color, "points": [[x, 0]]}]});
+    c.ok("draw", dot(0, "#ff0000"));
+    c.ok("draw", dot(1, "#00ff00"));
+    assert_eq!(picture(&mut c, "B", 0, 0, &key), ["rg"]);
+    let r = c.ok("undo", json!({"project": "P"}));
+    assert!(
+        r.text.contains("Undid 1 draw call") && r.text.contains("1 more"),
+        "{}",
+        r.text
+    );
+    assert!(r.image.is_some());
+    assert_eq!(picture(&mut c, "B", 0, 0, &key), ["r."]);
+    c.ok("undo", json!({"project": "P", "steps": 5}));
+    assert_eq!(picture(&mut c, "B", 0, 0, &key), [".."]);
+    assert!(c
+        .err("undo", json!({"project": "P"}))
+        .contains("nothing to undo"));
+
+    // Hat inzwischen jemand anderes das Bild geändert, bleibt es unangetastet.
+    c.ok("draw", dot(0, "#ff0000"));
+    c.ok(
+        "edit_layers",
+        json!({"project": "P", "asset": "B", "action": "add", "name": "oben"}),
+    );
+    let err = c.err("undo", json!({"project": "P"}));
+    assert!(err.contains("was changed after that draw call"), "{err}");
+    assert_eq!(picture(&mut c, "B", 0, 0, &key), ["r."]);
+}
+
+#[test]
+fn view_shows_grid_region_and_tiles() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Kachel", "width": 16, "height": 16, "frames": 2}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Kachel", "frame": "all", "ops": [
+        {"op": "rect", "color": "#ff0000", "x": 0, "y": 0, "w": 16, "h": 16, "filled": true}]}),
+    );
+    let plain = c.ok(
+        "view",
+        json!({"project": "P", "asset": "Kachel", "frame": 0}),
+    );
+    assert!(plain.text.contains("gray checkerboard"), "{}", plain.text);
+    let plain_size = image_size(plain.image.as_ref().unwrap());
+    assert_eq!(plain_size, (512, 512));
+
+    let grid = c.ok(
+        "view",
+        json!({"project": "P", "asset": "Kachel", "frame": 0, "grid": true}),
+    );
+    assert!(
+        grid.text.contains("Grid: one cell per pixel"),
+        "{}",
+        grid.text
+    );
+    // Mit Raster kommt ein Rand für die Koordinaten dazu.
+    assert_eq!(
+        image_size(grid.image.as_ref().unwrap()),
+        (512 + 18, 512 + 8)
+    );
+    let img = image::load_from_memory(grid.image.as_ref().unwrap())
+        .unwrap()
+        .to_rgba8();
+    // Linie auf der Kante von Pixel 8 (dunkel), daneben die rote Fläche.
+    assert_eq!(img.get_pixel(18 + 8 * 32, 8 + 5).0, [20, 20, 28, 255]);
+    assert_eq!(img.get_pixel(18 + 8 * 32 + 5, 8 + 5).0, [255, 0, 0, 255]);
+
+    let zoom = c.ok(
+        "view",
+        json!({"project": "P", "asset": "Kachel", "frame": 0, "zoom_region": [4, 4, 4, 2]}),
+    );
+    assert!(
+        zoom.text.contains("Region x 4 to 7, y 4 to 5"),
+        "{}",
+        zoom.text
+    );
+    assert_eq!(image_size(zoom.image.as_ref().unwrap()), (4 * 32, 2 * 32));
+
+    let tiled = c.ok("view", json!({"project": "P", "asset": "Kachel", "frame": 0, "tile": true, "background": "#000000"}));
+    assert!(
+        tiled.text.contains("Tiled 3×3") && tiled.text.contains("Background: #000000"),
+        "{}",
+        tiled.text
+    );
+    assert_eq!(
+        image_size(tiled.image.as_ref().unwrap()),
+        (48 * 10, 48 * 10)
+    );
+
+    // Zwei Frames nebeneinander sind zu klein fürs Raster: das sagt die Antwort.
+    let small = c.ok("view", json!({"project": "P", "asset": "Kachel", "frame": [0, 1], "grid": true, "zoom_region": [0, 0, 16, 16]}));
+    assert!(!small.text.contains("left out"), "{}", small.text);
+    c.ok(
+        "create_image",
+        json!({"project": "P", "name": "Groß", "width": 300, "height": 300}),
+    );
+    let big = c.ok(
+        "view",
+        json!({"project": "P", "asset": "Groß", "grid": true}),
+    );
+    assert!(big.text.contains("The grid was left out"), "{}", big.text);
+    assert!(c
+        .err(
+            "view",
+            json!({"project": "P", "asset": "Groß", "tile": true})
+        )
+        .contains("up to 256×256"));
+    assert!(c
+        .err(
+            "view",
+            json!({"project": "P", "asset": "Kachel", "zoom_region": [40, 0, 4, 4]})
+        )
+        .contains("lies outside"));
+    assert!(c
+        .err(
+            "view",
+            json!({"project": "P", "asset": "Kachel", "background": "blau"})
+        )
+        .contains("invalid background"));
+}
+
+#[test]
+fn studio_info_is_in_english() {
+    let mut c = Client::start();
+    let info = c.ok("get_studio_info", json!({})).text;
+    for german in ["Kacheln", "Figur", "Ruhepose", "Gehzyklus"] {
+        assert!(!info.contains(german), "found German text '{german}'");
+    }
+    assert!(info.contains("tiles for tile maps") && info.contains("Walk cycle"));
 }

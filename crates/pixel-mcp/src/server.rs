@@ -1,6 +1,6 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
-use crate::studio::{DrawOp, ImportArgs, Reply, Res, Studio};
+use crate::studio::{DrawOp, ImportArgs, PerFrame, Reply, Res, Studio, ViewOptions};
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -15,10 +15,11 @@ const INSTRUCTIONS: &str = r##"PixelArt Studio creates REAL pixel art: every ima
 Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
 2. create_project, then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
-3. draw on it. Prefer the `grid` op: text rows plus a legend give exact control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations.
-4. Every draw call returns a preview image. Look at it and correct mistakes before continuing. Use get_pixels to read exact pixels back as text.
-5. create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves in each frame (shift op on one layer, small grid patches).
-6. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
+3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
+4. Add depth with the technique ops instead of placing every pixel by hand: `outline` around a shape, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
+5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
+6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
+7. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
 Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
 
 Consistency rules:
@@ -89,6 +90,10 @@ pub struct CreateImage {
     palette_preset: Option<String>,
     /// Custom palette as a list of colors. Alternative to palette_preset.
     palette: Option<Vec<String>>,
+    /// Layer names from bottom to top, e.g. ["stone", "glow"]. Default: one layer.
+    layers: Option<Vec<String>>,
+    /// Number of frames, 1 to 256. Default 1. All start empty.
+    frames: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -151,12 +156,27 @@ pub struct Draw {
     project: String,
     /// Name or id of a character (its base pose), animation or image.
     asset: String,
-    /// Frame index, 0-based. Default 0.
-    frame: Option<usize>,
+    /// Frame to draw on: an index (0-based), a list of indexes like [0, 2], or "all". The
+    /// ops are applied to every listed frame. Default 0.
+    frame: Option<Value>,
     /// Layer index (0 = bottom) or layer name. Default 0.
     layer: Option<Value>,
-    /// Operations, applied in order. If one fails, nothing is saved.
+    /// Operations, applied in order to each frame. If one fails, nothing is saved.
+    #[serde(default)]
     ops: Vec<DrawOp>,
+    /// What differs between frames: per frame a color substitution for the shared ops
+    /// and/or extra ops. Entry i belongs to the i-th frame of `frame` unless it names one.
+    /// Example: [{}, {"colors": {"#ef7d57": "#ffcd75"}}, {"ops": [{"op": "shift", "dx": 0, "dy": -1}]}]
+    #[serde(default)]
+    per_frame: Vec<PerFrame>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct Undo {
+    /// Project name.
+    project: String,
+    /// How many draw calls to take back, newest first. Default 1.
+    steps: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -165,10 +185,21 @@ pub struct View {
     project: String,
     /// Name or id of a character, animation or image.
     asset: String,
-    /// Frame index. Omit to see all frames side by side.
-    frame: Option<usize>,
+    /// Frame index, a list of indexes, or "all". Omit to see all frames side by side.
+    frame: Option<Value>,
     /// Layer index or name to see only that layer. Omit for the full picture.
     layer: Option<Value>,
+    /// Draw the pixel grid with coordinates on the top and left edge. Needs enough zoom:
+    /// combine with zoom_region or a single frame on larger pictures.
+    #[serde(default)]
+    grid: bool,
+    /// Show only the area [x, y, w, h], enlarged.
+    zoom_region: Option<[i64; 4]>,
+    /// Show the picture tiled 3×3 to check that a tile repeats without seams.
+    #[serde(default)]
+    tile: bool,
+    /// What shows through transparent pixels: "checker" (default) or a color like "#000000".
+    background: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -215,7 +246,7 @@ pub struct EditFrames {
     project: String,
     /// Name or id of an animation or image.
     asset: String,
-    /// "add" (empty frame at the end), "duplicate" (needs frame), "remove" (needs frame), "copy" (content of from_frame into frame), "set_duration" (needs duration_ms; all frames if frame is omitted) or "set_looping" (animations only, needs looping).
+    /// "add" (empty frames at the end), "duplicate" (needs frame), "remove" (needs frame), "copy" (content of from_frame into frame), "set_duration" (needs duration_ms; all frames if frame is omitted) or "set_looping" (animations only, needs looping).
     action: String,
     /// Frame index, 0-based.
     frame: Option<usize>,
@@ -225,6 +256,10 @@ pub struct EditFrames {
     duration_ms: Option<u32>,
     /// Whether the animation loops.
     looping: Option<bool>,
+    /// For "add" and "duplicate": how many frames to add. Default 1.
+    count: Option<usize>,
+    /// For "duplicate": index where the first copy goes. Default: right after `frame`.
+    insert_at: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -331,7 +366,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Create a free image (tile, item, icon, scene) from a template or with a custom size up to 1024×1024.",
+        description = "Create a free image (tile, item, icon, scene) from a template or with a custom size up to 1024×1024. `layers` and `frames` set it up in one step.",
         annotations(title = "Create image", destructive_hint = false)
     )]
     fn create_image(&self, Parameters(a): Parameters<CreateImage>) -> CallToolResult {
@@ -345,6 +380,8 @@ impl PixelServer {
                 a.color_depth_bits,
                 a.palette_preset.as_deref(),
                 a.palette.as_deref(),
+                a.layers.as_deref(),
+                a.frames,
             )
         })
     }
@@ -395,19 +432,50 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Draw on one layer of one frame with a list of operations: pixels, line, rect, ellipse, fill, grid, replace_color, shift, flip_h, clear. Returns a preview image of the frame. Drawing with color \"transparent\" erases.",
+        description = "Draw on one layer with a list of operations, on one frame or on several at once (`frame`: index, list or \"all\"; `per_frame` for what differs). Basic ops: pixels, line, rect, ellipse, fill, grid, replace_color, shift, flip_h, flip_v, clear. Pixel-art techniques: outline, shade (light and shadow), dither, gradient (hard steps), noise, shader (per-pixel formula), stamp (copy and paste a piece). Everything is pixel-exact, without anti-aliasing, and respects locked palettes. Returns a preview of the frames drawn on. Drawing with color \"transparent\" erases.",
         annotations(title = "Draw", destructive_hint = false)
     )]
     fn draw(&self, Parameters(a): Parameters<Draw>) -> CallToolResult {
-        self.run(|s| s.draw(&a.project, &a.asset, a.frame, a.layer.as_ref(), a.ops))
+        self.run(|s| {
+            s.draw(
+                &a.project,
+                &a.asset,
+                a.frame.as_ref(),
+                a.layer.as_ref(),
+                a.ops,
+                a.per_frame,
+            )
+        })
     }
 
     #[tool(
-        description = "Look at an asset: returns an enlarged preview image of one frame, or of all frames side by side.",
+        description = "Take back the last draw calls of this session in a project, newest first. An asset that was changed in the meantime (in the editor or by another tool) is left alone.",
+        annotations(title = "Undo draw", destructive_hint = true)
+    )]
+    fn undo(&self, Parameters(a): Parameters<Undo>) -> CallToolResult {
+        self.run(|s| s.undo(&a.project, a.steps))
+    }
+
+    #[tool(
+        description = "Look at an asset: returns an enlarged preview image of one frame, or of all frames side by side. Options: `grid` (pixel grid with coordinates), `zoom_region` (a detail), `tile` (3×3 to check seams), `background`.",
         annotations(title = "View", read_only_hint = true)
     )]
     fn view(&self, Parameters(a): Parameters<View>) -> CallToolResult {
-        self.run(|s| s.view(&a.project, &a.asset, a.frame, a.layer.as_ref()))
+        let options = ViewOptions {
+            grid: a.grid,
+            zoom_region: a.zoom_region,
+            tile: a.tile,
+            background: a.background,
+        };
+        self.run(|s| {
+            s.view(
+                &a.project,
+                &a.asset,
+                a.frame.as_ref(),
+                a.layer.as_ref(),
+                &options,
+            )
+        })
     }
 
     #[tool(
@@ -448,7 +516,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Add, duplicate, remove or copy frames, set frame durations, or set whether an animation loops.",
+        description = "Add, duplicate, remove or copy frames (`count` adds several at once), set frame durations, or set whether an animation loops.",
         annotations(title = "Edit frames", destructive_hint = true)
     )]
     fn edit_frames(&self, Parameters(a): Parameters<EditFrames>) -> CallToolResult {
@@ -461,6 +529,8 @@ impl PixelServer {
                 a.from_frame,
                 a.duration_ms,
                 a.looping,
+                a.count,
+                a.insert_at,
             )
         })
     }
