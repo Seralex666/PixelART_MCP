@@ -9,6 +9,9 @@ repository.workspace = true
 name = "pixelart-studio"
 path = "src/main.rs"
 
+[build-dependencies]
+winresource = "0.1.34"
+
 [dependencies]
 pixel-core = { path = "../pixel-core" }
 pixel-mcp = { path = "../pixel-mcp" }

@@ -17,13 +17,14 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 21 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 23 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
 | 6 | Pixel-Art-Techniken für Claude: Kontur, Licht, Raster, Verlauf, Körnung, Formel, Stempel, mehrere Frames je Aufruf | fertig |
 | 7 | Prüf-Hinweise, Paletten aus Bildern, Farbreduktion, Projekt-Stil | fertig |
 | 8 | Einstellungen (Speicherordner, Sprache Deutsch/Englisch), Werkzeug-Symbole | fertig |
+| 9 | Automatische Konturen, Projekte löschen, aufgeräumte Seitenleisten, Programmsymbol | fertig |
 
 ## Aufbau
 
@@ -51,7 +52,9 @@ Wichtige Typen in `pixel-core`:
 - Leinwand mit pixelgenauer Vergrößerung, Raster und Zwiebelhaut (vorheriger Frame scheint durch)
 - Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben, jeweils mit eigenem Pixel-Symbol
 - Oberfläche auf Deutsch oder Englisch (Datei › Einstellungen)
-- Palette, Ebenen, Timeline mit Vorschaubildern und Animationsvorschau
+- Palette, Ebenen mit Vorschaubild, Timeline mit Vorschaubildern und Animationsvorschau
+- Automatische Kontur (Kontur…), siehe unten
+- Projekte löschen: Datei › Projekt löschen… oder Rechtsklick in der Projektliste
 - Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG, Spritesheet, GIF oder WebM
 - Bilder importieren (Strg+I oder Datei ins Fenster ziehen), siehe unten
 - Gespeichert wird nach jeder Änderung von selbst, Rückgängig mit Strg+Z
@@ -92,6 +95,20 @@ Ein Aufruf kann mehrere Frames auf einmal zeichnen (`frame`: Zahl, Liste oder `"
 was sich von Frame zu Frame ändert: andere Farben oder zusätzliche Ops wie eine Verschiebung. `undo` nimmt die
 letzten Zeichen-Aufrufe zurück, solange das Bild inzwischen nicht anders geändert wurde. `view` zeigt auf Wunsch
 ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneinander.
+
+## Automatische Kontur
+
+Über **Kontur…** (unter den Ebenen, im Menü Bearbeiten oder per Rechtsklick auf ein Asset) bekommt ein Bild,
+eine Animation oder eine Figur samt allen Animationen eine Kontur auf einer eigenen Ebene ganz oben. Sie entsteht
+aus allen anderen sichtbaren Ebenen und wird nach jeder Änderung in allen Frames neu gezeichnet, egal ob du
+zeichnest oder Claude. Claude benutzt dafür `set_outline`. Die Kontur ist freiwillig; ohne sie ändert sich nichts.
+
+- **Selektiv** (jeder Konturpixel ist eine dunklere Stufe der Farbe daneben, auf der Lichtseite heller) oder
+  **eine Farbe**. Bei Figuren kommen die Farben immer aus ihrer Palette.
+- **Außen** um die Figur oder **innen** auf ihrem Rand, dann wird sie nicht größer; Dicke 1 bis 4 Pixel.
+- **Über Eck** schließt diagonale Lücken, **Innenlinien** trennen Ebenen, etwa einen Arm vor dem Körper.
+- **Festschreiben** macht aus der Kontur eine normale Ebene zum Nachbessern, **Entfernen** löscht sie.
+  Neue Animationen einer Figur übernehmen ihre Kontur.
 
 ## Stil, Paletten und Prüf-Hinweise
 

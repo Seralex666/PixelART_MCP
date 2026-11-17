@@ -17,6 +17,7 @@
 pub mod animation;
 pub mod character;
 pub mod color;
+pub mod contour;
 pub mod draw;
 pub mod effects;
 pub mod error;

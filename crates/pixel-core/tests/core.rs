@@ -807,6 +807,25 @@ mod workspace {
     }
 
     #[test]
+    fn projects_can_be_deleted_with_or_without_their_exports() {
+        let ws = temp();
+        ws.create("Alt").unwrap();
+        ws.create("Neu").unwrap();
+        let exports = ws.exports_dir("Alt");
+        std::fs::create_dir_all(&exports).unwrap();
+        std::fs::write(exports.join("a.png"), b"x").unwrap();
+        assert!(!ws.delete("Alt", false).unwrap());
+        assert_eq!(ws.project_names(), vec!["Neu"]);
+        assert!(exports.join("a.png").exists(), "exports stay unless asked");
+        assert!(ws.delete("Alt", true).is_err(), "already gone");
+        ws.create("Alt").unwrap();
+        assert!(ws.delete("Alt", true).unwrap());
+        assert!(!exports.exists());
+        assert!(ws.delete("../Neu", false).is_err());
+        assert_eq!(ws.project_names(), vec!["Neu"]);
+    }
+
+    #[test]
     fn project_names_cannot_leave_the_workspace() {
         let ws = temp();
         for bad in [

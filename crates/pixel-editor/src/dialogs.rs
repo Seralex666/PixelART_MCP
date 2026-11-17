@@ -5,6 +5,7 @@ use crate::app::{section, App, MAX_FRAMES};
 use crate::doc::{AssetId, AssetKind, Res};
 use crate::help::{self, ConnectInfo};
 use crate::import_dialog::{self, ImportForm};
+use crate::outline_dialog::OutlineForm;
 use crate::tools::Tool;
 use eframe::egui::{self, RichText};
 use pixel_core::export::MAX_SCALE;
@@ -29,6 +30,8 @@ pub enum Dialog {
     Shortcuts,
     About,
     Settings(SettingsForm),
+    Outline(Box<OutlineForm>),
+    DeleteProject { name: String, exports: bool },
 }
 
 /// Formular für Datei → Einstellungen.
@@ -213,6 +216,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Shortcuts => shortcuts(ui),
             Dialog::About => about(app, ui),
             Dialog::Settings(form) => settings(app, ui, form),
+            Dialog::Outline(form) => crate::outline_dialog::show(app, ui, form),
+            Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
         };
         if let Some(err) = &app.dialog_error {
             ui.add_space(4.0);
@@ -602,6 +607,39 @@ fn delete(app: &mut App, ui: &mut egui::Ui, id: AssetId) -> Outcome {
         app.fix_selection();
         app.info(trf!("„{name}“ gelöscht", "\"{name}\" deleted"));
     })
+}
+
+fn delete_project(app: &mut App, ui: &mut egui::Ui, name: &str, exports: &mut bool) -> Outcome {
+    ui.set_max_width(420.0);
+    ui.heading(trf!(
+        "Projekt „{name}“ löschen?",
+        "Delete project \"{name}\"?"
+    ));
+    ui.label(tr(
+        "Die Projektdatei mit allen Figuren, Animationen und Bildern wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+        "The project file with all its characters, animations and images is deleted for good. This cannot be undone.",
+    ));
+    let folder = app.ws.exports_dir(name);
+    if folder.is_dir() {
+        ui.add_space(4.0);
+        ui.checkbox(
+            exports,
+            trf!(
+                "Auch die exportierten Dateien löschen ({})",
+                "Also delete the exported files ({})",
+                folder.display()
+            ),
+        );
+    }
+    let (ok, cancel) = buttons(ui, tr("Endgültig löschen", "Delete for good"), true);
+    if cancel {
+        return Outcome::Close;
+    }
+    if !ok {
+        return Outcome::Keep;
+    }
+    let deleted = app.ws.delete(name, *exports).map_err(|e| e.to_string());
+    finish(app, deleted, |app, _| app.project_deleted(name))
 }
 
 fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {

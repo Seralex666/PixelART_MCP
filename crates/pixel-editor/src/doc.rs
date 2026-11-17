@@ -1,6 +1,7 @@
 //! Das geöffnete Projekt im Editor: Bearbeiten, Rückgängig, Speichern und der
 //! Abgleich mit Änderungen, die der MCP-Server in dieselbe Datei schreibt.
 
+use pixel_core::contour::AutoOutline;
 use pixel_core::import::{self, NewColors, Picture, Report};
 use pixel_core::lang::tr;
 use pixel_core::trf;
@@ -311,6 +312,8 @@ impl Doc {
     /// Beendet einen Strich und speichert. Hat sich nichts geändert, fällt der
     /// gemerkte Stand wieder weg.
     pub fn end_stroke(&mut self, id: AssetId) -> Res {
+        // Die automatische Kontur folgt jeder Änderung.
+        self.sprite_mut(id)?.refresh_outline().map_err(e)?;
         let unchanged = match (self.undo.last(), self.sprite(id)) {
             (Some(step), Some(now)) => step.asset == id && &step.sprite == now,
             _ => false,
@@ -477,9 +480,63 @@ impl Doc {
             self.project = disk;
         }
         self.revision += 1;
+        self.project.refresh_outlines().map_err(e)?;
         self.ws.save(&self.name, &self.project).map_err(e)?;
         self.stamp = self.disk_stamp();
         Ok(())
+    }
+
+    /// Richtet die automatische Kontur ein, ändert oder beendet sie (`spec` leer;
+    /// mit `keep` bleibt die Ebene stehen). Bei einer Figur auf Wunsch auch für
+    /// alle ihre Animationen. Gibt die Zahl der mitgeänderten Animationen zurück.
+    /// Nur eine Änderung an einem einzelnen Asset lässt sich rückgängig machen.
+    pub fn set_outline(
+        &mut self,
+        id: AssetId,
+        spec: Option<AutoOutline>,
+        keep: bool,
+        with_animations: bool,
+    ) -> Res<usize> {
+        self.poll(Some(id));
+        let mut targets = vec![id];
+        if with_animations && id.kind == AssetKind::Character {
+            targets.extend(
+                self.project
+                    .animations_of(id.id)
+                    .map(|a| AssetId::new(AssetKind::Animation, a.id)),
+            );
+        }
+        let mut changes = Vec::new();
+        for &t in &targets {
+            let s = self.sprite_mut(t)?;
+            let base = s.clone();
+            let result = match &spec {
+                Some(spec) => s.set_auto_outline(spec.clone()).map(|_| ()),
+                None => s.stop_outline(keep),
+            };
+            if let Err(err) = result {
+                // Schon geänderte Assets wieder auf ihren Stand bringen.
+                for change in changes {
+                    if let Change::Edit { id, base } = change {
+                        if let Ok(s) = self.sprite_mut(id) {
+                            *s = base;
+                        }
+                    }
+                }
+                return Err(e(err));
+            }
+            changes.push(Change::Edit { id: t, base });
+        }
+        if let [Change::Edit { id, base }] = changes.as_slice() {
+            self.undo.push(UndoStep {
+                asset: *id,
+                sprite: base.clone(),
+            });
+            self.trim_undo();
+        }
+        self.redo.clear();
+        self.commit(Change::Batch(changes))?;
+        Ok(targets.len() - 1)
     }
 
     // ------------------------------------------------------------ Assets
@@ -802,6 +859,9 @@ fn merge(base: &Sprite, mine: &Sprite, theirs: &Sprite) -> (Sprite, Option<Strin
     }
     let mut out = theirs.clone();
     out.palette = merged_palette(mine, theirs);
+    if mine.auto_outline() != base.auto_outline() {
+        out.restore_outline_spec(mine.auto_outline().cloned());
+    }
     for (f, (base_frame, my_frame)) in base.frames().iter().zip(mine.frames()).enumerate() {
         let Ok(out_frame) = out.frame_mut(f) else {
             continue;
@@ -913,6 +973,47 @@ mod tests {
         assert_eq!(doc.redo().unwrap(), Some(id));
         assert_eq!(pixel(&doc, id, 1, 1), RED);
         assert!(!doc.can_redo());
+    }
+
+    #[test]
+    fn the_automatic_outline_follows_strokes_and_covers_animations() {
+        let ws = workspace();
+        let mut doc = Doc::open(&ws, "Test").unwrap();
+        let hero = doc
+            .create_character("Held", 8, 8, ColorDepth::Rgba32, Palette::default_16())
+            .unwrap();
+        doc.edit(hero, |s| dot(s, 3, 3)).unwrap();
+        let walk = doc
+            .create_animation(hero.id, AnimationKind::Walk, 2, "Held walk")
+            .unwrap();
+        let n = doc
+            .set_outline(hero, Some(AutoOutline::new("Kontur")), false, true)
+            .unwrap();
+        assert_eq!(n, 1);
+        let outline = |doc: &Doc, id: AssetId| {
+            let s = doc.sprite(id).unwrap();
+            let l = s.outline_layer().unwrap();
+            s.layer(0, l)
+                .unwrap()
+                .pixels()
+                .iter()
+                .filter(|c| !c.is_transparent())
+                .count()
+        };
+        assert_eq!(outline(&doc, hero), 4);
+        assert_eq!(outline(&doc, walk), 4);
+        // Ein Strich zieht die Kontur gleich mit, auch auf der Platte.
+        doc.edit(walk, |s| dot(s, 6, 6)).unwrap();
+        assert_eq!(outline(&doc, walk), 8);
+        assert_eq!(outline(&Doc::open(&ws, "Test").unwrap(), walk), 8);
+        // Mehrere Assets auf einmal sind kein einzelner Rückgängig-Schritt.
+        doc.undo().unwrap();
+        assert_eq!(outline(&doc, walk), 4);
+        doc.set_outline(walk, None, false, false).unwrap();
+        assert!(doc.sprite(walk).unwrap().auto_outline().is_none());
+        assert!(doc.sprite(hero).unwrap().auto_outline().is_some());
+        doc.undo().unwrap();
+        assert!(doc.sprite(walk).unwrap().auto_outline().is_some());
     }
 
     #[test]

@@ -4,6 +4,7 @@
 //! speichert es sofort wieder. So sieht ein geöffneter Editor jede Änderung,
 //! und nach einem Absturz geht nichts verloren.
 
+use pixel_core::contour::{self, AutoOutline};
 use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
 use pixel_core::expr::Expr;
@@ -348,6 +349,22 @@ pub struct ImportArgs<'a> {
     pub keep_empty_frames: bool,
 }
 
+/// Was `set_outline` ändern soll. Leere Felder behalten den bisherigen Wert.
+#[derive(Default)]
+pub struct OutlineArgs<'a> {
+    pub project: &'a str,
+    pub asset: &'a str,
+    pub action: Option<&'a str>,
+    pub color: Option<&'a str>,
+    pub inside: Option<bool>,
+    pub corners: Option<bool>,
+    pub thickness: Option<u32>,
+    pub inner: Option<bool>,
+    pub light_dir: Option<&'a str>,
+    pub layer: Option<&'a str>,
+    pub with_animations: Option<bool>,
+}
+
 /// Angaben für [`Studio::set_style`]. Was fehlt, bleibt, wie es ist.
 #[derive(Default)]
 pub struct StyleArgs<'a> {
@@ -409,7 +426,9 @@ impl Studio {
         Ok((lock, self.load(name)?))
     }
 
-    fn save(&self, name: &str, p: &Project) -> Res<()> {
+    /// Speichert. Automatische Konturen werden vorher auf den neuen Stand gebracht.
+    fn save(&self, name: &str, p: &mut Project) -> Res<()> {
+        p.refresh_outlines().map_err(e)?;
         p.save(&self.project_path(name)?).map_err(e)
     }
 
@@ -448,12 +467,33 @@ impl Studio {
         if path.exists() {
             return Err(format!("project '{name}' already exists"));
         }
-        let p = Project::new(name.trim());
-        self.save(name, &p)?;
+        let mut p = Project::new(name.trim());
+        self.save(name, &mut p)?;
         Ok(Reply::text(format!(
             "Created project '{}' at {}",
             name.trim(),
             path.display()
+        )))
+    }
+
+    pub fn delete_project(&self, name: &str, confirm: &str, with_exports: bool) -> Res {
+        if confirm.trim() != name.trim() {
+            return Err(format!(
+                "`confirm` must repeat the project name exactly ('{}'); nothing was deleted",
+                name.trim()
+            ));
+        }
+        let removed = self.ws.delete(name, with_exports).map_err(e)?;
+        let exports = if removed {
+            " Its exported files were deleted too."
+        } else if self.ws.exports_dir(name).is_dir() {
+            " Its exported files were kept."
+        } else {
+            ""
+        };
+        Ok(Reply::text(format!(
+            "Deleted project '{}'.{exports}",
+            name.trim()
         )))
     }
 
@@ -474,6 +514,9 @@ impl Studio {
             let hints = hint_texts(s, &lint::check(s, Checks { outline, seams }));
             if !hints.is_empty() {
                 v["hints"] = json!(hints);
+            }
+            if let Some(o) = s.auto_outline() {
+                v["auto_outline"] = outline_json(o);
             }
             v
         };
@@ -568,7 +611,7 @@ impl Studio {
             }
             p.style.notes = notes.to_string();
         }
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         if p.style.is_empty() {
             return Ok(Reply::text(format!(
                 "Project '{}' has no style now. New images start with the default palette again.",
@@ -777,7 +820,7 @@ impl Studio {
         }
         let layer_names = sprite.layer_names().join(", ");
         let id = p.add_image(name.clone(), sprite);
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::text(format!(
             "Created image '{name}' ({w}×{h}, {} bit), id {id}. Layers bottom to top: {layer_names}. Frames: {frames}, all empty.{style_note}",
             depth.bits()
@@ -848,7 +891,7 @@ impl Studio {
             info["palette_source"] = json!("project style");
         }
         p.add_character(ch);
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::json(info))
     }
 
@@ -882,7 +925,7 @@ impl Studio {
             "note": "Every frame starts as an exact copy of the character's base pose. Change only what moves, frame by frame, e.g. with the shift op on single layers or small grid patches.",
         });
         p.animations.push(anim);
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::json(info))
     }
 
@@ -1019,7 +1062,7 @@ impl Studio {
                 report.changed, report.source_colors
             ));
         }
-        self.save(a.project, &p)?;
+        self.save(a.project, &mut p)?;
         let s = Self::sprite(&p, created)?;
         let shown: Vec<usize> = (0..s.frames().len().min(16)).collect();
         notes.insert(
@@ -1066,7 +1109,7 @@ impl Studio {
                 String::new()
             }
         };
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::text(format!(
             "Deleted {} '{name}'{extra}.",
             r.kind()
@@ -1105,7 +1148,7 @@ impl Studio {
         let n = bundle.animations.len();
         let name = bundle.character.name.clone();
         dst.import_character(bundle).map_err(e)?;
-        self.save(to_project, &dst)?;
+        self.save(to_project, &mut dst)?;
         Ok(Reply::text(format!(
             "{} character '{name}' with {n} animation(s) into project '{to_project}'. It is pixel-identical to the one in '{from_project}'.",
             if replaced { "Updated" } else { "Copied" }
@@ -1237,6 +1280,12 @@ impl Studio {
         let before = s.clone();
         let frames = Self::frame_list(s, frame)?;
         let l = Self::layer_index(s, layer)?;
+        if s.outline_layer() == Some(l) {
+            return Err(format!(
+                "layer {l} ('{}') holds the automatic outline and is redrawn after every change. Draw on another layer, or call set_outline with action \"freeze\" to keep it as a normal layer you can edit.",
+                s.layer_names()[l]
+            ));
+        }
 
         // Jeden Eintrag von per_frame seinem Frame zuordnen.
         let mut extras: HashMap<usize, &PerFrame> = HashMap::new();
@@ -1292,6 +1341,7 @@ impl Studio {
                 })?;
             }
         }
+        s.refresh_outline().map_err(e)?;
         let (png, _) = render(s, &frames, None, &ViewOptions::default())?;
         let after = s.clone();
         let mut text = format!(
@@ -1325,7 +1375,7 @@ impl Studio {
                 " Note: existing animations of this character keep the earlier base pose.",
             );
         }
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         self.remember(project, r, before, after)?;
         Ok(Reply {
             text,
@@ -1397,7 +1447,7 @@ impl Studio {
                 "nothing to undo: no draw call of this session is left for this project".into()
             }));
         }
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         let left = history.iter().filter(|d| d.project == key).count();
         let mut text = format!(
             "Undid {} draw call(s), newest first: {}. {left} more can be undone.",
@@ -1635,7 +1685,7 @@ impl Studio {
             }
         };
         let layers = s.layer_names();
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::text(format!(
             "{msg} Layers bottom to top: {}",
             layers.join(", ")
@@ -1745,7 +1795,7 @@ impl Studio {
             }
         };
         let n = Self::sprite(&p, r)?.frames().len();
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::text(format!(
             "{msg} The asset now has {n} frame(s)."
         )))
@@ -1793,7 +1843,7 @@ impl Studio {
         } else {
             ""
         };
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::text(format!(
             "Palette replaced, it now has {n} color(s).{note}"
         )))
@@ -1807,7 +1857,7 @@ impl Studio {
         let colors: Vec<Rgba> = colors.iter().map(|c| parse_color(c)).collect::<Res<_>>()?;
         p.add_character_colors(cid, &colors).map_err(e)?;
         let pal = p.character(cid).map_err(e)?.palette().colors.clone();
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         Ok(Reply::json(json!({
             "palette": pal,
             "note": "New colors were appended; existing colors and pixels are unchanged. The extended palette also applies to all animations of this character.",
@@ -1928,7 +1978,7 @@ impl Studio {
             });
         }
         let after = s.clone();
-        self.save(project, &p)?;
+        self.save(project, &mut p)?;
         // Nur was `undo` allein wiederherstellen kann, kommt in die Liste.
         let alone = match r {
             AssetRef::Character(id) => p.animations_of(id).next().is_none(),
@@ -1945,6 +1995,122 @@ impl Studio {
                 report.after,
                 list.join(", ")
             ),
+            image_png: Some(png),
+        })
+    }
+
+    // ---------------------------------------------------------------- Kontur
+
+    pub fn set_outline(&self, a: &OutlineArgs) -> Res {
+        let action = a.action.unwrap_or("set").trim().to_ascii_lowercase();
+        if !matches!(action.as_str(), "set" | "remove" | "freeze") {
+            return Err(format!(
+                "unknown action '{action}', use \"set\", \"remove\" or \"freeze\""
+            ));
+        }
+        if let Some(t) = a.thickness {
+            if !(1..=contour::MAX_THICKNESS).contains(&t) {
+                return Err(format!(
+                    "`thickness` must be 1 to {}, got {t}",
+                    contour::MAX_THICKNESS
+                ));
+            }
+        }
+        let (_lock, mut p) = self.load_locked(a.project)?;
+        let r = Self::resolve(&p, a.asset)?;
+        let name = Self::asset_name(&p, r);
+        let before = Self::sprite(&p, r)?.clone();
+
+        let spec = if action == "set" {
+            let unset = |t: &str| matches!(t.trim().to_ascii_lowercase().as_str(), "none" | "");
+            let old = before.auto_outline().cloned();
+            let mut spec = old
+                .clone()
+                .unwrap_or_else(|| AutoOutline::new(a.layer.unwrap_or("outline").trim()));
+            if old.is_none() {
+                spec.color = p.style.outline;
+                spec.light = p
+                    .style
+                    .light_dir
+                    .as_deref()
+                    .and_then(|d| parse_direction(d, "light_dir").ok())
+                    .map(|(x, y)| (x as i8, y as i8));
+            }
+            if let Some(layer) = a.layer {
+                spec.layer = layer.trim().to_string();
+            }
+            if let Some(color) = a.color {
+                spec.color = match color.trim().to_ascii_lowercase().as_str() {
+                    "selective" | "auto" => None,
+                    _ => Some(parse_color(color)?),
+                };
+            }
+            if let Some(dir) = a.light_dir {
+                spec.light = if unset(dir) {
+                    None
+                } else {
+                    let (x, y) = parse_direction(dir, "light_dir")?;
+                    Some((x as i8, y as i8))
+                };
+            }
+            spec.inside = a.inside.unwrap_or(spec.inside);
+            spec.corners = a.corners.unwrap_or(spec.corners);
+            spec.thickness = a.thickness.unwrap_or(spec.thickness);
+            spec.inner = a.inner.unwrap_or(spec.inner);
+            Some(spec)
+        } else {
+            if before.auto_outline().is_none() {
+                return Err(format!("'{name}' has no automatic outline"));
+            }
+            None
+        };
+        let keep = action == "freeze";
+
+        let mut animations = 0;
+        match r {
+            AssetRef::Character(id) => {
+                let with = a.with_animations.unwrap_or(true);
+                animations = p
+                    .set_character_outline(id, spec.clone(), keep, with)
+                    .map_err(e)?;
+            }
+            _ => {
+                let s = Self::sprite_mut(&mut p, r)?;
+                match spec.clone() {
+                    Some(spec) => {
+                        s.set_auto_outline(spec).map_err(e)?;
+                    }
+                    None => s.stop_outline(keep).map_err(e)?,
+                }
+            }
+        }
+        let s = Self::sprite(&p, r)?;
+        let frames: Vec<usize> = (0..s.frames().len()).collect();
+        let png = render_plain(s, &frames, None)?;
+        let after = s.clone();
+        self.save(a.project, &mut p)?;
+        if animations == 0 {
+            self.remember(a.project, r, before, after)?;
+        }
+        let with = if animations > 0 {
+            format!(" and its {animations} animation(s)")
+        } else {
+            String::new()
+        };
+        let text = match spec {
+            Some(spec) => format!(
+                "'{name}'{with} now has an automatic outline on layer '{}': {}. It is redrawn from all other visible layers after every change, in every frame, so keep drawing on the other layers. New animations of a character inherit it. {}",
+                spec.layer,
+                describe_outline(&spec),
+                if animations > 0 { "This cannot be undone with `undo`; call set_outline with action \"remove\" instead." } else { "`undo` takes this back." }
+            ),
+            None if keep => format!(
+                "The outline of '{name}'{with} is now a normal layer: it stays as it is and can be edited by hand, but no longer follows changes."
+            ),
+            None => format!("Removed the automatic outline and its layer from '{name}'{with}."),
+        };
+        Ok(Reply {
+            text,
             image_png: Some(png),
         })
     }
@@ -2067,6 +2233,47 @@ fn style_json(style: &Style) -> Value {
 }
 
 /// Der Name einer Richtung, wie ihn der Stil speichert.
+fn describe_outline(o: &AutoOutline) -> String {
+    let mut parts = vec![
+        match o.color {
+            Some(c) => format!("color {c}"),
+            None => "selective (a darker shade of the color it touches)".into(),
+        },
+        if o.inside {
+            "inside the shape"
+        } else {
+            "outside the shape"
+        }
+        .into(),
+        format!("{} px", o.thickness),
+    ];
+    if o.corners {
+        parts.push("with corners".into());
+    }
+    if o.inner {
+        parts.push("with inner lines between layers".into());
+    }
+    if let (Some((x, y)), None) = (o.light, o.color) {
+        parts.push(format!(
+            "lighter towards {}",
+            direction_name((i64::from(x), i64::from(y)))
+        ));
+    }
+    parts.join(", ")
+}
+
+fn outline_json(o: &AutoOutline) -> Value {
+    json!({
+        "layer": o.layer,
+        "color": o.color.map_or("selective".to_string(), |c| c.to_string()),
+        "inside": o.inside,
+        "corners": o.corners,
+        "thickness": o.thickness,
+        "inner": o.inner,
+        "light_dir": o.light.map(|(x, y)| direction_name((i64::from(x), i64::from(y)))),
+    })
+}
+
 fn direction_name((dx, dy): (i64, i64)) -> &'static str {
     match (dx.signum(), dy.signum()) {
         (-1, -1) => "top-left",

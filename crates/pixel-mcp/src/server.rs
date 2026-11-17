@@ -1,6 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
-use crate::studio::{DrawOp, ImportArgs, PerFrame, Reply, Res, Studio, StyleArgs, ViewOptions};
+use crate::studio::{
+    DrawOp, ImportArgs, OutlineArgs, PerFrame, Reply, Res, Studio, StyleArgs, ViewOptions,
+};
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig};
@@ -16,7 +18,7 @@ Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
 2. create_project, optionally set_style (shared palette, light direction, outline color), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
 3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
-4. Add depth with the technique ops instead of placing every pixel by hand: `outline` around a shape, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
+4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
 5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
 7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
@@ -327,6 +329,43 @@ pub struct ReduceColors {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct DeleteProject {
+    /// Project name.
+    project: String,
+    /// Repeat the project name exactly, as a safeguard against deleting the wrong project.
+    confirm: String,
+    /// Also delete the project's exported files. Default false.
+    #[serde(default)]
+    delete_exports: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SetOutline {
+    /// Project name.
+    project: String,
+    /// Name or id of an image, a character or an animation. A character gets the outline together with all its animations unless `with_animations` is false.
+    asset: String,
+    /// "set" (default) creates or changes the outline, "remove" deletes it with its layer, "freeze" stops the automatic and keeps the outline as a normal layer you can edit by hand.
+    action: Option<String>,
+    /// "selective" (each outline pixel is a darker shade of the color it touches, lighter towards the light) or a fixed color like "#1a1c2c". Default for a new outline: the project style's outline color, else selective.
+    color: Option<String>,
+    /// true: color the edge pixels of the shape instead of adding pixels outside it, so the shape does not grow. Default false.
+    inside: Option<bool>,
+    /// true: also count diagonal neighbours, which closes corner gaps and makes slopes look thicker. Default false.
+    corners: Option<bool>,
+    /// Thickness in pixels, 1 to 4. Default 1.
+    thickness: Option<u32>,
+    /// true: also draw lines where an upper layer meets a lower one (an arm in front of the body). Default false.
+    inner: Option<bool>,
+    /// Where the light comes from, e.g. "top-left"; a selective outline is lighter on that side. "none" for even outlines. Default: the project style's light direction.
+    light_dir: Option<String>,
+    /// Name of the outline layer. Default "outline".
+    layer: Option<String>,
+    /// For a character: also give all its animations the same outline. Default true.
+    with_animations: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct ImportImage {
     /// Project name.
     project: String,
@@ -455,6 +494,14 @@ impl PixelServer {
     )]
     fn create_animation(&self, Parameters(a): Parameters<CreateAnimation>) -> CallToolResult {
         self.run(|s| s.create_animation(&a.project, &a.character, &a.kind, a.frames))
+    }
+
+    #[tool(
+        description = "Delete a whole project file for good, optionally with its exported files. Only do this when the user asked for it; `confirm` must repeat the project name. This cannot be undone.",
+        annotations(title = "Delete project", destructive_hint = true)
+    )]
+    fn delete_project(&self, Parameters(a): Parameters<DeleteProject>) -> CallToolResult {
+        self.run(|s| s.delete_project(&a.project, &a.confirm, a.delete_exports))
     }
 
     #[tool(
@@ -644,6 +691,28 @@ impl PixelServer {
     )]
     fn reduce_colors(&self, Parameters(a): Parameters<ReduceColors>) -> CallToolResult {
         self.run(|s| s.reduce_colors(&a.project, &a.asset, a.colors))
+    }
+
+    #[tool(
+        description = "Give an image, a character (with all its animations) or an animation an automatic outline on its own top layer. It is computed from all other visible layers and redrawn after every change in every frame, by you or in the editor, so draw the shapes without outline and let this follow. Options: selective (darker shade of the touching color, lighter towards the light) or a fixed color, outside or inside the shape, corners, thickness, inner lines between layers. Calling it again changes only the options given. Returns a preview.",
+        annotations(title = "Automatic outline", destructive_hint = false)
+    )]
+    fn set_outline(&self, Parameters(a): Parameters<SetOutline>) -> CallToolResult {
+        self.run(|s| {
+            s.set_outline(&OutlineArgs {
+                project: &a.project,
+                asset: &a.asset,
+                action: a.action.as_deref(),
+                color: a.color.as_deref(),
+                inside: a.inside,
+                corners: a.corners,
+                thickness: a.thickness,
+                inner: a.inner,
+                light_dir: a.light_dir.as_deref(),
+                layer: a.layer.as_deref(),
+                with_animations: a.with_animations,
+            })
+        })
     }
 
     #[tool(
