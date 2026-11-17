@@ -322,6 +322,54 @@ impl Sprite {
         Ok(out)
     }
 
+    /// Ändert die Größe der Leinwand in allen Frames und Ebenen. Der bisherige Inhalt
+    /// landet um `(dx, dy)` versetzt; was über den neuen Rand ragt, geht verloren.
+    pub fn resize_canvas(&mut self, width: u32, height: u32, dx: i64, dy: i64) -> Result<()> {
+        check_size(width, height)?;
+        let (ow, oh) = (self.width as i64, self.height as i64);
+        for f in &mut self.frames {
+            for l in &mut f.layers {
+                let mut n = Layer::new(l.name.clone(), width, height);
+                n.visible = l.visible;
+                n.opacity = l.opacity;
+                for y in 0..oh {
+                    for x in 0..ow {
+                        let p = l.get(x, y)?;
+                        if !p.is_transparent() {
+                            n.set_clipped(x + dx, y + dy, p);
+                        }
+                    }
+                }
+                *l = n;
+            }
+        }
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
+    /// Das kleinste Rechteck um alles Gezeichnete, über alle Frames und Ebenen:
+    /// `(x, y, Breite, Höhe)`. `None` bei einem leeren Bild.
+    pub fn content_bounds(&self) -> Option<(i64, i64, u32, u32)> {
+        let w = self.width as usize;
+        let mut b: Option<(usize, usize, usize, usize)> = None;
+        for f in &self.frames {
+            for l in &f.layers {
+                for (i, p) in l.pixels().iter().enumerate() {
+                    if p.is_transparent() {
+                        continue;
+                    }
+                    let (x, y) = (i % w, i / w);
+                    b = Some(match b {
+                        None => (x, y, x + 1, y + 1),
+                        Some((a, c, d, e)) => (a.min(x), c.min(y), d.max(x + 1), e.max(y + 1)),
+                    });
+                }
+            }
+        }
+        b.map(|(x0, y0, x1, y1)| (x0 as i64, y0 as i64, (x1 - x0) as u32, (y1 - y0) as u32))
+    }
+
     /// Prüft die innere Konsistenz (z. B. nach dem Laden einer Datei).
     pub fn check(&self) -> Result<()> {
         check_size(self.width, self.height)?;
@@ -358,4 +406,18 @@ pub(crate) fn check_size(width: u32, height: u32) -> Result<()> {
         return Err(Error::InvalidSize { width, height });
     }
     Ok(())
+}
+
+/// Versatz des Inhalts, wenn die Leinwand von `old` auf `new` wechselt.
+/// `align` je Achse: −1 bleibt links bzw. oben, 0 bleibt mittig, 1 rechts bzw. unten.
+pub fn canvas_offset(old: (u32, u32), new: (u32, u32), align: (i8, i8)) -> (i64, i64) {
+    let one = |o: u32, n: u32, a: i8| {
+        let d = i64::from(n) - i64::from(o);
+        match a.signum() {
+            -1 => 0,
+            0 => d.div_euclid(2),
+            _ => d,
+        }
+    };
+    (one(old.0, new.0, align.0), one(old.1, new.1, align.1))
 }

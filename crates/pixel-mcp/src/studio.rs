@@ -4,6 +4,7 @@
 //! speichert es sofort wieder. So sieht ein geöffneter Editor jede Änderung,
 //! und nach einem Absturz geht nichts verloren.
 
+use pixel_core::brush;
 use pixel_core::contour::{self, AutoOutline};
 use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
@@ -12,6 +13,7 @@ use pixel_core::import::{self, Grid, NewColors, Shrink};
 use pixel_core::lint::{self, Checks, Finding};
 use pixel_core::project::{CharacterBundle, Style};
 use pixel_core::quant;
+use pixel_core::shapes::{self, CustomShape, Shape};
 use pixel_core::workspace::{
     self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
 };
@@ -288,6 +290,74 @@ pub enum DrawOp {
         /// Replace colors of the piece, e.g. {"#3b5dc9": "#b13e53"}.
         color_map: Option<HashMap<String, String>>,
     },
+    /// A shape fitted into the rectangle (x, y, w, h): heart, diamond, star, triangle,
+    /// cross, hexagon, arrow (pointing right), circle, or the name of a saved custom shape
+    /// (see get_studio_info, custom_shapes). Filled or only its 1-pixel edge.
+    /// Example: {"op": "shape", "shape": "heart", "color": "#b13e53", "x": 4, "y": 4, "w": 9, "h": 8, "filled": true}
+    Shape {
+        shape: String,
+        /// Color of the shape. With `keep_colors` on a custom shape it may be left out.
+        color: Option<String>,
+        x: i64,
+        y: i64,
+        w: u32,
+        h: u32,
+        #[serde(default)]
+        filled: bool,
+        /// Custom shapes only: paint them in their own saved colors instead of `color`.
+        #[serde(default)]
+        keep_colors: bool,
+        /// Mirror the shape left-right (e.g. an arrow pointing left).
+        #[serde(default)]
+        flip_h: bool,
+        /// Mirror the shape top-bottom.
+        #[serde(default)]
+        flip_v: bool,
+    },
+    /// Spray can: scatter pixels randomly in a circle around (x, y). `density` is the share
+    /// of pixels hit (0 to 1). Several puffs with different `seed` build up texture.
+    /// Example: {"op": "spray", "color": "#94b0c2", "x": 20, "y": 12, "radius": 4, "density": 0.3, "seed": 2}
+    Spray {
+        color: String,
+        x: i64,
+        y: i64,
+        /// Radius in pixels, 0 to 64. Default 3.
+        radius: Option<u32>,
+        /// Share of pixels hit, 0 to 1. Default 0.25.
+        density: Option<f64>,
+        #[serde(default)]
+        seed: u64,
+    },
+    /// Make drawn pixels one step lighter, walking along the palette's color ramps (the
+    /// most similar lighter color). Without a fitting palette color the color itself is
+    /// lightened, except on locked palettes. Empty pixels stay empty.
+    /// Example: {"op": "lighten", "x": 4, "y": 2, "w": 6, "h": 3, "mask": "#3b5dc9"}
+    Lighten {
+        /// How many steps, 1 to 8. Default 1.
+        steps: Option<u32>,
+        #[serde(flatten)]
+        area: Where,
+    },
+    /// Make drawn pixels one step darker along the palette's color ramps. See lighten.
+    Darken {
+        /// How many steps, 1 to 8. Default 1.
+        steps: Option<u32>,
+        #[serde(flatten)]
+        area: Where,
+    },
+    /// Cut the area [x, y, w, h] out of the layer and put it down moved by (dx, dy).
+    /// Empty pixels of the piece leave what is below. Content pushed outside is lost.
+    MoveArea { area: [i64; 4], dx: i64, dy: i64 },
+    /// Mirror the area [x, y, w, h] in place, left-right and/or top-bottom.
+    FlipArea {
+        area: [i64; 4],
+        #[serde(default)]
+        horizontal: bool,
+        #[serde(default)]
+        vertical: bool,
+    },
+    /// Erase the area [x, y, w, h] of the layer.
+    ClearArea { area: [i64; 4] },
 }
 
 /// Area an op works on. Without x, y, w, h it is the whole canvas.
@@ -450,7 +520,20 @@ impl Studio {
                 "height": t.height,
                 "purpose": t.purpose_en,
             })).collect::<Vec<_>>(),
-            "palette_presets": ["default16", "gray4", "gray8", "gray16"],
+            "palette_presets": {
+                "default16": "16 hand-picked colors",
+                "ramps32": "32 colors: 7 hue ramps with 4 shades (shadows cooler, lights warmer) plus 4 grays",
+                "ramps64": "64 colors: 12 hue ramps with 5 shades plus 4 grays",
+                "gray4": "4 grays",
+                "gray8": "8 grays",
+                "gray16": "16 grays",
+            },
+            "shapes": Shape::ALL.iter().map(|s| s.id()).collect::<Vec<_>>(),
+            "custom_shapes": self.ws.custom_shapes().iter().map(|s| json!({
+                "name": s.name,
+                "width": s.width,
+                "height": s.height,
+            })).collect::<Vec<_>>(),
             "animation_presets": AnimationKind::PRESETS.iter().map(|k| json!({
                 "kind": k.name(),
                 "frames": k.default_frames(),
@@ -776,6 +859,8 @@ impl Studio {
                 "gray4" => Palette::grayscale(4),
                 "gray8" => Palette::grayscale(8),
                 "gray16" => Palette::grayscale(16),
+                "ramps32" => Palette::ramps_32(),
+                "ramps64" => Palette::ramps_64(),
                 other => return Err(format!("unknown palette preset '{other}'")),
             },
             (None, None) => Palette::default_16(),
@@ -1243,7 +1328,19 @@ impl Studio {
         layer: Option<&Value>,
         ops: Vec<DrawOp>,
         per_frame: Vec<PerFrame>,
+        mirror: Option<&str>,
     ) -> Res {
+        let (mirror_h, mirror_v) = match mirror.map(|m| m.trim().to_ascii_lowercase()).as_deref() {
+            None | Some("" | "none") => (false, false),
+            Some("left_right" | "left-right" | "x" | "horizontal") => (true, false),
+            Some("top_bottom" | "top-bottom" | "y" | "vertical") => (false, true),
+            Some("both" | "xy") => (true, true),
+            Some(other) => {
+                return Err(format!(
+                    "unknown mirror '{other}', use left_right, top_bottom or both"
+                ))
+            }
+        };
         let extra: usize = per_frame
             .iter()
             .map(|f| f.ops.as_ref().map_or(0, Vec::len))
@@ -1274,6 +1371,17 @@ impl Studio {
                 }
             }
         }
+
+        // Eigene Formen nur laden, wenn eine Op sie braucht.
+        let custom = ops
+            .iter()
+            .chain(per_frame.iter().flat_map(|f| f.ops.iter().flatten()))
+            .any(|op| matches!(op, DrawOp::Shape { shape, .. } if Shape::parse(shape).is_none()));
+        let custom_shapes = if custom {
+            self.ws.custom_shapes()
+        } else {
+            Vec::new()
+        };
 
         let style = p.style.clone();
         let s = Self::sprite_mut(&mut p, r)?;
@@ -1317,10 +1425,15 @@ impl Studio {
             swap: HashMap::new(),
             sources: &sources,
             style,
+            shapes: &custom_shapes,
         };
         for &f in &frames {
             let t = Target::new(f, l);
             let entry = extras.get(&f);
+            let untouched = (mirror_h || mirror_v)
+                .then(|| s.layer(f, l).map(|layer| layer.pixels().to_vec()))
+                .transpose()
+                .map_err(e)?;
             ctx.swap.clear();
             for (from, to) in entry.and_then(|e| e.colors.as_ref()).into_iter().flatten() {
                 ctx.swap.insert(parse_color(from)?, parse_color(to)?);
@@ -1339,6 +1452,9 @@ impl Studio {
                 apply_op(s, t, op, &mut ctx).map_err(|err| {
                     format!("per_frame op {i} on frame {f}: {err} (nothing was saved)")
                 })?;
+            }
+            if let Some(untouched) = untouched {
+                brush::mirror_changes(s, t, &untouched, mirror_h, mirror_v).map_err(e)?;
             }
         }
         s.refresh_outline().map_err(e)?;
@@ -1612,6 +1728,165 @@ impl Studio {
 
     // ---------------------------------------------------------------- Ebenen und Frames
 
+    /// Eigene Formen: auflisten, aus Gezeichnetem speichern oder löschen.
+    #[allow(clippy::too_many_arguments)]
+    pub fn custom_shapes(
+        &self,
+        action: &str,
+        name: Option<&str>,
+        project: Option<&str>,
+        asset: Option<&str>,
+        frame: Option<usize>,
+        layer: Option<&Value>,
+        area: Option<[i64; 4]>,
+    ) -> Res {
+        let list = |ws: &Workspace| -> String {
+            let all = ws.custom_shapes();
+            if all.is_empty() {
+                "No custom shapes saved yet.".into()
+            } else {
+                let names: Vec<String> = all
+                    .iter()
+                    .map(|s| format!("'{}' ({}×{})", s.name, s.width, s.height))
+                    .collect();
+                format!("Custom shapes: {}.", names.join(", "))
+            }
+        };
+        let need_name = || {
+            name.map(str::trim)
+                .filter(|n| !n.is_empty() && n.chars().count() <= 40)
+                .ok_or("this action needs `name` (1 to 40 characters)".to_string())
+        };
+        match action.trim() {
+            "" | "list" => Ok(Reply::text(list(&self.ws))),
+            "save" => {
+                let n = need_name()?;
+                if Shape::parse(n).is_some() {
+                    return Err(format!("'{n}' is a built-in shape, pick another name"));
+                }
+                let project = project.ok_or("action 'save' needs `project` and `asset`")?;
+                let asset = asset.ok_or("action 'save' needs `asset`")?;
+                let p = self.load(project)?;
+                let r = Self::resolve(&p, asset)?;
+                let s = Self::sprite(&p, r)?;
+                let f = Self::frame_index(s, frame)?;
+                let l = Self::layer_index(s, layer)?;
+                let area = area.map(|[x, y, w, h]| {
+                    (
+                        x,
+                        y,
+                        w.clamp(0, i64::from(u32::MAX)) as u32,
+                        h.clamp(0, i64::from(u32::MAX)) as u32,
+                    )
+                });
+                let shape = CustomShape::from_layer(n, s, Target::new(f, l), area).map_err(e)?;
+                let replaced = self.ws.custom_shape(n).is_some();
+                self.ws.save_shape(&shape).map_err(e)?;
+                Ok(Reply::text(format!(
+                    "{} custom shape '{n}' ({}×{} pixels, trimmed to what is drawn). Draw it with the `shape` op, also in other projects. {}",
+                    if replaced { "Replaced" } else { "Saved" },
+                    shape.width,
+                    shape.height,
+                    list(&self.ws)
+                )))
+            }
+            "delete" => {
+                let n = need_name()?;
+                if !self.ws.delete_shape(n).map_err(e)? {
+                    return Err(format!(
+                        "there is no custom shape '{n}'. {}",
+                        list(&self.ws)
+                    ));
+                }
+                Ok(Reply::text(format!(
+                    "Deleted custom shape '{n}'. {}",
+                    list(&self.ws)
+                )))
+            }
+            other => Err(format!(
+                "unknown action '{other}', use list, save or delete"
+            )),
+        }
+    }
+
+    /// Ändert die Leinwandgröße eines Assets. Bei Figuren und Animationen wachsen die
+    /// Figur und alle ihre Animationen gemeinsam, damit sie gleich groß bleiben.
+    pub fn resize_canvas(
+        &self,
+        project: &str,
+        asset: &str,
+        width: Option<u32>,
+        height: Option<u32>,
+        anchor: Option<&str>,
+        crop_to_content: bool,
+    ) -> Res {
+        let (_lock, mut p) = self.load_locked(project)?;
+        let r = Self::resolve(&p, asset)?;
+        let s = Self::sprite(&p, r)?;
+        let old = (s.width(), s.height());
+        let (w, h, dx, dy) = if crop_to_content {
+            if width.is_some() || height.is_some() {
+                return Err("give either `crop_to_content` or a new size, not both".into());
+            }
+            let (x, y, w, h) = s
+                .content_bounds()
+                .ok_or("the asset is empty, there is nothing to crop to")?;
+            (w, h, -x, -y)
+        } else {
+            let (w, h) = (width.unwrap_or(old.0), height.unwrap_or(old.1));
+            let align = match anchor.map(|a| a.trim().to_ascii_lowercase()).as_deref() {
+                None | Some("center" | "middle") => (0, 0),
+                Some(a) => {
+                    let (dx, dy) = parse_direction(a, "anchor")?;
+                    (dx as i8, dy as i8)
+                }
+            };
+            let (dx, dy) = pixel_core::sprite::canvas_offset(old, (w, h), align);
+            (w, h, dx, dy)
+        };
+        let max = pixel_core::MAX_SIZE;
+        if w == 0 || h == 0 || w > max || h > max {
+            return Err(format!("width and height must be 1 to {max}"));
+        }
+        let character = match r {
+            AssetRef::Character(id) => Some(id),
+            AssetRef::Animation(id) => Some(p.animation(id).map_err(e)?.character_id),
+            AssetRef::Image(_) => None,
+        };
+        let also = match character {
+            Some(id) => {
+                let n = p.animations_of(id).count();
+                p.resize_character(id, w, h, dx, dy).map_err(e)?;
+                let name = p.character(id).map_err(e)?.name.clone();
+                match n {
+                    0 => format!(" (character '{name}')"),
+                    1 => format!(" (character '{name}' and its animation)"),
+                    n => format!(" (character '{name}' and all {n} animations)"),
+                }
+            }
+            None => {
+                let s = Self::sprite_mut(&mut p, r)?;
+                s.resize_canvas(w, h, dx, dy).map_err(e)?;
+                s.refresh_outline().map_err(e)?;
+                String::new()
+            }
+        };
+        let s = Self::sprite(&p, r)?;
+        let frames: Vec<usize> = (0..s.frames().len()).collect();
+        let (png, _) = render(s, &frames, None, &ViewOptions::default())?;
+        let text = format!(
+            "Canvas of '{}' is now {w}×{h} (was {}×{}){also}; content moved by ({dx}, {dy}).",
+            Self::asset_name(&p, r),
+            old.0,
+            old.1
+        );
+        self.save(project, &mut p)?;
+        Ok(Reply {
+            text,
+            image_png: Some(png),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn edit_layers(
         &self,
@@ -1622,6 +1897,7 @@ impl Studio {
         name: Option<&str>,
         visible: Option<bool>,
         opacity: Option<u8>,
+        to: Option<usize>,
     ) -> Res {
         let (_lock, mut p) = self.load_locked(project)?;
         let r = Self::resolve(&p, asset)?;
@@ -1678,9 +1954,18 @@ impl Studio {
                 }
                 format!("Updated layer {i} in all frames.")
             }
+            "move" => {
+                let i = need_layer(s)?;
+                let to = to.ok_or("action 'move' needs `to` (the new index, 0 = bottom)")?;
+                if to >= s.layer_count() {
+                    return Err(format!("`to` must be 0 to {}", s.layer_count() - 1));
+                }
+                s.move_layer(i, to).map_err(e)?;
+                format!("Moved layer {i} to position {to} in all frames.")
+            }
             other => {
                 return Err(format!(
-                    "unknown action '{other}', use add, remove, rename or set"
+                    "unknown action '{other}', use add, remove, rename, set or move"
                 ))
             }
         };
@@ -2381,6 +2666,8 @@ struct DrawCtx<'a> {
     sources: &'a HashMap<String, Sprite>,
     /// Der Stil des Projekts: Vorgaben für Ops, die Licht oder Umrissfarbe nicht nennen.
     style: Style,
+    /// Die eigenen Formen aus dem Arbeitsordner, für die Op `shape`.
+    shapes: &'a [CustomShape],
 }
 
 impl DrawCtx<'_> {
@@ -2488,6 +2775,22 @@ fn warn_if_empty(sel: &Selection, op: &str, area: &Where, warnings: &mut Vec<Str
             None => format!("{op} changed nothing: the area holds no matching pixels"),
         });
     }
+}
+
+/// `[x, y, w, h]` als Ausschnitt.
+fn to_area(a: &[i64; 4]) -> Res<Area> {
+    let [x, y, w, h] = *a;
+    let max = pixel_core::MAX_SIZE as i64;
+    if !(1..=max).contains(&w) || !(1..=max).contains(&h) {
+        return Err("`area` is [x, y, w, h] with w and h of at least 1".into());
+    }
+    check_box(x, y, w as u32, h as u32)?;
+    Ok(Area {
+        x,
+        y,
+        w: w as u32,
+        h: h as u32,
+    })
 }
 
 fn apply_op(s: &mut Sprite, t: Target, op: &DrawOp, ctx: &mut DrawCtx) -> Res<()> {
@@ -2792,6 +3095,144 @@ fn apply_op(s: &mut Sprite, t: Target, op: &DrawOp, ctx: &mut DrawCtx) -> Res<()
                     "stamp changed nothing: the source piece is empty or lands outside the canvas"
                         .into(),
                 );
+            }
+            Ok(())
+        }
+        DrawOp::Shape {
+            shape,
+            color,
+            x,
+            y,
+            w,
+            h,
+            filled,
+            keep_colors,
+            flip_h,
+            flip_v,
+        } => {
+            check_box(*x, *y, *w, *h)?;
+            let max = pixel_core::MAX_SIZE;
+            if *w == 0 || *h == 0 || *w > max || *h > max {
+                return Err(format!("a shape needs w and h from 1 to {max}"));
+            }
+            let custom = ctx
+                .shapes
+                .iter()
+                .find(|c| workspace::name_key(&c.name) == workspace::name_key(shape));
+            let (mask, colors) = match (Shape::parse(shape), custom) {
+                (Some(b), _) => (b.mask(*w, *h), None),
+                (None, Some(c)) => (c.mask(*w, *h), keep_colors.then(|| c.colors(*w, *h))),
+                (None, None) => {
+                    let mut names: Vec<String> =
+                        Shape::ALL.iter().map(|b| b.id().to_string()).collect();
+                    names.extend(ctx.shapes.iter().map(|c| c.name.clone()));
+                    return Err(format!(
+                        "unknown shape '{shape}', use one of: {}",
+                        names.join(", ")
+                    ));
+                }
+            };
+            if *keep_colors && colors.is_none() {
+                return Err("`keep_colors` only works with a saved custom shape".into());
+            }
+            let c = match color {
+                Some(c) => ctx.color(s, c)?,
+                None if colors.is_some() => Rgba::TRANSPARENT,
+                None => return Err("this shape needs `color`".into()),
+            };
+            let mask = if *filled {
+                mask
+            } else {
+                shapes::edge(&mask, *w, *h)
+            };
+            let mask = shapes::flip(&mask, *w, *h, *flip_h, *flip_v);
+            let colors = colors.map(|cs| shapes::flip(&cs, *w, *h, *flip_h, *flip_v));
+            let n =
+                shapes::draw_mask(s, t, *x, *y, *w, *h, &mask, c, colors.as_deref()).map_err(e)?;
+            if n == 0 {
+                ctx.warnings
+                    .push("shape changed nothing: it lies outside the canvas".into());
+            }
+            Ok(())
+        }
+        DrawOp::Spray {
+            color,
+            x,
+            y,
+            radius,
+            density,
+            seed,
+        } => {
+            let c = ctx.color(s, color)?;
+            check_box(*x, *y, 1, 1)?;
+            let n = brush::spray(
+                s,
+                t,
+                *x,
+                *y,
+                radius.unwrap_or(3),
+                density.unwrap_or(0.25),
+                c,
+                *seed,
+            )
+            .map_err(e)?;
+            if n == 0 {
+                ctx.warnings.push(
+                    "spray changed nothing: raise density or radius, or check the position".into(),
+                );
+            }
+            Ok(())
+        }
+        DrawOp::Lighten { steps, area } | DrawOp::Darken { steps, area } => {
+            let lighten = matches!(op, DrawOp::Lighten { .. });
+            let name = if lighten { "lighten" } else { "darken" };
+            let steps = steps.unwrap_or(1);
+            if !(1..=8).contains(&steps) {
+                return Err("`steps` must be 1 to 8".into());
+            }
+            let sel = select(s, t, area, Mask::Opaque)?;
+            let w = s.width() as usize;
+            let points: Vec<(i64, i64)> = s
+                .layer(t.frame, t.layer)
+                .map_err(e)?
+                .pixels()
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !p.is_transparent())
+                .map(|(i, _)| ((i % w) as i64, (i / w) as i64))
+                .filter(|&(x, y)| sel.contains_point(x, y))
+                .collect();
+            let mut changed = 0;
+            for _ in 0..steps {
+                changed += brush::tone(s, t, &points, lighten).map_err(e)?;
+            }
+            if changed == 0 {
+                ctx.warnings.push(format!(
+                    "{name} changed nothing: no drawn pixel in the area, or no {} color in the palette",
+                    if lighten { "lighter" } else { "darker" }
+                ));
+            }
+            Ok(())
+        }
+        DrawOp::MoveArea { area, dx, dy } => {
+            let a = to_area(area)?;
+            check_box(*dx, *dy, 1, 1)?;
+            brush::move_area(s, t, a, *dx, *dy).map(|_| ()).map_err(e)
+        }
+        DrawOp::FlipArea {
+            area,
+            horizontal,
+            vertical,
+        } => {
+            if !horizontal && !vertical {
+                return Err("flip_area needs `horizontal` and/or `vertical`".into());
+            }
+            brush::flip_area(s, t, to_area(area)?, *horizontal, *vertical).map_err(e)
+        }
+        DrawOp::ClearArea { area } => {
+            if brush::clear_area(s, t, to_area(area)?).map_err(e)? == 0 {
+                ctx.warnings
+                    .push("clear_area changed nothing: the area was already empty".into());
             }
             Ok(())
         }

@@ -267,6 +267,34 @@ impl Project {
         Ok(self.images.remove(i))
     }
 
+    /// Ändert die Leinwand einer Figur samt aller ihrer Animationen, damit sie
+    /// gleich groß bleiben. Der Inhalt landet um `(dx, dy)` versetzt, der Bezugspunkt wandert mit.
+    pub fn resize_character(
+        &mut self,
+        id: Uuid,
+        width: u32,
+        height: u32,
+        dx: i64,
+        dy: i64,
+    ) -> Result<()> {
+        let c = self.character_mut(id)?;
+        let mut base = c.base.clone();
+        base.resize_canvas(width, height, dx, dy)?;
+        base.refresh_outline()?;
+        c.base = base;
+        let (ax, ay) = c.anchor;
+        let clamp = |v: i64, max: u32| v.clamp(0, i64::from(max) - 1) as u32;
+        c.anchor = (
+            clamp(i64::from(ax) + dx, width),
+            clamp(i64::from(ay) + dy, height),
+        );
+        for a in self.animations.iter_mut().filter(|a| a.character_id == id) {
+            a.sprite.resize_canvas(width, height, dx, dy)?;
+            a.sprite.refresh_outline()?;
+        }
+        Ok(())
+    }
+
     // ---- Konstanz ----
 
     /// Prüft, ob jede Animation noch zu ihrer Figur passt: gleiche Größe,

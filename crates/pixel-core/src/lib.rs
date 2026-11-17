@@ -15,6 +15,7 @@
 //!   kopieren, und [`Project::validate`] meldet jede Abweichung.
 
 pub mod animation;
+pub mod brush;
 pub mod character;
 pub mod color;
 pub mod contour;
@@ -30,6 +31,7 @@ pub mod lint;
 pub mod palette;
 pub mod project;
 pub mod quant;
+pub mod shapes;
 pub mod sprite;
 pub mod template;
 pub mod video;
