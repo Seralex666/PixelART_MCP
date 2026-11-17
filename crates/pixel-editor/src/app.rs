@@ -6,6 +6,7 @@ use crate::doc::{AssetEntry, AssetId, AssetKind, Doc, Res};
 use crate::help;
 use crate::icons::Icons;
 use crate::import_dialog::ImportForm;
+use crate::outline_dialog::OutlineForm;
 use crate::settings::Settings;
 use crate::tools::{Brush, Stroke, Tool, MAX_BRUSH};
 use eframe::egui::{self, Color32, Key, RichText, Sense, StrokeKind};
@@ -25,6 +26,10 @@ const POLL_SECONDS: f64 = 0.5;
 /// Bis zu dieser Pixelmenge bekommt die Timeline kleine Vorschaubilder.
 const THUMB_BUDGET: usize = 2_000_000;
 const THUMB_SIZE: f32 = 48.0;
+/// Höhe einer Zeile in der Ebenenliste und Größe ihres Vorschaubilds.
+const LAYER_ROW: f32 = 40.0;
+const LAYER_THUMB: f32 = 32.0;
+const UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
 
 pub fn c32(c: Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
@@ -47,6 +52,7 @@ pub struct Textures {
     pub main: Option<(TexKey, egui::TextureHandle)>,
     pub onion: Option<(TexKey, egui::TextureHandle)>,
     thumbs: Option<((u64, AssetId), Vec<egui::TextureHandle>)>,
+    layers: Option<(TexKey, Vec<egui::TextureHandle>)>,
 }
 
 pub struct App {
@@ -137,6 +143,7 @@ impl App {
             Ok("export") => app.dialog = Dialog::Export(ExportForm::default()),
             Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
             Ok("settings") => app.dialog = Dialog::Settings(SettingsForm::new(&app)),
+            Ok("outline") => app.outline_dialog(),
             Ok(other) => {
                 // „import:<datei>“ öffnet den Import-Dialog mit dieser Datei.
                 if let Some(path) = other.strip_prefix("import:") {
@@ -185,6 +192,7 @@ impl App {
                 self.textures.main = None;
                 self.textures.onion = None;
                 self.textures.thumbs = None;
+                self.textures.layers = None;
                 self.stroke = None;
                 self.playing = false;
                 self.sel = None;
@@ -227,6 +235,23 @@ impl App {
         self.settings.home =
             (default.as_deref() != Some(self.ws.home())).then(|| self.ws.home().to_path_buf());
         self.settings.save()
+    }
+
+    /// Ein Projekt ist weg (hier gelöscht oder von außen). War es offen, wird es
+    /// geschlossen und das zuletzt bearbeitete andere geöffnet.
+    pub fn project_deleted(&mut self, name: &str) {
+        self.projects = self.ws.project_names();
+        if self.doc.as_ref().is_some_and(|d| d.name() == name) {
+            self.doc = None;
+            self.sel = None;
+            self.stroke = None;
+            self.playing = false;
+            self.open_latest(None);
+        }
+        self.info(trf!(
+            "Projekt „{name}“ gelöscht",
+            "Project \"{name}\" deleted"
+        ));
     }
 
     /// Öffnet das gewünschte, sonst das zuletzt bearbeitete Projekt.
@@ -390,6 +415,15 @@ impl App {
         if self.stroke.is_none() && now - self.last_poll >= POLL_SECONDS {
             self.last_poll = now;
             self.projects = self.ws.project_names();
+            // Von außen gelöscht (etwa durch Claude): nicht durch Speichern wieder anlegen.
+            let gone = self
+                .doc
+                .as_ref()
+                .filter(|d| !self.ws.exists(d.name()))
+                .map(|d| d.name().to_string());
+            if let Some(name) = gone {
+                self.project_deleted(&name);
+            }
             if let Some(doc) = &mut self.doc {
                 if doc.poll(self.sel) {
                     self.fix_selection();
@@ -583,6 +617,21 @@ impl App {
                     self.open_dialog(Dialog::Export(ExportForm::default()));
                 }
                 if ui
+                    .add_enabled(
+                        has_doc,
+                        egui::Button::new(tr("Projekt löschen…", "Delete project…")),
+                    )
+                    .clicked()
+                {
+                    if let Some(name) = self.doc.as_ref().map(|d| d.name().to_string()) {
+                        self.open_dialog(Dialog::DeleteProject {
+                            name,
+                            exports: false,
+                        });
+                    }
+                }
+                ui.separator();
+                if ui
                     .button(tr("Arbeitsordner öffnen", "Open workspace folder"))
                     .clicked()
                 {
@@ -621,6 +670,12 @@ impl App {
                     self.undo(true);
                 }
                 ui.separator();
+                if ui
+                    .add_enabled(has_sel, egui::Button::new(tr("Kontur…", "Outline…")))
+                    .clicked()
+                {
+                    self.outline_dialog();
+                }
                 if ui
                     .add_enabled(
                         has_sel,
@@ -696,19 +751,35 @@ impl App {
                     d.name().to_string()
                 });
             let mut open = None;
+            let mut delete = None;
             egui::ComboBox::from_id_salt("project")
                 .selected_text(current.clone())
                 .show_ui(ui, |ui| {
                     for name in &self.projects {
-                        if ui.selectable_label(*name == current, name).clicked() {
+                        let resp = ui
+                            .selectable_label(*name == current, name)
+                            .on_hover_text(tr("Rechtsklick zum Löschen", "Right-click to delete"));
+                        if resp.clicked() {
                             open = Some(name.clone());
                         }
+                        resp.context_menu(|ui| {
+                            if ui.button(tr("Löschen…", "Delete…")).clicked() {
+                                delete = Some(name.clone());
+                                ui.close();
+                            }
+                        });
                     }
                 });
             if let Some(name) = open {
                 if name != current {
                     self.open_project(&name);
                 }
+            }
+            if let Some(name) = delete {
+                self.open_dialog(Dialog::DeleteProject {
+                    name,
+                    exports: false,
+                });
             }
         });
     }
@@ -838,8 +909,10 @@ impl App {
 
     fn asset_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
+        ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
         if self.doc.is_none() {
             ui.label(tr("Noch kein Projekt geöffnet.", "No project open yet."));
+            ui.add_space(4.0);
             if ui.button(tr("Neues Projekt…", "New project…")).clicked() {
                 self.open_dialog(Dialog::NewProject {
                     name: String::new(),
@@ -849,29 +922,58 @@ impl App {
         }
         let assets = self.doc.as_ref().map(|d| d.assets()).unwrap_or_default();
         let has_character = assets.iter().any(|a| a.id.kind == AssetKind::Character);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(tr("+ Figur", "+ Character")).clicked() {
-                self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
-            }
-            if ui
-                .add_enabled(has_character, egui::Button::new("+ Animation"))
-                .clicked()
-            {
-                self.new_animation_dialog(None);
-            }
-            if ui.button(tr("+ Bild", "+ Image")).clicked() {
-                self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
-            }
-        });
-        ui.separator();
+
+        // Anlegen steht unten, die Liste bekommt den Platz darüber.
+        egui::Panel::bottom("asset_add")
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                ui.add_space(6.0);
+                let width = ui.available_width();
+                let wide = |text: &str| egui::Button::new(text).min_size(egui::vec2(width, 0.0));
+                if ui.add(wide(tr("+ Figur", "+ Character"))).clicked() {
+                    self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
+                }
+                if has_character
+                    && ui
+                        .add(wide("+ Animation"))
+                        .on_hover_text(tr(
+                            "Neue Animation für eine Figur",
+                            "New animation for a character",
+                        ))
+                        .clicked()
+                {
+                    self.new_animation_dialog(None);
+                }
+                if ui.add(wide(tr("+ Bild", "+ Image"))).clicked() {
+                    self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
+                }
+                if ui
+                    .add(wide(tr("Bild importieren…", "Import image…")))
+                    .clicked()
+                {
+                    self.import_dialog(None);
+                }
+                ui.add_space(6.0);
+            });
+
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.strong(tr("Figuren", "Characters"));
+            if assets.is_empty() {
+                ui.weak(tr(
+                    "Das Projekt ist noch leer. Lege unten eine Figur oder ein Bild an, oder ziehe eine Bilddatei ins Fenster.",
+                    "The project is still empty. Add a character or an image below, or drag an image file into the window.",
+                ));
+                ui.add_space(4.0);
+                ui.weak(tr(
+                    "Eine Figur hat eine feste Größe und Palette, damit sie in jeder Animation gleich aussieht. Bilder sind frei: Tiles, Items, Szenen.",
+                    "A character has a fixed size and palette so it looks the same in every animation. Images are free: tiles, items, scenes.",
+                ));
+            }
             let characters: Vec<&AssetEntry> = assets
                 .iter()
                 .filter(|a| a.id.kind == AssetKind::Character)
                 .collect();
-            if characters.is_empty() {
-                ui.weak(tr("Noch keine. Eine Figur hat eine feste Größe und Palette, damit sie in jeder Animation gleich aussieht.", "None yet. A character has a fixed size and palette so it looks the same in every animation."));
+            if !characters.is_empty() {
+                section(ui, tr("Figuren", "Characters"));
             }
             for c in &characters {
                 self.asset_row(ui, c, false);
@@ -889,15 +991,16 @@ impl App {
             }) {
                 self.asset_row(ui, a, false);
             }
-            ui.add_space(8.0);
-            ui.strong(tr("Bilder", "Images"));
-            let mut any = false;
-            for i in assets.iter().filter(|a| a.id.kind == AssetKind::Image) {
-                any = true;
-                self.asset_row(ui, i, false);
+            let images: Vec<&AssetEntry> = assets
+                .iter()
+                .filter(|a| a.id.kind == AssetKind::Image)
+                .collect();
+            if !images.is_empty() {
+                ui.add_space(6.0);
+                section(ui, tr("Bilder", "Images"));
             }
-            if !any {
-                ui.weak(tr("Noch keine. Bilder sind frei: Tiles, Items, Szenen.", "None yet. Images are free: tiles, items, scenes."));
+            for i in images {
+                self.asset_row(ui, i, false);
             }
         });
     }
@@ -905,7 +1008,7 @@ impl App {
     fn asset_row(&mut self, ui: &mut egui::Ui, a: &AssetEntry, indent: bool) {
         ui.horizontal(|ui| {
             if indent {
-                ui.add_space(14.0);
+                ui.add_space(16.0);
             }
             let selected = self.sel == Some(a.id);
             let frames = if a.frames == 1 {
@@ -913,7 +1016,18 @@ impl App {
             } else {
                 format!("{} Frames", a.frames)
             };
-            let resp = ui.selectable_label(selected, &a.name).on_hover_text(trf!(
+            let width = ui.available_width();
+            // Rechts die Zahl der Frames bei Animationen; das schiebt den Namen nach links.
+            let count = if a.id.kind == AssetKind::Animation {
+                a.frames.to_string()
+            } else {
+                String::new()
+            };
+            let button = egui::Button::selectable(selected, &a.name)
+                .right_text(RichText::new(count).weak().small())
+                .min_size(egui::vec2(width, 26.0))
+                .truncate();
+            let resp = ui.add(button).on_hover_text(trf!(
                 "{} · {}×{} · {} Bit · {frames}",
                 "{} · {}×{} · {} bit · {frames}",
                 a.id.kind.label(),
@@ -929,6 +1043,11 @@ impl App {
                     && ui.button(tr("Neue Animation…", "New animation…")).clicked()
                 {
                     self.new_animation_dialog(Some(a.id.id));
+                    ui.close();
+                }
+                if ui.button(tr("Kontur…", "Outline…")).clicked() {
+                    self.select(a.id);
+                    self.outline_dialog();
                     ui.close();
                 }
                 if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
@@ -949,6 +1068,14 @@ impl App {
                 }
             });
         });
+    }
+
+    /// Öffnet den Kontur-Dialog für das ausgewählte Asset.
+    pub fn outline_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = OutlineForm::new(self, id) {
+            self.open_dialog(Dialog::Outline(Box::new(form)));
+        }
     }
 
     // ------------------------------------------------------------ Farbe, Palette, Ebenen
@@ -1050,6 +1177,8 @@ impl App {
 
     fn layer_list(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.sprite() else { return };
+        let auto = s.outline_layer();
+        let has_outline = s.auto_outline().is_some();
         let layers: Vec<(String, bool)> = s
             .frame(self.frame)
             .map(|f| {
@@ -1059,35 +1188,103 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
+        self.update_layer_thumbs(ui.ctx());
         ui.strong(tr("Ebenen", "Layers"));
+        ui.add_space(4.0);
         // Die oberste Ebene steht oben, wie sie auch gezeichnet wird.
         for (i, (name, visible)) in layers.iter().enumerate().rev() {
-            ui.horizontal(|ui| {
-                let mut v = *visible;
-                if ui
-                    .checkbox(&mut v, "")
-                    .on_hover_text(tr("Sichtbar", "Visible"))
-                    .changed()
-                {
-                    self.edit(|s| {
-                        for f in 0..s.frames().len() {
-                            s.layer_mut(f, i).map_err(|e| e.to_string())?.visible = v;
-                        }
-                        Ok(())
-                    });
-                }
-                let resp = ui.selectable_label(self.layer == i, name);
-                if resp.clicked() {
-                    self.layer = i;
-                }
-                if resp.double_clicked() {
-                    self.open_dialog(Dialog::RenameLayer {
-                        layer: i,
-                        name: name.clone(),
-                    });
-                }
-            });
+            let width = ui.available_width();
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, LAYER_ROW), Sense::click());
+            let selected = self.layer == i;
+            let visuals = ui.visuals().clone();
+            let fill = if selected {
+                visuals.selection.bg_fill
+            } else if resp.hovered() {
+                visuals.widgets.hovered.bg_fill
+            } else {
+                visuals.faint_bg_color
+            };
+            ui.painter().rect_filled(rect, 4.0, fill);
+
+            let check = egui::Rect::from_center_size(
+                egui::pos2(rect.min.x + 14.0, rect.center().y),
+                egui::vec2(18.0, 18.0),
+            );
+            let mut v = *visible;
+            if ui
+                .put(check, egui::Checkbox::without_text(&mut v))
+                .on_hover_text(tr("Sichtbar", "Visible"))
+                .changed()
+            {
+                self.edit(|s| {
+                    for f in 0..s.frames().len() {
+                        s.layer_mut(f, i).map_err(|e| e.to_string())?.visible = v;
+                    }
+                    Ok(())
+                });
+            }
+
+            let thumb = egui::Rect::from_min_size(
+                egui::pos2(rect.min.x + 28.0, rect.center().y - LAYER_THUMB / 2.0),
+                egui::vec2(LAYER_THUMB, LAYER_THUMB),
+            );
+            let painter = ui.painter();
+            painter.rect_filled(thumb, 2.0, Color32::from_gray(200));
+            let tex = self
+                .textures
+                .layers
+                .as_ref()
+                .and_then(|(_, t)| t.get(i))
+                .map(|t| (t.id(), t.size_vec2()));
+            if let Some((tex, size)) = tex {
+                let scale = (LAYER_THUMB / size.x).min(LAYER_THUMB / size.y);
+                let img = egui::Rect::from_center_size(thumb.center(), size * scale);
+                painter.image(tex, img, UV, Color32::WHITE);
+            }
+
+            let text_color = if selected {
+                visuals.selection.stroke.color
+            } else {
+                visuals.text_color()
+            };
+            let x = thumb.max.x + 8.0;
+            let is_auto = auto == Some(i);
+            let y = if is_auto {
+                rect.center().y - 7.0
+            } else {
+                rect.center().y
+            };
+            painter.text(
+                egui::pos2(x, y),
+                egui::Align2::LEFT_CENTER,
+                name,
+                egui::FontId::proportional(14.0),
+                text_color,
+            );
+            if is_auto {
+                painter.text(
+                    egui::pos2(x, rect.center().y + 8.0),
+                    egui::Align2::LEFT_CENTER,
+                    tr("automatische Kontur", "automatic outline"),
+                    egui::FontId::proportional(11.0),
+                    visuals.weak_text_color(),
+                );
+            }
+            if resp.clicked() {
+                self.layer = i;
+            }
+            if resp.double_clicked() {
+                self.open_dialog(Dialog::RenameLayer {
+                    layer: i,
+                    name: name.clone(),
+                });
+            }
+            ui.add_space(2.0);
         }
+
+        // Die Knöpfe mit Abstand unter der Liste, damit sie nicht an den Ebenen kleben.
+        ui.add_space(10.0);
+        ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
@@ -1103,7 +1300,15 @@ impl App {
                         .map(|n| trf!("Ebene {n}", "Layer {n}"))
                         .find(|name| s.layer_index(name).is_none())
                         .unwrap_or_default();
-                    Ok(s.add_layer(name))
+                    let i = s.add_layer(name);
+                    // Die automatische Kontur bleibt ganz oben.
+                    match s.outline_layer() {
+                        Some(top) if top + 1 == i => {
+                            s.move_layer(i, top).map_err(|e| e.to_string())?;
+                            Ok(top)
+                        }
+                        _ => Ok(i),
+                    }
                 }) {
                     self.layer = i;
                 }
@@ -1124,6 +1329,58 @@ impl App {
                 self.edit(|s| s.remove_layer(i).map_err(|e| e.to_string()));
             }
         });
+        ui.add_space(4.0);
+        let label = if has_outline {
+            tr("Kontur bearbeiten…", "Edit outline…")
+        } else {
+            tr("Kontur…", "Outline…")
+        };
+        if ui
+            .button(label)
+            .on_hover_text(tr(
+                "Automatische Kontur auf eigener Ebene, die jeder Änderung folgt",
+                "Automatic outline on its own layer that follows every change",
+            ))
+            .clicked()
+        {
+            self.outline_dialog();
+        }
+    }
+
+    /// Kleine Vorschaubilder der Ebenen im aktuellen Frame.
+    fn update_layer_thumbs(&mut self, ctx: &egui::Context) {
+        let (Some(doc), Some(id)) = (&self.doc, self.sel) else {
+            self.textures.layers = None;
+            return;
+        };
+        let key = (doc.revision(), id, self.frame);
+        let fresh = self
+            .textures
+            .layers
+            .as_ref()
+            .is_some_and(|(k, _)| *k == key);
+        if fresh || (self.stroke.is_some() && self.textures.layers.is_some()) {
+            return;
+        }
+        let Some(s) = doc.sprite(id) else { return };
+        let Ok(frame) = s.frame(self.frame) else {
+            return;
+        };
+        if s.width() as usize * s.height() as usize * frame.layers.len() > THUMB_BUDGET {
+            self.textures.layers = Some((key, Vec::new()));
+            return;
+        }
+        let size = [s.width() as usize, s.height() as usize];
+        let thumbs = frame
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let img = egui::ColorImage::new(size, l.pixels().iter().map(|&c| c32(c)).collect());
+                ctx.load_texture(format!("layer-{i}"), img, egui::TextureOptions::NEAREST)
+            })
+            .collect();
+        self.textures.layers = Some((key, thumbs));
     }
 
     // ------------------------------------------------------------ Timeline

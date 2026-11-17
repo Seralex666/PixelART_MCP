@@ -192,6 +192,27 @@ impl Workspace {
         Ok(project)
     }
 
+    /// Löscht ein Projekt endgültig, auf Wunsch samt seinem Export-Ordner.
+    /// Gibt zurück, ob auch Exporte gelöscht wurden.
+    pub fn delete(&self, name: &str, with_exports: bool) -> Result<bool> {
+        let path = self.project_path(name)?;
+        let _lock = self.lock(name)?;
+        if !path.exists() {
+            return Err(Error::InvalidName(crate::trf!(
+                "Ein Projekt namens '{}' gibt es nicht",
+                "There is no project named '{}'",
+                name.trim()
+            )));
+        }
+        std::fs::remove_file(&path)?;
+        let exports = self.exports_dir(name);
+        let removed = with_exports && exports.is_dir();
+        if removed {
+            std::fs::remove_dir_all(&exports)?;
+        }
+        Ok(removed)
+    }
+
     pub fn load(&self, name: &str) -> Result<Project> {
         Project::load(&self.project_path(name)?)
     }

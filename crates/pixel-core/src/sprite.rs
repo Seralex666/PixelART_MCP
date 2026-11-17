@@ -20,6 +20,9 @@ pub struct Sprite {
     pub depth: ColorDepth,
     pub palette: Palette,
     frames: Vec<Frame>,
+    /// Automatische Kontur, die bei jeder Änderung neu entsteht (siehe [`crate::contour`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) outline: Option<crate::contour::AutoOutline>,
 }
 
 impl Sprite {
@@ -36,6 +39,7 @@ impl Sprite {
                 duration_ms: Self::DEFAULT_FRAME_MS,
                 layers: vec![Layer::new("Ebene 1", width, height)],
             }],
+            outline: None,
         })
     }
 
@@ -177,10 +181,36 @@ impl Sprite {
         Ok(())
     }
 
+    /// Verschiebt eine Ebene an eine andere Stelle (0 ist die unterste), in allen Frames.
+    pub fn move_layer(&mut self, from: usize, to: usize) -> Result<()> {
+        let n = self.layer_count();
+        if from >= n {
+            return Err(Error::NoSuchLayer(from));
+        }
+        if to >= n {
+            return Err(Error::NoSuchLayer(to));
+        }
+        for f in &mut self.frames {
+            let l = f.layers.remove(from);
+            f.layers.insert(to, l);
+        }
+        Ok(())
+    }
+
     pub fn rename_layer(&mut self, layer: usize, name: impl Into<String>) -> Result<()> {
         let name = name.into();
         if layer >= self.layer_count() {
             return Err(Error::NoSuchLayer(layer));
+        }
+        // Die automatische Kontur zieht mit, wenn ihre Ebene umbenannt wird.
+        if let Some(spec) = &mut self.outline {
+            if self
+                .frames
+                .first()
+                .is_some_and(|f| f.layers[layer].name == spec.layer)
+            {
+                spec.layer = name.clone();
+            }
         }
         for f in &mut self.frames {
             f.layers[layer].name = name.clone();

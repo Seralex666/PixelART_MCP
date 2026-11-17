@@ -270,6 +270,13 @@ fn begin(app: &mut App, at: (i64, i64)) {
     }
     let Some(id) = app.sel else { return };
     app.playing = false;
+    if app.sprite().and_then(|s| s.outline_layer()) == Some(app.layer) {
+        app.error(tr(
+            "Diese Ebene ist die automatische Kontur und folgt den anderen Ebenen. Zeichne auf einer anderen Ebene, oder schreibe die Kontur fest (Kontur bearbeiten… › Festschreiben), um sie von Hand zu ändern.",
+            "This layer is the automatic outline and follows the other layers. Draw on another layer, or freeze the outline (Edit outline… › Freeze) to change it by hand.",
+        ));
+        return;
+    }
     let Some(doc) = &mut app.doc else { return };
     if let Err(err) = doc.begin_stroke(id) {
         app.error(err);

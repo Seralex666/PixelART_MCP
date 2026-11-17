@@ -22,6 +22,7 @@ mod doc;
 mod help;
 mod icons;
 mod import_dialog;
+mod outline_dialog;
 mod settings;
 mod tools;
 

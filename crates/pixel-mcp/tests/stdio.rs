@@ -159,6 +159,8 @@ fn lists_all_tools_with_schemas() {
         "set_style",
         "palette_from_image",
         "reduce_colors",
+        "set_outline",
+        "delete_project",
     ] {
         assert!(names.contains(&expected), "tool {expected} is missing");
     }
@@ -1495,4 +1497,120 @@ fn palettes_come_from_pictures_and_assets_shrink_to_fewer_colors() {
     );
     let v: Value = serde_json::from_str(&from_asset.text).unwrap();
     assert_eq!(v["count"], 7);
+}
+
+#[test]
+fn automatic_outline_follows_drawing_in_character_and_animations() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "P"}));
+    c.ok(
+        "create_character",
+        json!({"project": "P", "name": "Held", "width": 8, "height": 8,
+               "palette": ["#000000", "#29366f", "#41a6f6", "#ffffff"]}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Held",
+               "ops": [{"op": "rect", "x": 2, "y": 2, "w": 3, "h": 3, "color": "#41a6f6", "filled": true}]}),
+    );
+    c.ok(
+        "create_animation",
+        json!({"project": "P", "character": "Held", "kind": "idle", "frames": 2}),
+    );
+    assert!(c
+        .err(
+            "set_outline",
+            json!({"project": "P", "asset": "Held", "thickness": 9})
+        )
+        .contains("thickness"));
+    let set = c.ok(
+        "set_outline",
+        json!({"project": "P", "asset": "Held", "light_dir": "top-left"}),
+    );
+    assert!(set.text.contains("1 animation(s)"), "{}", set.text);
+    assert!(set.text.contains("selective"), "{}", set.text);
+    assert!(set.image.is_some());
+    // Kontur in der Grundpose: dunkleres Blau links neben dem Quadrat.
+    let base = colors(&mut c, "Held", 0, 1);
+    assert_eq!(base[2][1], "#29366f");
+    assert_eq!(base[2][2], ".");
+
+    // Auf der Konturebene selbst darf nicht gezeichnet werden.
+    assert!(c
+        .err(
+            "draw",
+            json!({"project": "P", "asset": "Held idle", "layer": "outline",
+                   "ops": [{"op": "pixels", "points": [[0, 0]], "color": "#000000"}]}),
+        )
+        .contains("automatic outline"));
+    // Zeichnen in Frame 1 der Animation zieht die Kontur dort mit, nur dort.
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Held idle", "frame": 1,
+               "ops": [{"op": "pixels", "points": [[6, 6]], "color": "#41a6f6"}]}),
+    );
+    let f0 = colors(&mut c, "Held idle", 0, 1);
+    let f1 = colors(&mut c, "Held idle", 1, 1);
+    assert_eq!(f0[6][5], ".");
+    assert_ne!(f1[6][5], ".");
+
+    let o: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "P"})).text).unwrap();
+    let held = &o["characters"][0];
+    assert_eq!(held["auto_outline"]["color"], "selective");
+    assert_eq!(held["auto_outline"]["light_dir"], "top-left");
+    assert_eq!(held["animations"][0]["auto_outline"]["layer"], "outline");
+    assert!(o["consistency_issues"].as_array().unwrap().is_empty());
+
+    // Ändern nimmt nur die genannten Optionen, festschreiben lässt die Ebene stehen.
+    let fixed = c.ok(
+        "set_outline",
+        json!({"project": "P", "asset": "Held idle", "color": "#000000"}),
+    );
+    assert!(fixed.text.contains("color #000000"), "{}", fixed.text);
+    assert_eq!(colors(&mut c, "Held idle", 0, 1)[2][1], "#000000");
+    c.ok(
+        "set_outline",
+        json!({"project": "P", "asset": "Held", "action": "freeze"}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "P", "asset": "Held", "layer": "outline",
+               "ops": [{"op": "pixels", "points": [[0, 0]], "color": "#ffffff"}]}),
+    );
+    assert!(c
+        .err(
+            "set_outline",
+            json!({"project": "P", "asset": "Held", "action": "remove"})
+        )
+        .contains("no automatic outline"));
+}
+
+#[test]
+fn projects_are_deleted_only_with_the_name_repeated() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "Weg"}));
+    c.ok("create_project", json!({"project": "Bleibt"}));
+    assert!(c
+        .err(
+            "delete_project",
+            json!({"project": "Weg", "confirm": "weg?"})
+        )
+        .contains("nothing was deleted"));
+    let done = c.ok(
+        "delete_project",
+        json!({"project": "Weg", "confirm": "Weg"}),
+    );
+    assert!(done.text.contains("Deleted project 'Weg'"), "{}", done.text);
+    let info = c.ok("get_studio_info", json!({})).text;
+    assert!(
+        info.contains("Bleibt") && !info.contains("\"Weg\""),
+        "{info}"
+    );
+    assert!(c
+        .err(
+            "delete_project",
+            json!({"project": "Weg", "confirm": "Weg"})
+        )
+        .contains("no project"));
 }
