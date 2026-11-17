@@ -230,3 +230,72 @@ fn ramp_palettes_have_32_and_64_distinct_colors_from_dark_to_light() {
         assert!(ramp.windows(2).all(|w| lum(w[0]) < lum(w[1])), "{ramp:?}");
     }
 }
+
+#[test]
+fn photos_become_pixel_art_and_references_stay_out_of_the_picture() {
+    use pixel_core::import::{prepare, Options, Picture, PictureFrame};
+    use pixel_core::pixelate::{Background, Outline, Pixelate};
+    // Ein „Foto“: roter Kreis mit Verlauf auf hellem Grund.
+    let (w, h) = (200u32, 160u32);
+    let pixels = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x as i64, y as i64)))
+        .map(|(x, y)| {
+            let (dx, dy) = (x - 100, y - 80);
+            if dx * dx + dy * dy < 60 * 60 {
+                Rgba::rgb((200 + dx / 2) as u8, (30 + y / 4) as u8, 40)
+            } else {
+                Rgba::rgb(235, 238, 240)
+            }
+        })
+        .collect();
+    let photo = Picture {
+        width: w,
+        height: h,
+        frames: vec![PictureFrame {
+            pixels,
+            duration_ms: 100,
+        }],
+        timed: false,
+    };
+    let options = Options {
+        pixelate: Some(Pixelate {
+            width: 40,
+            height: 32,
+            colors: 5,
+            background: Background::Auto,
+            outline: Outline::Auto,
+            ..Pixelate::for_source(w, h)
+        }),
+        ..Options::default()
+    };
+    let ready = prepare(&photo, options).unwrap();
+    assert_eq!((ready.picture.width, ready.picture.height), (40, 32));
+    assert!(ready.background_removed > 10_000);
+    let px = &ready.picture.frames[0].pixels;
+    assert!(px[0].is_transparent(), "Hintergrund ist weg");
+    assert!(!px[16 * 40 + 20].is_transparent(), "Kreis bleibt");
+    let colors: std::collections::HashSet<_> = px.iter().filter(|c| c.a > 0).collect();
+    assert!(colors.len() <= 5, "{}", colors.len());
+
+    // Vorlage-Ebene: sichtbar mit Vorlagen, aber nicht im Bild, nicht in der Palette.
+    let mut s = Sprite::new(
+        8,
+        8,
+        ColorDepth::Indexed8,
+        Palette::new("p", vec![Rgba::rgb(0, 0, 0)]),
+    )
+    .unwrap();
+    s.set_pixel(0, 0, 1, 1, Rgba::rgb(0, 0, 0)).unwrap();
+    let r = pixel_core::pixelate::reference(&photo.frames[0].pixels, w, h, 8, 8);
+    assert_eq!(s.add_reference_layer("Vorlage", &[r], 128).unwrap(), 0);
+    assert!(s.is_reference(0) && !s.is_reference(1));
+    assert!(s.composite(0).unwrap()[4 * 8 + 4].is_transparent());
+    assert!(!s.composite_with_references(0).unwrap()[4 * 8 + 4].is_transparent());
+    assert_eq!(s.used_colors(), vec![Rgba::rgb(0, 0, 0)]);
+    s.add_frame();
+    assert!(s.frame(1).unwrap().layers[0].reference);
+    // Die Markierung übersteht Speichern und Laden.
+    let json = serde_json::to_string(&s).unwrap();
+    let back: Sprite = serde_json::from_str(&json).unwrap();
+    assert!(back.is_reference(0));
+}

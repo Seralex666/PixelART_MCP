@@ -1788,3 +1788,100 @@ fn canvas_resizes_with_the_character_and_layers_move() {
         )
         .contains("`to`"));
 }
+
+#[test]
+fn photos_turn_into_pixel_art_and_references_help_tracing() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "Foto"}));
+    // Ein „Foto“: ein grüner Kreis mit Verlauf auf weißem Grund, 300×200.
+    let photo = image::RgbaImage::from_fn(300, 200, |x, y| {
+        let (dx, dy) = (x as i64 - 150, y as i64 - 100);
+        if dx * dx + dy * dy < 80 * 80 {
+            image::Rgba([30 + (x / 4) as u8, 160, 60 + (y / 3) as u8, 255])
+        } else {
+            image::Rgba([248, 248, 246, 255])
+        }
+    });
+    let path = std::env::temp_dir().join(format!("foto-{}.png", uuid::Uuid::new_v4()));
+    photo.save(&path).unwrap();
+    let path = path.display().to_string();
+
+    let r = c.ok(
+        "import_image",
+        json!({"project": "Foto", "path": path, "name": "Busch",
+               "pixelate": {"size": 30, "colors": 4, "background": "auto", "outline": "auto", "dither": "ordered"}}),
+    );
+    assert!(r.text.contains("to 30×20 pixel art"), "{}", r.text);
+    assert!(
+        r.text.contains("background removed") && r.text.contains("outlined"),
+        "{}",
+        r.text
+    );
+    let px = colors_in(&mut c, "Foto", "Busch", 0, 0);
+    assert_eq!((px[0].len(), px.len()), (30, 20));
+    assert_eq!(px[0][0], ".", "the background is gone");
+    let used: std::collections::HashSet<_> = px.iter().flatten().filter(|c| *c != ".").collect();
+    assert!(used.len() <= 4, "{used:?}");
+
+    // Mit fester Palette: nur deren Farben.
+    c.ok(
+        "create_character",
+        json!({"project": "Foto", "name": "Held", "width": 16, "height": 16,
+               "palette": ["#1a1c2c", "#38b764", "#a7f070", "#f4f4f4"]}),
+    );
+    c.ok(
+        "import_image",
+        json!({"project": "Foto", "path": path, "name": "Fest",
+               "pixelate": {"width": 24, "palette": "Held", "dither": "diffusion"}}),
+    );
+    let px = colors_in(&mut c, "Foto", "Fest", 0, 0);
+    assert_eq!((px[0].len(), px.len()), (24, 16));
+    for color in px.iter().flatten().filter(|c| *c != ".") {
+        assert!(
+            ["#1a1c2c", "#38b764", "#a7f070", "#f4f4f4"].contains(&color.as_str()),
+            "{color}"
+        );
+    }
+
+    // Vorlage zum Nachzeichnen: unterste Ebene, nicht im Export, nicht in der Palette.
+    let r = c.ok(
+        "import_image",
+        json!({"project": "Foto", "path": path, "as": "reference", "asset": "Held", "opacity": 100}),
+    );
+    assert!(r.text.contains("reference layer 'Reference'"), "{}", r.text);
+    assert!(r.image.is_some());
+    let project: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "Foto"})).text).unwrap();
+    let held = &project["characters"][0];
+    assert_eq!(held["reference_layers"], json!([0]));
+    assert_eq!(
+        held["palette"].as_array().unwrap().len(),
+        4,
+        "palette unchanged"
+    );
+    let middle: Value = serde_json::from_str(
+        &c.ok(
+            "get_pixels",
+            json!({"project": "Foto", "asset": "Held", "layer": 0, "x": 8, "y": 8, "w": 1, "h": 1}),
+        )
+        .text,
+    )
+    .unwrap();
+    assert_ne!(middle["rows"][0], ".", "the reference layer has the picture");
+    let r = c.ok("view", json!({"project": "Foto", "asset": "Held"}));
+    let img = image::load_from_memory(r.image.as_ref().unwrap())
+        .unwrap()
+        .to_rgba8();
+    let mid = img.get_pixel(img.width() / 2, img.height() / 2);
+    assert!(
+        mid[0] > 150 && mid[1] <= mid[2],
+        "view leaves the reference out: {mid:?}"
+    );
+
+    let err = c.err(
+        "import_image",
+        json!({"project": "Foto", "path": path, "as": "reference"}),
+    );
+    assert!(err.contains("needs `asset`"), "{err}");
+    std::fs::remove_file(&path).ok();
+}

@@ -228,6 +228,31 @@ impl Picture {
         })
     }
 
+    /// Wandelt das Bild in Pixel-Art um (siehe [`crate::pixelate`]). Gibt außerdem
+    /// zurück, wie viele Pixel als Hintergrund entfielen.
+    pub fn pixelate(&self, options: &crate::pixelate::Pixelate) -> Result<(Picture, usize)> {
+        let frames: Vec<&[Rgba]> = self.frames.iter().map(|f| f.pixels.as_slice()).collect();
+        let done = crate::pixelate::convert(&frames, self.width, self.height, options)?;
+        let frames = done
+            .frames
+            .into_iter()
+            .zip(&self.frames)
+            .map(|(pixels, f)| PictureFrame {
+                pixels,
+                duration_ms: f.duration_ms,
+            })
+            .collect();
+        Ok((
+            Picture {
+                width: options.width,
+                height: options.height,
+                frames,
+                timed: self.timed,
+            },
+            done.background_removed,
+        ))
+    }
+
     /// Teilt ein Spritesheet in Frames der Größe `cell_w × cell_h`, zeilenweise
     /// von links oben.
     pub fn split(&self, cell_w: u32, cell_h: u32) -> Result<Picture> {
@@ -420,12 +445,15 @@ pub enum Grid {
     Count { columns: u32, rows: u32 },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Options {
     pub shrink: Shrink,
     pub grid: Grid,
     /// Ganz durchsichtige Frames am Ende eines Spritesheets behalten.
     pub keep_empty: bool,
+    /// Ein Foto oder eine Zeichnung in Pixel-Art umwandeln statt pixelgenau zu
+    /// verkleinern. `shrink` gilt dann nicht.
+    pub pixelate: Option<crate::pixelate::Pixelate>,
 }
 
 impl Default for Options {
@@ -434,6 +462,7 @@ impl Default for Options {
             shrink: Shrink::Auto,
             grid: Grid::Whole,
             keep_empty: false,
+            pixelate: None,
         }
     }
 }
@@ -442,6 +471,8 @@ impl Default for Options {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prepared {
     pub picture: Picture,
+    /// Bei einer Umwandlung: wie viele Pixel des Originals als Hintergrund entfielen.
+    pub background_removed: usize,
     /// Um welchen Faktor verkleinert wurde (1: gar nicht).
     pub shrunk_by: u32,
     /// Wie viele leere Frames am Ende entfielen.
@@ -450,11 +481,21 @@ pub struct Prepared {
 
 /// Verkleinert und teilt eine gelesene Datei nach den Vorgaben.
 pub fn prepare(picture: &Picture, options: Options) -> Result<Prepared> {
-    let factor = match options.shrink {
-        Shrink::Auto => picture.pixel_scale(),
-        Shrink::By(k) => k.max(1),
+    let mut background_removed = 0;
+    let (small, factor) = match &options.pixelate {
+        Some(opts) => {
+            let (p, removed) = picture.pixelate(opts)?;
+            background_removed = removed;
+            (p, 1)
+        }
+        None => {
+            let factor = match options.shrink {
+                Shrink::Auto => picture.pixel_scale(),
+                Shrink::By(k) => k.max(1),
+            };
+            (picture.shrink(factor)?, factor)
+        }
     };
-    let small = picture.shrink(factor)?;
     let mut split = match options.grid {
         Grid::Whole => small,
         Grid::Cells { width, height } => small.split(width, height)?,
@@ -482,6 +523,7 @@ pub fn prepare(picture: &Picture, options: Options) -> Result<Prepared> {
         picture: split,
         shrunk_by: factor,
         dropped_empty,
+        background_removed,
     })
 }
 

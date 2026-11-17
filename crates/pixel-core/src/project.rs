@@ -347,7 +347,7 @@ impl Project {
             }
             let mut foreign = std::collections::BTreeSet::new();
             for f in a.sprite.frames() {
-                for l in &f.layers {
+                for l in f.layers.iter().filter(|l| !l.reference) {
                     for &p in l.pixels() {
                         if !c.palette().contains(p) {
                             foreign.insert(p.to_string());

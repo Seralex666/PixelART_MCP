@@ -29,6 +29,7 @@ pub mod lang;
 pub mod layer;
 pub mod lint;
 pub mod palette;
+pub mod pixelate;
 pub mod project;
 pub mod quant;
 pub mod shapes;

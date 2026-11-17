@@ -232,6 +232,7 @@ impl Sprite {
                         let mut new = Layer::new(l.name.clone(), w, h);
                         new.visible = l.visible;
                         new.opacity = l.opacity;
+                        new.reference = l.reference;
                         new
                     })
                     .collect()
@@ -276,7 +277,8 @@ impl Sprite {
         self.palette.conform_to(depth);
         let mut frames = std::mem::take(&mut self.frames);
         for f in &mut frames {
-            for l in &mut f.layers {
+            // Vorlagen bleiben, wie sie sind: sie gehören nicht zum Bild.
+            for l in f.layers.iter_mut().filter(|l| !l.reference) {
                 l.map_pixels(|p| self.conform(p));
             }
         }
@@ -288,7 +290,7 @@ impl Sprite {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
         for f in &self.frames {
-            for l in &f.layers {
+            for l in f.layers.iter().filter(|l| !l.reference) {
                 for &p in l.pixels() {
                     if !p.is_transparent() && seen.insert(p) {
                         out.push(p);
@@ -299,11 +301,60 @@ impl Sprite {
         out
     }
 
-    /// Alle Pixel eines Frames, Ebenen von unten nach oben verrechnet.
+    /// Alle Pixel eines Frames, Ebenen von unten nach oben verrechnet. Vorlage-Ebenen
+    /// gehören nicht zum Bild und fehlen.
     pub fn composite(&self, frame: usize) -> Result<Vec<Rgba>> {
+        self.blend(frame, false)
+    }
+
+    /// Wie [`Sprite::composite`], aber mit sichtbaren Vorlage-Ebenen: so, wie der
+    /// Editor das Bild zeigt.
+    pub fn composite_with_references(&self, frame: usize) -> Result<Vec<Rgba>> {
+        self.blend(frame, true)
+    }
+
+    /// Ob eine Ebene eine Vorlage zum Nachzeichnen ist.
+    pub fn is_reference(&self, layer: usize) -> bool {
+        self.frames
+            .first()
+            .and_then(|f| f.layers.get(layer))
+            .is_some_and(|l| l.reference)
+    }
+
+    /// Legt eine Vorlage-Ebene ganz unten an, halb durchsichtig. `frames` hat
+    /// entweder ein Bild für alle Frames oder eines je Frame, jeweils in Größe der
+    /// Leinwand. Gibt den Index der neuen Ebene zurück (immer 0).
+    pub fn add_reference_layer(
+        &mut self,
+        name: impl Into<String>,
+        frames: &[Vec<Rgba>],
+        opacity: u8,
+    ) -> Result<usize> {
+        let n = (self.width * self.height) as usize;
+        if frames.is_empty()
+            || (frames.len() != 1 && frames.len() != self.frames.len())
+            || frames.iter().any(|f| f.len() != n)
+        {
+            return Err(Error::InvalidPixelData(
+                "a reference needs one picture for all frames or one per frame, each the size of the canvas".into(),
+            ));
+        }
+        let name = name.into();
+        for (i, f) in self.frames.iter_mut().enumerate() {
+            let mut l = Layer::new(name.clone(), self.width, self.height);
+            l.reference = true;
+            l.opacity = opacity;
+            l.replace_pixels(frames[i.min(frames.len() - 1)].clone())?;
+            f.layers.insert(0, l);
+        }
+        Ok(0)
+    }
+
+    fn blend(&self, frame: usize, references: bool) -> Result<Vec<Rgba>> {
         let f = self.frame(frame)?;
         let mut out = vec![Rgba::TRANSPARENT; (self.width * self.height) as usize];
-        for l in f.layers.iter().filter(|l| l.visible && l.opacity > 0) {
+        let shown = |l: &&Layer| l.visible && l.opacity > 0 && (references || !l.reference);
+        for l in f.layers.iter().filter(shown) {
             for (dst, &src) in out.iter_mut().zip(l.pixels()) {
                 if src.a == 0 {
                     continue;
@@ -332,6 +383,7 @@ impl Sprite {
                 let mut n = Layer::new(l.name.clone(), width, height);
                 n.visible = l.visible;
                 n.opacity = l.opacity;
+                n.reference = l.reference;
                 for y in 0..oh {
                     for x in 0..ow {
                         let p = l.get(x, y)?;
