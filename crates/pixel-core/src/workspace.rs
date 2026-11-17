@@ -143,11 +143,13 @@ impl Workspace {
         let name = name.trim();
         match check_project_name(name) {
             Ok(()) => Ok(self.home.join(format!("{name}.{PROJECT_EXT}"))),
-            Err(ProjectNameError::Invalid) => Err(Error::InvalidName(format!(
-                "Ungültiger Projektname '{name}': erlaubt sind 1 bis 64 Buchstaben, Ziffern, Leerzeichen, '-' und '_'"
+            Err(ProjectNameError::Invalid) => Err(Error::InvalidName(crate::trf!(
+                "Ungültiger Projektname '{name}': erlaubt sind 1 bis 64 Buchstaben, Ziffern, Leerzeichen, '-' und '_'",
+                "Invalid project name '{name}': use 1 to 64 letters, digits, spaces, '-' or '_'"
             ))),
-            Err(ProjectNameError::Reserved) => Err(Error::InvalidName(format!(
-                "Ungültiger Projektname '{name}': dieser Name ist unter Windows reserviert"
+            Err(ProjectNameError::Reserved) => Err(Error::InvalidName(crate::trf!(
+                "Ungültiger Projektname '{name}': dieser Name ist unter Windows reserviert",
+                "Invalid project name '{name}': this name is reserved by Windows"
             ))),
         }
     }
@@ -179,8 +181,9 @@ impl Workspace {
         let path = self.project_path(name)?;
         let _lock = self.lock(name)?;
         if path.exists() {
-            return Err(Error::InvalidName(format!(
+            return Err(Error::InvalidName(crate::trf!(
                 "Ein Projekt namens '{}' gibt es schon",
+                "A project named '{}' already exists",
                 name.trim()
             )));
         }
@@ -225,8 +228,9 @@ impl Workspace {
     ) -> Result<Exported> {
         self.project_path(project)?;
         if !(1..=export::MAX_SCALE).contains(&scale) {
-            return Err(Error::InvalidName(format!(
+            return Err(Error::InvalidName(crate::trf!(
                 "Vergrößerung muss zwischen 1 und {} liegen",
+                "The scale must be between 1 and {}",
                 export::MAX_SCALE
             )));
         }

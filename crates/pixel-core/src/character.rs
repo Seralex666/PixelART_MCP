@@ -38,7 +38,7 @@ impl Character {
         }
         palette.locked = true;
         let mut base = Sprite::new(width, height, depth, palette)?;
-        base.rename_layer(0, "Körper")?;
+        base.rename_layer(0, crate::lang::tr("Körper", "body"))?;
         Ok(Self::with_base(name.into(), base))
     }
 

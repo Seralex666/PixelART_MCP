@@ -6,6 +6,8 @@ use crate::dialogs::{buttons, finish, kind_label, Outcome};
 use crate::doc::ImportAs;
 use eframe::egui::{self, RichText};
 use pixel_core::import::{self, Grid, NewColors, Options, Picture, Prepared, Shrink};
+use pixel_core::lang::tr;
+use pixel_core::trf;
 use pixel_core::{AnimationKind, ColorDepth, MAX_SIZE};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -173,22 +175,22 @@ fn cut_picture(picture: &Picture, cut: Cut) -> Result<Prepared, String> {
         let (fw, fh) = (ready.picture.width, ready.picture.height);
         if grid == Grid::Whole {
             ready.cut_to_frames(w, h, cut.keep_empty).map_err(|_| {
-                format!(
-                    "Die Datei ist {fw}×{fh} Pixel groß. Das lässt sich nicht in Frames von {w}×{h} Pixeln teilen, der Größe der Figur. Passe das Verkleinern oder die Aufteilung an."
+                trf!(
+                    "Die Datei ist {fw}×{fh} Pixel groß. Das lässt sich nicht in Frames von {w}×{h} Pixeln teilen, der Größe der Figur. Passe das Verkleinern oder die Aufteilung an.", "The file is {fw}×{fh} pixels. That cannot be split into frames of {w}×{h} pixels, the size of the character. Adjust the shrinking or the split."
                 )
             })?;
         }
         let (fw, fh) = (ready.picture.width, ready.picture.height);
         if (fw, fh) != (w, h) {
-            return Err(format!(
-                "Die Frames wären {fw}×{fh} Pixel groß, die Figur ist {w}×{h}. Eine Animation muss so groß sein wie ihre Figur."
+            return Err(trf!(
+                "Die Frames wären {fw}×{fh} Pixel groß, die Figur ist {w}×{h}. Eine Animation muss so groß sein wie ihre Figur.", "The frames would be {fw}×{fh} pixels, the character is {w}×{h}. An animation must be the size of its character."
             ));
         }
     }
     let (w, h) = (ready.picture.width, ready.picture.height);
     if w > MAX_SIZE || h > MAX_SIZE {
-        return Err(format!(
-            "{w}×{h} Pixel ist größer als die erlaubten {MAX_SIZE}×{MAX_SIZE}. Verkleinere das Bild oder teile es in Frames."
+        return Err(trf!(
+            "{w}×{h} Pixel ist größer als die erlaubten {MAX_SIZE}×{MAX_SIZE}. Verkleinere das Bild oder teile es in Frames.", "{w}×{h} pixels is larger than the allowed {MAX_SIZE}×{MAX_SIZE}. Shrink the picture or split it into frames."
         ));
     }
     Ok(ready)
@@ -196,16 +198,16 @@ fn cut_picture(picture: &Picture, cut: Cut) -> Result<Prepared, String> {
 
 fn frames_text(n: usize) -> String {
     if n == 1 {
-        "1 Frame".into()
+        tr("1 Frame", "1 frame").into()
     } else {
-        format!("{n} Frames")
+        trf!("{n} Frames", "{n} frames")
     }
 }
 
 fn kind_picker(ui: &mut egui::Ui, kind: &mut Option<usize>, custom: &mut String) {
     let selected = kind
         .and_then(|i| AnimationKind::PRESETS.get(i))
-        .map_or("Eigene", kind_label);
+        .map_or(tr("Eigene", "Custom"), kind_label);
     egui::ComboBox::from_id_salt("import-kind")
         .selected_text(selected)
         .width(200.0)
@@ -213,12 +215,15 @@ fn kind_picker(ui: &mut egui::Ui, kind: &mut Option<usize>, custom: &mut String)
             for (i, k) in AnimationKind::PRESETS.iter().enumerate() {
                 ui.selectable_value(kind, Some(i), kind_label(k));
             }
-            ui.selectable_value(kind, None, "Eigene");
+            ui.selectable_value(kind, None, tr("Eigene", "Custom"));
         });
     if kind.is_none() {
         ui.add(
             egui::TextEdit::singleline(custom)
-                .hint_text("Bezeichnung, zum Beispiel winken")
+                .hint_text(tr(
+                    "Bezeichnung, zum Beispiel winken",
+                    "Name, for example wave",
+                ))
                 .desired_width(200.0),
         );
     }
@@ -236,15 +241,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         .map(|c| (c.id, c.name.clone(), c.size()))
         .collect();
 
-    ui.heading("Bild importieren");
-    ui.label("Holt eine PNG-, JPG- oder GIF-Datei ins Projekt. Vergrößerte Pixel-Art wird auf ihre echte Größe gebracht, Spritesheets werden in Frames geteilt. Du kannst die Datei auch einfach ins Fenster ziehen.");
+    ui.heading(tr("Bild importieren", "Import image"));
+    ui.label(tr("Holt eine PNG-, JPG- oder GIF-Datei ins Projekt. Vergrößerte Pixel-Art wird auf ihre echte Größe gebracht, Spritesheets werden in Frames geteilt. Du kannst die Datei auch einfach ins Fenster ziehen.", "Brings a PNG, JPG or GIF file into the project. Enlarged pixel art is brought back to its true size, sprite sheets are split into frames. You can also just drag the file into the window."));
 
-    section(ui, "Datei");
+    section(ui, tr("Datei", "File"));
     let mut loaded_now = false;
     ui.horizontal(|ui| {
         let resp = ui.add(
             egui::TextEdit::singleline(&mut f.path)
-                .hint_text("Pfad zur Datei")
+                .hint_text(tr("Pfad zur Datei", "Path to the file"))
                 .desired_width(290.0),
         );
         let entered = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -252,10 +257,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         if f.path.is_empty() && !resp.has_focus() && ui.memory(|m| m.focused().is_none()) {
             resp.request_focus();
         }
-        if ui.button("Durchsuchen…").clicked() {
+        if ui.button(tr("Durchsuchen…", "Browse…")).clicked() {
             let picked = rfd::FileDialog::new()
-                .set_title("Bild importieren")
-                .add_filter("Bilder (PNG, JPG, GIF)", &["png", "jpg", "jpeg", "gif"])
+                .set_title(tr("Bild importieren", "Import image"))
+                .add_filter(
+                    tr("Bilder (PNG, JPG, GIF)", "Images (PNG, JPG, GIF)"),
+                    &["png", "jpg", "jpeg", "gif"],
+                )
                 .pick_file();
             if let Some(path) = picked {
                 f.path = path.display().to_string();
@@ -265,7 +273,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         }
         let changed = f.path.trim() != f.loaded_path;
         let load = changed && !f.path.trim().is_empty();
-        if (load && ui.button("Laden").clicked()) || (load && entered) {
+        if (load && ui.button(tr("Laden", "Load")).clicked()) || (load && entered) {
             f.load();
             loaded_now = true;
         }
@@ -286,7 +294,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
             if let Some(Err(err)) = other {
                 ui.colored_label(ui.visuals().error_fg_color, err);
             }
-            let (_, cancel) = buttons(ui, "Importieren", false);
+            let (_, cancel) = buttons(ui, tr("Importieren", "Import"), false);
             return if cancel {
                 Outcome::Close
             } else {
@@ -295,8 +303,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         }
     };
     let animated = picture.frames.len() > 1;
-    ui.weak(format!(
+    ui.weak(trf!(
         "{}×{} Pixel{}",
+        "{}×{} pixels{}",
         picture.width,
         picture.height,
         if animated {
@@ -306,16 +315,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         }
     ));
 
-    section(ui, "Importieren als");
+    section(ui, tr("Importieren als", "Import as"));
     ui.horizontal(|ui| {
-        ui.radio_value(&mut f.target, Target::Image, "Bild")
-            .on_hover_text("Ein freies Bild: Tile, Item oder Szene");
-        ui.radio_value(&mut f.target, Target::Character, "Neue Figur")
-            .on_hover_text("Die Datei legt Größe und Palette der Figur fest");
+        ui.radio_value(&mut f.target, Target::Image, tr("Bild", "Image"))
+            .on_hover_text(tr(
+                "Ein freies Bild: Tile, Item oder Szene",
+                "A free image: tile, item or scene",
+            ));
+        ui.radio_value(
+            &mut f.target,
+            Target::Character,
+            tr("Neue Figur", "New character"),
+        )
+        .on_hover_text(tr(
+            "Die Datei legt Größe und Palette der Figur fest",
+            "The file sets size and palette of the character",
+        ));
         ui.add_enabled_ui(!characters.is_empty(), |ui| {
-            ui.radio_value(&mut f.target, Target::Animation, "Animation einer Figur")
-                .on_hover_text("Die Frames übernehmen Größe und Palette der Figur")
-                .on_disabled_hover_text("Dafür braucht das Projekt erst eine Figur");
+            ui.radio_value(
+                &mut f.target,
+                Target::Animation,
+                tr("Animation einer Figur", "Animation of a character"),
+            )
+            .on_hover_text(tr(
+                "Die Frames übernehmen Größe und Palette der Figur",
+                "The frames take over size and palette of the character",
+            ))
+            .on_disabled_hover_text(tr(
+                "Dafür braucht das Projekt erst eine Figur",
+                "For this the project needs a character first",
+            ));
         });
     });
     if f.target == Target::Animation {
@@ -340,30 +369,30 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
                 ui.label("Name");
                 ui.add(egui::TextEdit::singleline(&mut f.name).desired_width(200.0));
                 ui.end_row();
-                ui.label("Farbtiefe");
+                ui.label(tr("Farbtiefe", "Color depth"));
                 ui.horizontal(|ui| {
                     ui.radio_value(&mut f.bits, 8, "8 Bit")
-                        .on_hover_text("Höchstens 256 Farben. Hat die Datei mehr, werden ähnliche zusammengelegt.");
+                        .on_hover_text(tr("Höchstens 256 Farben. Hat die Datei mehr, werden ähnliche zusammengelegt.", "At most 256 colors. If the file has more, similar ones are merged."));
                     ui.radio_value(&mut f.bits, 16, "16 Bit")
-                        .on_hover_text("65 536 Farben, Pixel sind deckend oder durchsichtig");
+                        .on_hover_text(tr("65 536 Farben, Pixel sind deckend oder durchsichtig", "65,536 colors, pixels are opaque or transparent"));
                     ui.radio_value(&mut f.bits, 32, "32 Bit")
-                        .on_hover_text("Alle Farben mit Transparenz");
+                        .on_hover_text(tr("Alle Farben mit Transparenz", "All colors with transparency"));
                 });
                 ui.end_row();
                 if f.target == Target::Character && several {
                     ui.label("Frames");
-                    ui.checkbox(&mut f.with_animation, "auch als Animation anlegen")
-                        .on_hover_text("Der erste Frame wird die Grundpose. Mit Haken werden alle Frames zusätzlich eine Animation der neuen Figur.");
+                    ui.checkbox(&mut f.with_animation, tr("auch als Animation anlegen", "also create an animation"))
+                        .on_hover_text(tr("Der erste Frame wird die Grundpose. Mit Haken werden alle Frames zusätzlich eine Animation der neuen Figur.", "The first frame becomes the base pose. When checked, all frames also become an animation of the new character."));
                     ui.end_row();
                     if f.with_animation {
-                        ui.label("Art");
+                        ui.label(tr("Art", "Kind"));
                         ui.vertical(|ui| kind_picker(ui, &mut f.kind, &mut f.custom));
                         ui.end_row();
                     }
                 }
             }
             Target::Animation => {
-                ui.label("Figur");
+                ui.label(tr("Figur", "Character"));
                 let current = characters
                     .iter()
                     .find(|(id, ..)| Some(*id) == f.character)
@@ -381,7 +410,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
                         }
                     });
                 ui.end_row();
-                ui.label("Art");
+                ui.label(tr("Art", "Kind"));
                 ui.vertical(|ui| kind_picker(ui, &mut f.kind, &mut f.custom));
                 ui.end_row();
                 ui.label("Name");
@@ -395,24 +424,24 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
                         .desired_width(200.0),
                 );
                 ui.end_row();
-                ui.label("Neue Farben");
+                ui.label(tr("Neue Farben", "New colors"));
                 ui.vertical(|ui| {
-                    ui.radio_value(&mut f.snap_colors, false, "in die Palette der Figur aufnehmen");
-                    ui.radio_value(&mut f.snap_colors, true, "an die vorhandenen Farben anpassen");
+                    ui.radio_value(&mut f.snap_colors, false, tr("in die Palette der Figur aufnehmen", "add to the character's palette"));
+                    ui.radio_value(&mut f.snap_colors, true, tr("an die vorhandenen Farben anpassen", "snap to the existing colors"));
                 });
                 ui.end_row();
             }
         });
 
-    section(ui, "Größe");
+    section(ui, tr("Größe", "Size"));
     ui.horizontal(|ui| {
-        ui.checkbox(&mut f.cut.auto_shrink, "Vergrößerte Pixel-Art erkennen")
-            .on_hover_text("Besteht das Bild aus gleich großen einfarbigen Blöcken, wird jeder Block zu einem Pixel.");
+        ui.checkbox(&mut f.cut.auto_shrink, tr("Vergrößerte Pixel-Art erkennen", "Detect enlarged pixel art"))
+            .on_hover_text(tr("Besteht das Bild aus gleich großen einfarbigen Blöcken, wird jeder Block zu einem Pixel.", "If the picture consists of equally sized single-color blocks, each block becomes one pixel."));
         if !f.cut.auto_shrink {
             ui.add(
                 egui::DragValue::new(&mut f.cut.factor)
                     .range(1..=64)
-                    .prefix("verkleinern um ")
+                    .prefix(tr("verkleinern um ", "shrink by "))
                     .suffix("×"),
             );
         }
@@ -422,13 +451,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         section(ui, "Frames");
         ui.horizontal(|ui| {
             let whole = if f.cut.fit.is_some() {
-                "Nach Größe der Figur"
+                tr("Nach Größe der Figur", "By character size")
             } else {
-                "Ein Bild"
+                tr("Ein Bild", "One picture")
             };
             ui.radio_value(&mut f.cut.split, Split::Whole, whole);
-            ui.radio_value(&mut f.cut.split, Split::Count, "Spalten × Zeilen");
-            ui.radio_value(&mut f.cut.split, Split::Cells, "Framegröße");
+            ui.radio_value(
+                &mut f.cut.split,
+                Split::Count,
+                tr("Spalten × Zeilen", "Columns × rows"),
+            );
+            ui.radio_value(
+                &mut f.cut.split,
+                Split::Cells,
+                tr("Framegröße", "Frame size"),
+            );
         });
         match f.cut.split {
             Split::Whole => {}
@@ -437,12 +474,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
                     ui.add(
                         egui::DragValue::new(&mut f.cut.columns)
                             .range(1..=256)
-                            .suffix(" Spalten"),
+                            .suffix(tr(" Spalten", " columns")),
                     );
                     ui.add(
                         egui::DragValue::new(&mut f.cut.rows)
                             .range(1..=256)
-                            .suffix(" Zeilen"),
+                            .suffix(tr(" Zeilen", " rows")),
                     );
                 });
             }
@@ -451,19 +488,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
                     ui.add(
                         egui::DragValue::new(&mut f.cut.cell_w)
                             .range(1..=MAX_SIZE)
-                            .prefix("Breite "),
+                            .prefix(tr("Breite ", "Width ")),
                     );
                     ui.add(
                         egui::DragValue::new(&mut f.cut.cell_h)
                             .range(1..=MAX_SIZE)
-                            .prefix("Höhe "),
+                            .prefix(tr("Höhe ", "Height ")),
                     );
-                    ui.weak("Pixel, nach dem Verkleinern");
+                    ui.weak(tr("Pixel, nach dem Verkleinern", "pixels, after shrinking"));
                 });
             }
         }
         if f.cut.split != Split::Whole || f.cut.fit.is_some() {
-            ui.checkbox(&mut f.cut.keep_empty, "Leere Frames am Ende behalten");
+            ui.checkbox(
+                &mut f.cut.keep_empty,
+                tr(
+                    "Leere Frames am Ende behalten",
+                    "Keep empty frames at the end",
+                ),
+            );
         }
     }
 
@@ -492,37 +535,45 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         f.ready = Some((f.cut, ready));
     }
 
-    section(ui, "Ergebnis");
+    section(ui, tr("Ergebnis", "Result"));
     let mut summary = None;
     match f.ready.as_ref().map(|(_, ready)| ready) {
         Some(Ok(ready)) => {
             let p = &ready.picture;
-            let mut text = format!(
+            let mut text = trf!(
                 "{} mit {}×{} Pixeln",
+                "{} of {}×{} pixels",
                 frames_text(p.frames.len()),
                 p.width,
                 p.height
             );
             if ready.shrunk_by > 1 {
-                text.push_str(&format!(", {}× verkleinert", ready.shrunk_by));
+                text.push_str(&trf!(", {}× verkleinert", ", shrunk {}×", ready.shrunk_by));
             }
             if ready.dropped_empty > 0 {
-                text.push_str(&format!(
+                text.push_str(&trf!(
                     ", {} am Ende weggelassen",
+                    ", {} at the end left out",
                     match ready.dropped_empty {
-                        1 => "1 leerer Frame".to_string(),
-                        n => format!("{n} leere Frames"),
+                        1 => tr("1 leerer Frame", "1 empty frame").to_string(),
+                        n => trf!("{n} leere Frames", "{n} empty frames"),
                     }
                 ));
             }
             ui.label(text);
             if p.timed {
-                ui.weak("Die Dauer jedes Frames kommt aus dem GIF.");
+                ui.weak(tr(
+                    "Die Dauer jedes Frames kommt aus dem GIF.",
+                    "The duration of each frame comes from the GIF.",
+                ));
             }
             let only_first =
                 f.target == Target::Character && p.frames.len() > 1 && !f.with_animation;
             if only_first {
-                ui.weak("Nur der erste Frame wird übernommen, als Grundpose der Figur.");
+                ui.weak(tr(
+                    "Nur der erste Frame wird übernommen, als Grundpose der Figur.",
+                    "Only the first frame is used, as the character's base pose.",
+                ));
             }
             preview(ui, &f.thumbs, p.width, p.height, p.frames.len());
             summary = Some((p.frames.len(), ready.shrunk_by));
@@ -540,7 +591,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
         Target::Animation => true,
     };
     let valid = summary.is_some() && named && (!needs_kind || f.kind_is_valid());
-    let (ok, cancel) = buttons(ui, "Importieren", valid && !loaded_now);
+    let (ok, cancel) = buttons(ui, tr("Importieren", "Import"), valid && !loaded_now);
     if cancel {
         return Outcome::Close;
     }
@@ -588,20 +639,23 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, f: &mut ImportForm) -> Outcome {
             .and_then(|d| d.asset_name(done.id))
             .unwrap_or_default()
             .to_string();
-        let mut text = format!("„{name}“ importiert");
+        let mut text = trf!("„{name}“ importiert", "\"{name}\" imported");
         if shrunk_by > 1 {
-            text.push_str(&format!(", {shrunk_by}× verkleinert"));
+            text.push_str(&trf!(", {shrunk_by}× verkleinert", ", shrunk {shrunk_by}×"));
         }
         if done.added_colors > 0 {
-            text.push_str(&format!(
+            text.push_str(&trf!(
                 ", {} neue Farbe(n) in der Palette der Figur",
+                ", {} new color(s) in the character's palette",
                 done.added_colors
             ));
         }
         if done.report.changed > 0 {
-            text.push_str(&format!(
+            text.push_str(&trf!(
                 ", {} von {} Farben angepasst",
-                done.report.changed, done.report.source_colors
+                ", {} of {} colors adjusted",
+                done.report.changed,
+                done.report.source_colors
             ));
         }
         app.info(text);
@@ -638,7 +692,9 @@ fn preview(ui: &mut egui::Ui, thumbs: &[egui::TextureHandle], w: u32, h: u32, fr
         }
     });
     if frames > thumbs.len() {
-        ui.weak(RichText::new(format!("und {} weitere", frames - thumbs.len())).small());
+        ui.weak(
+            RichText::new(trf!("und {} weitere", "and {} more", frames - thumbs.len())).small(),
+        );
     }
 }
 

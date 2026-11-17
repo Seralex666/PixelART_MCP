@@ -3,14 +3,13 @@ resolver = "2"
 members = ["crates/pixel-core", "crates/pixel-mcp", "crates/pixel-editor"]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 repository = "https://github.com/Seralex666/PixelART_MCP"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"

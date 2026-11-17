@@ -1,78 +1,166 @@
-use thiserror::Error;
+use std::fmt;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Error)]
+/// Fehler des Kerns. Die Meldung erscheint in der eingestellten Sprache
+/// (siehe [`crate::lang`]); [`Error::english`] gibt sie immer auf Englisch.
+#[derive(Debug)]
 pub enum Error {
-    #[error("ungültige Bildgröße {width}×{height} (erlaubt: 1 bis {max})", max = crate::MAX_SIZE)]
-    InvalidSize { width: u32, height: u32 },
-    #[error("Pixel ({x}, {y}) liegt außerhalb des Bildes {width}×{height}")]
+    InvalidSize {
+        width: u32,
+        height: u32,
+    },
     OutOfBounds {
         x: i64,
         y: i64,
         width: u32,
         height: u32,
     },
-    #[error("Ebene {0} existiert nicht")]
     NoSuchLayer(usize),
-    #[error("Frame {0} existiert nicht")]
     NoSuchFrame(usize),
-    #[error("{kind} '{id}' nicht gefunden")]
-    NotFound { kind: &'static str, id: String },
-    #[error("Palette ist voll (maximal {0} Farben)")]
+    NotFound {
+        kind: &'static str,
+        id: String,
+    },
     PaletteFull(usize),
-    #[error("Palette ist gesperrt; Farbe {0} ist nicht enthalten")]
     ColorNotInPalette(crate::Rgba),
-    #[error("Palette ist gesperrt, weil sie zu einer Figur gehört")]
     PaletteLocked,
-    #[error("Eine Figur braucht eine Palette mit mindestens einer Farbe")]
     EmptyPalette,
-    #[error("Koordinate oder Größe {0} liegt zu weit außerhalb des Bildes (erlaubt: ±{limit})", limit = crate::draw::COORD_LIMIT)]
     CoordOutOfRange(i64),
-    #[error("Größe passt nicht: erwartet {expected_w}×{expected_h}, bekommen {got_w}×{got_h}")]
     SizeMismatch {
         expected_w: u32,
         expected_h: u32,
         got_w: u32,
         got_h: u32,
     },
-    #[error("ungültige Farbe '{0}' (erwartet #RRGGBB oder #RRGGBBAA)")]
     InvalidColor(String),
-    #[error("ungültige Pixeldaten: {0}")]
     InvalidPixelData(String),
-    #[error("{0}")]
+    /// Fertiger Text in der eingestellten Sprache.
     InvalidName(String),
-    #[error("das Bild hat {found} Farben, erlaubt sind hier höchstens {max}")]
-    TooManyColors { found: usize, max: usize },
-    #[error("Fehler beim Schreiben der Bilddatei: {0}")]
+    TooManyColors {
+        found: usize,
+        max: usize,
+    },
     Encode(String),
-    #[error("{0}")]
+    /// Fertiger Text in der eingestellten Sprache.
     Video(String),
-    #[error("{0}")]
+    /// Fertiger Text in der eingestellten Sprache.
     Import(String),
     /// Fehler in einer Formel der Zeichen-Op `shader` (englisch, für MCP-Clients).
-    #[error("formula: {0}")]
     Formula(String),
     /// Unbrauchbare Angabe für eine Zeichentechnik (englisch, für MCP-Clients).
-    #[error("{0}")]
     Effect(String),
-    #[error("WebM braucht eine gerade Vergrößerung (2, 4, 6 … bis {max}), damit die Pixel scharf bleiben", max = crate::export::MAX_SCALE)]
     OddVideoScale,
-    #[error("ffmpeg wurde nicht gefunden. {help}", help = crate::video::FFMPEG_HELP)]
     FfmpegMissing,
-    #[error("nicht unterstützte Projektversion {0}")]
     UnsupportedVersion(u32),
-    #[error("E/A-Fehler: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("JSON-Fehler: {0}")]
-    Json(#[from] serde_json::Error),
-    #[error("Bildfehler: {0}")]
-    Image(#[from] image::ImageError),
+    Io(std::io::Error),
+    Json(serde_json::Error),
+    Image(image::ImageError),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if crate::lang::is_en() {
+            f.write_str(&self.english())
+        } else {
+            f.write_str(&self.german())
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Io(e) => Some(e),
+            Error::Json(e) => Some(e),
+            Error::Image(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
+        Error::Json(e)
+    }
+}
+
+impl From<image::ImageError> for Error {
+    fn from(e: image::ImageError) -> Self {
+        Error::Image(e)
+    }
 }
 
 impl Error {
-    /// Dieselbe Meldung auf Englisch, für MCP-Clients. Meldungen, die als fertiger
-    /// Text ankommen (Import, Video), bleiben, wie sie sind.
+    /// Die Meldung auf Deutsch.
+    pub fn german(&self) -> String {
+        match self {
+            Error::InvalidSize { width, height } => format!(
+                "ungültige Bildgröße {width}×{height} (erlaubt: 1 bis {})",
+                crate::MAX_SIZE
+            ),
+            Error::OutOfBounds {
+                x,
+                y,
+                width,
+                height,
+            } => format!("Pixel ({x}, {y}) liegt außerhalb des Bildes {width}×{height}"),
+            Error::NoSuchLayer(i) => format!("Ebene {i} existiert nicht"),
+            Error::NoSuchFrame(i) => format!("Frame {i} existiert nicht"),
+            Error::NotFound { kind, id } => format!("{kind} '{id}' nicht gefunden"),
+            Error::PaletteFull(max) => format!("Palette ist voll (maximal {max} Farben)"),
+            Error::ColorNotInPalette(c) => {
+                format!("Palette ist gesperrt; Farbe {c} ist nicht enthalten")
+            }
+            Error::PaletteLocked => "Palette ist gesperrt, weil sie zu einer Figur gehört".into(),
+            Error::EmptyPalette => "Eine Figur braucht eine Palette mit mindestens einer Farbe".into(),
+            Error::CoordOutOfRange(v) => format!(
+                "Koordinate oder Größe {v} liegt zu weit außerhalb des Bildes (erlaubt: ±{})",
+                crate::draw::COORD_LIMIT
+            ),
+            Error::SizeMismatch {
+                expected_w,
+                expected_h,
+                got_w,
+                got_h,
+            } => format!(
+                "Größe passt nicht: erwartet {expected_w}×{expected_h}, bekommen {got_w}×{got_h}"
+            ),
+            Error::InvalidColor(c) => {
+                format!("ungültige Farbe '{c}' (erwartet #RRGGBB oder #RRGGBBAA)")
+            }
+            Error::InvalidPixelData(m) => format!("ungültige Pixeldaten: {m}"),
+            Error::TooManyColors { found, max } => {
+                format!("das Bild hat {found} Farben, erlaubt sind hier höchstens {max}")
+            }
+            Error::Encode(m) => format!("Fehler beim Schreiben der Bilddatei: {m}"),
+            Error::Formula(m) => format!("formula: {m}"),
+            Error::InvalidName(m) | Error::Video(m) | Error::Import(m) | Error::Effect(m) => {
+                m.clone()
+            }
+            Error::OddVideoScale => format!(
+                "WebM braucht eine gerade Vergrößerung (2, 4, 6 … bis {}), damit die Pixel scharf bleiben",
+                crate::export::MAX_SCALE
+            ),
+            Error::FfmpegMissing => format!(
+                "ffmpeg wurde nicht gefunden. {}",
+                crate::video::ffmpeg_help_de()
+            ),
+            Error::UnsupportedVersion(v) => format!("nicht unterstützte Projektversion {v}"),
+            Error::Io(e) => format!("E/A-Fehler: {e}"),
+            Error::Json(e) => format!("JSON-Fehler: {e}"),
+            Error::Image(e) => format!("Bildfehler: {e}"),
+        }
+    }
+
+    /// Die Meldung auf Englisch. Meldungen, die als fertiger Text ankommen
+    /// (Import, Video, Namen), stehen schon in der eingestellten Sprache.
     pub fn english(&self) -> String {
         match self {
             Error::InvalidSize { width, height } => format!(
@@ -124,18 +212,17 @@ impl Error {
                 "webm needs an even scale (2, 4, 6 … up to {}) so the pixels stay sharp",
                 crate::export::MAX_SCALE
             ),
-            Error::FfmpegMissing => "ffmpeg was not found".into(),
+            Error::FfmpegMissing => format!("ffmpeg was not found. {}", crate::video::ffmpeg_help_en()),
             Error::UnsupportedVersion(v) => format!("unsupported project version {v}"),
             Error::Io(err) => format!("file error: {err}"),
             Error::Json(err) => format!("JSON error: {err}"),
             Error::Image(err) => format!("image error: {err}"),
-            Error::InvalidPixelData(_)
-            | Error::InvalidName(_)
-            | Error::Encode(_)
-            | Error::Video(_)
-            | Error::Import(_)
-            | Error::Formula(_)
-            | Error::Effect(_) => self.to_string(),
+            Error::InvalidPixelData(m) => format!("invalid pixel data: {m}"),
+            Error::Encode(m) => format!("cannot write the image file: {m}"),
+            Error::Formula(m) => format!("formula: {m}"),
+            Error::InvalidName(m) | Error::Video(m) | Error::Import(m) | Error::Effect(m) => {
+                m.clone()
+            }
         }
     }
 }

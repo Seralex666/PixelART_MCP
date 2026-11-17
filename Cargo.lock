@@ -1995,7 +1995,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pixel-core"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "dirs",
@@ -2005,14 +2005,14 @@ dependencies = [
  "png",
  "serde",
  "serde_json",
- "thiserror 2.0.21",
  "uuid",
 ]
 
 [[package]]
 name = "pixel-editor"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
+ "dirs",
  "eframe",
  "image",
  "pixel-core",
@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "pixel-mcp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "base64 0.22.1",
  "image",

@@ -23,6 +23,7 @@ pub mod error;
 pub mod export;
 pub mod expr;
 pub mod import;
+pub mod lang;
 pub mod layer;
 pub mod lint;
 pub mod palette;

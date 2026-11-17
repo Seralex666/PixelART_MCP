@@ -2,6 +2,8 @@
 //! Abgleich mit Änderungen, die der MCP-Server in dieselbe Datei schreibt.
 
 use pixel_core::import::{self, NewColors, Picture, Report};
+use pixel_core::lang::tr;
+use pixel_core::trf;
 use pixel_core::workspace::{check_asset_name, ExportFormat, Exported, NameClash, Workspace};
 use pixel_core::{Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba, Sprite};
 use std::time::SystemTime;
@@ -28,9 +30,9 @@ pub enum AssetKind {
 impl AssetKind {
     pub fn label(self) -> &'static str {
         match self {
-            AssetKind::Character => "Figur",
+            AssetKind::Character => tr("Figur", "Character"),
             AssetKind::Animation => "Animation",
-            AssetKind::Image => "Bild",
+            AssetKind::Image => tr("Bild", "Image"),
         }
     }
 }
@@ -274,7 +276,10 @@ impl Doc {
     fn snapshot(&mut self, id: AssetId) -> Res {
         let sprite = self
             .sprite(id)
-            .ok_or("Das Asset gibt es nicht mehr")?
+            .ok_or(tr(
+                "Das Asset gibt es nicht mehr",
+                "The asset no longer exists",
+            ))?
             .clone();
         // „Wiederholen“ bleibt vorerst erhalten: Ob wirklich etwas geändert wird,
         // steht erst am Ende des Strichs fest.
@@ -460,8 +465,8 @@ impl Doc {
             // Lässt sich der fremde Stand nicht lesen (etwa ein neueres Format),
             // darf er auf keinen Fall mit unserem alten überschrieben werden.
             let mut disk = self.ws.load(&self.name).map_err(|err| {
-                format!(
-                    "Nicht gespeichert: Die Projektdatei wurde von außen geändert und lässt sich nicht lesen ({err})"
+                trf!(
+                    "Nicht gespeichert: Die Projektdatei wurde von außen geändert und lässt sich nicht lesen ({err})", "Not saved: the project file was changed from outside and cannot be read ({err})"
                 )
             })?;
             self.rebased = match &change {
@@ -482,7 +487,11 @@ impl Doc {
     fn check_name(&self, name: &str, except: Option<AssetId>) -> Res<String> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > 64 {
-            return Err("Der Name braucht 1 bis 64 Zeichen".into());
+            return Err(tr(
+                "Der Name braucht 1 bis 64 Zeichen",
+                "The name needs 1 to 64 characters",
+            )
+            .into());
         }
         let taken: Vec<String> = self
             .assets()
@@ -492,9 +501,9 @@ impl Doc {
             .collect();
         match check_asset_name(&taken, name) {
             Ok(()) => Ok(name.to_string()),
-            Err(NameClash::Same(t)) => Err(format!("„{t}“ gibt es in diesem Projekt schon")),
-            Err(NameClash::Similar(t)) => Err(format!(
-                "„{name}“ ist „{t}“ zu ähnlich: beide ergäben beim Export denselben Dateinamen"
+            Err(NameClash::Same(t)) => Err(trf!("„{t}“ gibt es in diesem Projekt schon", "\"{t}\" already exists in this project")),
+            Err(NameClash::Similar(t)) => Err(trf!(
+                "„{name}“ ist „{t}“ zu ähnlich: beide ergäben beim Export denselben Dateinamen", "\"{name}\" is too similar to \"{t}\": both would give the same file name when exported"
             )),
         }
     }
@@ -682,7 +691,10 @@ impl Doc {
         frame: Option<usize>,
         scale: u32,
     ) -> Res<Exported> {
-        let sprite = self.sprite(id).ok_or("Das Asset gibt es nicht mehr")?;
+        let sprite = self.sprite(id).ok_or(tr(
+            "Das Asset gibt es nicht mehr",
+            "The asset no longer exists",
+        ))?;
         let name = self.asset_name(id).unwrap_or("unnamed");
         self.ws
             .export(&self.name, name, sprite, format, frame, scale)
@@ -712,7 +724,7 @@ fn replay(change: &Change, disk: &mut Project, ours: &Project) -> Option<String>
         Change::Edit { id, base } => {
             let (Some(mine), Some(theirs)) = (sprite_of(ours, *id), sprite_of(disk, *id)) else {
                 return Some(
-                    "Das Bild wurde inzwischen von außen gelöscht. Deine Änderung daran entfällt."
+                    tr("Das Bild wurde inzwischen von außen gelöscht. Deine Änderung daran entfällt.", "The image was deleted from outside in the meantime. Your change to it is dropped.")
                         .into(),
                 );
             };
@@ -774,7 +786,7 @@ fn merge(base: &Sprite, mine: &Sprite, theirs: &Sprite) -> (Sprite, Option<Strin
             let mut out = mine.clone();
             out.palette = merged_palette(mine, theirs);
             let notice = (theirs != base).then(|| {
-                "Das Bild wurde gleichzeitig von außen geändert. Dein Umbau von Ebenen oder Frames hat Vorrang."
+                tr("Das Bild wurde gleichzeitig von außen geändert. Dein Umbau von Ebenen oder Frames hat Vorrang.", "The image was changed from outside at the same time. Your change to layers or frames takes precedence.")
                     .to_string()
             });
             (out, notice)
@@ -782,7 +794,7 @@ fn merge(base: &Sprite, mine: &Sprite, theirs: &Sprite) -> (Sprite, Option<Strin
             (
                 theirs.clone(),
                 Some(
-                    "Das Bild wurde gleichzeitig von außen umgebaut. Deine letzte Änderung wurde nicht übernommen."
+                    tr("Das Bild wurde gleichzeitig von außen umgebaut. Deine letzte Änderung wurde nicht übernommen.", "The image was restructured from outside at the same time. Your last change was not applied.")
                         .into(),
                 ),
             )

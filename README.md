@@ -23,6 +23,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
 | 6 | Pixel-Art-Techniken für Claude: Kontur, Licht, Raster, Verlauf, Körnung, Formel, Stempel, mehrere Frames je Aufruf | fertig |
 | 7 | Prüf-Hinweise, Paletten aus Bildern, Farbreduktion, Projekt-Stil | fertig |
+| 8 | Einstellungen (Speicherordner, Sprache Deutsch/Englisch), Werkzeug-Symbole | fertig |
 
 ## Aufbau
 
@@ -48,7 +49,8 @@ Wichtige Typen in `pixel-core`:
 `pixelart-studio` ist das Programm zum Selberzeichnen:
 
 - Leinwand mit pixelgenauer Vergrößerung, Raster und Zwiebelhaut (vorheriger Frame scheint durch)
-- Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben
+- Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben, jeweils mit eigenem Pixel-Symbol
+- Oberfläche auf Deutsch oder Englisch (Datei › Einstellungen)
 - Palette, Ebenen, Timeline mit Vorschaubildern und Animationsvorschau
 - Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG, Spritesheet, GIF oder WebM
 - Bilder importieren (Strg+I oder Datei ins Fenster ziehen), siehe unten
@@ -58,7 +60,13 @@ Editor und MCP-Server arbeiten im selben Arbeitsordner. Zeichnet Claude, lädt d
 nach kurzer Zeit neu; „Rückgängig“ nimmt auch Claudes letzte Änderung am geöffneten Bild zurück.
 
 Der Arbeitsordner ist, in dieser Reihenfolge: `--home <Ordner>`, die Umgebungsvariable `PIXELART_HOME`,
-ein Ordner `Projekte` neben dem Programm, sonst `Dokumente/PixelArt Studio`.
+der Speicherordner aus **Datei › Einstellungen**, ein Ordner `Projekte` neben dem Programm, sonst
+`Dokumente/PixelArt Studio`.
+
+In den Einstellungen wählst du auch die Sprache. Sie gilt sofort für das ganze Programm; Claude bekommt
+seine Werkzeuge immer auf Englisch. Gespeichert werden die Einstellungen in
+`%APPDATA%\PixelArt Studio\settings.json` (unter Linux `~/.config/PixelArt Studio/settings.json`,
+abweichend über die Umgebungsvariable `PIXELART_SETTINGS`).
 
 ## Zeichentechniken für Claude
 
@@ -100,7 +108,7 @@ ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneina
 
 ## Bilder importieren
 
-Mit Strg+I, über Datei → Bild importieren oder indem du eine Datei ins Fenster ziehst. Claude benutzt
+Mit Strg+I, über Datei › Bild importieren oder indem du eine Datei ins Fenster ziehst. Claude benutzt
 dafür das Werkzeug `import_image`. Gelesen werden PNG, JPG und GIF.
 
 - **Als Bild:** ein freies Bild, zum Beispiel ein Tile.
@@ -139,7 +147,7 @@ Hand, oder du legst `ffmpeg.exe` neben das Programm. Gesucht wird in dieser Reih
 
 ## Mit Claude verbinden
 
-Im Editor unter **Hilfe → Mit Claude verbinden…** stehen alle Angaben mit den Pfaden deines Rechners,
+Im Editor unter **Hilfe › Mit Claude verbinden…** stehen alle Angaben mit den Pfaden deines Rechners,
 dazu ein fertiger Prompt, mit dem Claude die Verbindung selbst einrichtet. Dieselbe Anleitung zum
 Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 
