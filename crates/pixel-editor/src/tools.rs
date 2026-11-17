@@ -3,6 +3,7 @@
 
 use crate::doc::Res;
 use pixel_core::draw::{self, Target};
+use pixel_core::lang::tr;
 use pixel_core::{Rgba, Sprite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,14 +32,14 @@ impl Tool {
 
     pub fn label(self) -> &'static str {
         match self {
-            Tool::Pencil => "Stift",
-            Tool::Eraser => "Radierer",
-            Tool::Fill => "Füllen",
-            Tool::Picker => "Pipette",
-            Tool::Line => "Linie",
-            Tool::Rect => "Rechteck",
+            Tool::Pencil => tr("Stift", "Pencil"),
+            Tool::Eraser => tr("Radierer", "Eraser"),
+            Tool::Fill => tr("Füllen", "Fill"),
+            Tool::Picker => tr("Pipette", "Picker"),
+            Tool::Line => tr("Linie", "Line"),
+            Tool::Rect => tr("Rechteck", "Rectangle"),
             Tool::Ellipse => "Ellipse",
-            Tool::Move => "Verschieben",
+            Tool::Move => tr("Verschieben", "Move"),
         }
     }
 

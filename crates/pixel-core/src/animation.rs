@@ -75,17 +75,40 @@ impl AnimationKind {
         )
     }
 
-    /// Kurze Beschreibung der typischen Bewegung, als Hilfe für Claude und im Editor.
-    pub fn guide(&self) -> &str {
+    /// Kurze Beschreibung der typischen Bewegung, als Hilfe für Claude und im
+    /// Editor, in der eingestellten Sprache.
+    pub fn guide(&self) -> &'static str {
+        use crate::lang::tr;
         match self {
-            AnimationKind::Idle => "Ruhepose mit leichtem Atmen: Oberkörper hebt und senkt sich um 1 Pixel.",
-            AnimationKind::Walk => "Gehzyklus: Kontakt, Tiefpunkt, Durchgang, Hochpunkt, dann dasselbe mit dem anderen Bein.",
-            AnimationKind::Run => "Laufzyklus mit Flugphase: Körper nach vorn geneigt, Arme schwingen stark gegengleich.",
-            AnimationKind::Jump => "Hocke, Absprung, Steigen, Scheitelpunkt, Landung.",
-            AnimationKind::Attack => "Ausholen, Schlag mit Bewegungsbogen, Treffer, Zurückkehren in die Grundpose.",
-            AnimationKind::Hurt => "Rückstoß nach hinten, kurzer Farbblitz, Rückkehr.",
-            AnimationKind::Death => "Taumeln, Fallen, Aufprall, am Boden liegen bleiben.",
-            AnimationKind::Custom(_) => "Eigene Animation.",
+            AnimationKind::Idle => tr(
+                "Ruhepose mit leichtem Atmen: Oberkörper hebt und senkt sich um 1 Pixel.",
+                "Resting pose with light breathing: the upper body rises and falls by 1 pixel.",
+            ),
+            AnimationKind::Walk => tr(
+                "Gehzyklus: Kontakt, Tiefpunkt, Durchgang, Hochpunkt, dann dasselbe mit dem anderen Bein.",
+                "Walk cycle: contact, down, passing, up, then the same with the other leg.",
+            ),
+            AnimationKind::Run => tr(
+                "Laufzyklus mit Flugphase: Körper nach vorn geneigt, Arme schwingen stark gegengleich.",
+                "Run cycle with a flight phase: body leaning forward, arms swinging strongly in opposition.",
+            ),
+            AnimationKind::Jump => tr(
+                "Hocke, Absprung, Steigen, Scheitelpunkt, Landung.",
+                "Crouch, take-off, rise, apex, landing.",
+            ),
+            AnimationKind::Attack => tr(
+                "Ausholen, Schlag mit Bewegungsbogen, Treffer, Zurückkehren in die Grundpose.",
+                "Wind-up, strike with a motion arc, hit, return to the base pose.",
+            ),
+            AnimationKind::Hurt => tr(
+                "Rückstoß nach hinten, kurzer Farbblitz, Rückkehr.",
+                "Knock-back, short color flash, return.",
+            ),
+            AnimationKind::Death => tr(
+                "Taumeln, Fallen, Aufprall, am Boden liegen bleiben.",
+                "Stagger, fall, impact, stay on the ground.",
+            ),
+            AnimationKind::Custom(_) => tr("Eigene Animation.", "Custom animation."),
         }
     }
 

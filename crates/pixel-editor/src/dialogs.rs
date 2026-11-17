@@ -8,6 +8,8 @@ use crate::import_dialog::{self, ImportForm};
 use crate::tools::Tool;
 use eframe::egui::{self, RichText};
 use pixel_core::export::MAX_SCALE;
+use pixel_core::lang::{tr, Lang};
+use pixel_core::trf;
 use pixel_core::workspace::ExportFormat;
 use pixel_core::{AnimationKind, ColorDepth, Palette, Rgba, MAX_SIZE, TEMPLATES};
 use std::path::PathBuf;
@@ -26,6 +28,22 @@ pub enum Dialog {
     Connect,
     Shortcuts,
     About,
+    Settings(SettingsForm),
+}
+
+/// Formular für Datei → Einstellungen.
+pub struct SettingsForm {
+    pub home: String,
+    pub lang: Lang,
+}
+
+impl SettingsForm {
+    pub fn new(app: &App) -> Self {
+        Self {
+            home: app.ws.home().display().to_string(),
+            lang: pixel_core::lang::get(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -41,10 +59,10 @@ impl PalettePreset {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Default16 => "Standard (16 Farben)",
-            Self::Gray4 => "Graustufen (4)",
-            Self::Gray8 => "Graustufen (8)",
-            Self::Gray16 => "Graustufen (16)",
+            Self::Default16 => tr("Standard (16 Farben)", "Default (16 colors)"),
+            Self::Gray4 => tr("Graustufen (4)", "Grayscale (4)"),
+            Self::Gray8 => tr("Graustufen (8)", "Grayscale (8)"),
+            Self::Gray16 => tr("Graustufen (16)", "Grayscale (16)"),
         }
     }
 
@@ -194,6 +212,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Connect => connect(app, ui),
             Dialog::Shortcuts => shortcuts(ui),
             Dialog::About => about(app, ui),
+            Dialog::Settings(form) => settings(app, ui, form),
         };
         if let Some(err) = &app.dialog_error {
             ui.add_space(4.0);
@@ -221,7 +240,7 @@ pub(crate) fn buttons(ui: &mut egui::Ui, confirm: &str, enabled: bool) -> (bool,
         ok = ui
             .add_enabled(enabled, egui::Button::new(RichText::new(confirm).strong()))
             .clicked();
-        cancel = ui.button("Abbrechen").clicked();
+        cancel = ui.button(tr("Abbrechen", "Cancel")).clicked();
     });
     // Die Eingabetaste bestätigt, wie man es von Dialogen gewohnt ist.
     if enabled && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -257,12 +276,18 @@ fn name_field(ui: &mut egui::Ui, name: &mut String) {
 }
 
 fn new_project(app: &mut App, ui: &mut egui::Ui, name: &mut String) -> Outcome {
-    ui.heading("Neues Projekt");
-    ui.label("Ein Projekt sammelt Figuren, Animationen und Bilder in einer Datei.");
+    ui.heading(tr("Neues Projekt", "New project"));
+    ui.label(tr(
+        "Ein Projekt sammelt Figuren, Animationen und Bilder in einer Datei.",
+        "A project keeps characters, animations and images together in one file.",
+    ));
     ui.add_space(6.0);
     name_field(ui, name);
-    ui.weak("Buchstaben, Ziffern, Leerzeichen, - und _");
-    let (ok, cancel) = buttons(ui, "Anlegen", !name.trim().is_empty());
+    ui.weak(tr(
+        "Buchstaben, Ziffern, Leerzeichen, - und _",
+        "Letters, digits, spaces, - and _",
+    ));
+    let (ok, cancel) = buttons(ui, tr("Anlegen", "Create"), !name.trim().is_empty());
     if cancel {
         return Outcome::Close;
     }
@@ -279,20 +304,23 @@ fn new_project(app: &mut App, ui: &mut egui::Ui, name: &mut String) -> Outcome {
 fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
     ui.set_width(380.0);
     if f.character {
-        ui.heading("Neue Figur");
-        ui.label("Größe, Farbtiefe und Palette einer Figur stehen danach fest. Alle Animationen übernehmen sie, deshalb sieht die Figur überall gleich aus. Farben lassen sich später ergänzen.");
+        ui.heading(tr("Neue Figur", "New character"));
+        ui.label(tr("Größe, Farbtiefe und Palette einer Figur stehen danach fest. Alle Animationen übernehmen sie, deshalb sieht die Figur überall gleich aus. Farben lassen sich später ergänzen.", "Size, color depth and palette of a character are fixed afterwards. All animations take them over, so the character looks the same everywhere. Colors can be added later."));
     } else {
-        ui.heading("Neues Bild");
-        ui.label("Ein freies Bild, zum Beispiel ein Tile, ein Item oder eine Szene.");
+        ui.heading(tr("Neues Bild", "New image"));
+        ui.label(tr(
+            "Ein freies Bild, zum Beispiel ein Tile, ein Item oder eine Szene.",
+            "A free image, for example a tile, an item or a scene.",
+        ));
     }
     ui.add_space(6.0);
     name_field(ui, &mut f.name);
 
-    section(ui, "Größe");
+    section(ui, tr("Größe", "Size"));
     let selected = f
         .template
         .and_then(|i| TEMPLATES.get(i))
-        .map_or("Eigene Größe", |t| t.name);
+        .map_or(tr("Eigene Größe", "Custom size"), |t| t.name);
     egui::ComboBox::from_id_salt("template")
         .selected_text(selected)
         .width(260.0)
@@ -306,7 +334,7 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
                 }
             }
             if ui
-                .selectable_label(f.template.is_none(), "Eigene Größe")
+                .selectable_label(f.template.is_none(), tr("Eigene Größe", "Custom size"))
                 .clicked()
             {
                 f.template = None;
@@ -318,25 +346,34 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
             custom,
             egui::DragValue::new(&mut f.width)
                 .range(1..=MAX_SIZE)
-                .prefix("Breite "),
+                .prefix(tr("Breite ", "Width ")),
         );
         ui.add_enabled(
             custom,
             egui::DragValue::new(&mut f.height)
                 .range(1..=MAX_SIZE)
-                .prefix("Höhe "),
+                .prefix(tr("Höhe ", "Height ")),
         );
-        ui.weak(format!("Pixel, höchstens {MAX_SIZE}"));
+        ui.weak(trf!(
+            "Pixel, höchstens {MAX_SIZE}",
+            "pixels, at most {MAX_SIZE}"
+        ));
     });
 
-    section(ui, "Farbtiefe");
+    section(ui, tr("Farbtiefe", "Color depth"));
     ui.horizontal(|ui| {
-        ui.radio_value(&mut f.bits, 8, "8 Bit")
-            .on_hover_text("Nur Farben aus der Palette, höchstens 256");
-        ui.radio_value(&mut f.bits, 16, "16 Bit")
-            .on_hover_text("65 536 Farben, Pixel sind deckend oder durchsichtig");
-        ui.radio_value(&mut f.bits, 32, "32 Bit")
-            .on_hover_text("Alle Farben mit Transparenz");
+        ui.radio_value(&mut f.bits, 8, "8 Bit").on_hover_text(tr(
+            "Nur Farben aus der Palette, höchstens 256",
+            "Only palette colors, at most 256",
+        ));
+        ui.radio_value(&mut f.bits, 16, "16 Bit").on_hover_text(tr(
+            "65 536 Farben, Pixel sind deckend oder durchsichtig",
+            "65,536 colors, pixels are opaque or transparent",
+        ));
+        ui.radio_value(&mut f.bits, 32, "32 Bit").on_hover_text(tr(
+            "Alle Farben mit Transparenz",
+            "All colors with transparency",
+        ));
     });
 
     section(ui, "Palette");
@@ -349,7 +386,7 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
             }
         });
 
-    let (ok, cancel) = buttons(ui, "Anlegen", !f.name.trim().is_empty());
+    let (ok, cancel) = buttons(ui, tr("Anlegen", "Create"), !f.name.trim().is_empty());
     if cancel {
         return Outcome::Close;
     }
@@ -367,28 +404,28 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
     };
     finish(app, created, |app, id| {
         app.select(id);
-        app.info(format!("„{}“ angelegt", f.name.trim()));
+        app.info(trf!("„{}“ angelegt", "\"{}\" created", f.name.trim()));
     })
 }
 
 /// Deutscher Name einer Animationsart, mit dem Kürzel, das Claude benutzt.
 pub(crate) fn kind_label(k: &AnimationKind) -> &'static str {
     match k {
-        AnimationKind::Idle => "Stehen (idle)",
-        AnimationKind::Walk => "Gehen (walk)",
-        AnimationKind::Run => "Rennen (run)",
-        AnimationKind::Jump => "Springen (jump)",
-        AnimationKind::Attack => "Angriff (attack)",
-        AnimationKind::Hurt => "Treffer (hurt)",
-        AnimationKind::Death => "Sterben (death)",
-        AnimationKind::Custom(_) => "Eigene",
+        AnimationKind::Idle => tr("Stehen (idle)", "Idle"),
+        AnimationKind::Walk => tr("Gehen (walk)", "Walk"),
+        AnimationKind::Run => tr("Rennen (run)", "Run"),
+        AnimationKind::Jump => tr("Springen (jump)", "Jump"),
+        AnimationKind::Attack => tr("Angriff (attack)", "Attack"),
+        AnimationKind::Hurt => tr("Treffer (hurt)", "Hurt"),
+        AnimationKind::Death => tr("Sterben (death)", "Death"),
+        AnimationKind::Custom(_) => tr("Eigene", "Custom"),
     }
 }
 
 fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outcome {
     ui.set_width(380.0);
-    ui.heading("Neue Animation");
-    ui.label("Jeder Frame startet als Kopie der Grundpose der Figur. Du änderst dann nur, was sich bewegt.");
+    ui.heading(tr("Neue Animation", "New animation"));
+    ui.label(tr("Jeder Frame startet als Kopie der Grundpose der Figur. Du änderst dann nur, was sich bewegt.", "Every frame starts as a copy of the character's base pose. Then you only change what moves."));
     let characters: Vec<(Uuid, String)> = app
         .doc
         .as_ref()
@@ -401,7 +438,7 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
         })
         .unwrap_or_default();
 
-    section(ui, "Figur");
+    section(ui, tr("Figur", "Character"));
     let current = characters
         .iter()
         .find(|(id, _)| *id == f.character)
@@ -415,12 +452,12 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
             }
         });
 
-    section(ui, "Art");
+    section(ui, tr("Art", "Kind"));
     let label = kind_label;
     let selected = f
         .kind
         .and_then(|i| AnimationKind::PRESETS.get(i))
-        .map_or("Eigene", label);
+        .map_or(tr("Eigene", "Custom"), label);
     egui::ComboBox::from_id_salt("kind")
         .selected_text(selected)
         .width(260.0)
@@ -431,14 +468,20 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
                     f.frames = k.default_frames();
                 }
             }
-            if ui.selectable_label(f.kind.is_none(), "Eigene").clicked() {
+            if ui
+                .selectable_label(f.kind.is_none(), tr("Eigene", "Custom"))
+                .clicked()
+            {
                 f.kind = None;
             }
         });
     if f.kind.is_none() {
         ui.add(
             egui::TextEdit::singleline(&mut f.custom)
-                .hint_text("Bezeichnung, zum Beispiel winken")
+                .hint_text(tr(
+                    "Bezeichnung, zum Beispiel winken",
+                    "Name, for example wave",
+                ))
                 .desired_width(260.0),
         );
     }
@@ -447,7 +490,7 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
     section(ui, "Frames");
     ui.add(egui::DragValue::new(&mut f.frames).range(1..=MAX_FRAMES));
 
-    section(ui, "Name (optional)");
+    section(ui, tr("Name (optional)", "Name (optional)"));
     let default_name = format!("{current} {}", f.kind().name());
     ui.add(
         egui::TextEdit::singleline(&mut f.name)
@@ -456,7 +499,7 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
     );
 
     let valid = f.kind.is_some() || !f.custom.trim().is_empty();
-    let (ok, cancel) = buttons(ui, "Anlegen", valid);
+    let (ok, cancel) = buttons(ui, tr("Anlegen", "Create"), valid);
     if cancel {
         return Outcome::Close;
     }
@@ -469,14 +512,14 @@ fn new_animation(app: &mut App, ui: &mut egui::Ui, f: &mut NewAnimation) -> Outc
     let created = doc.create_animation(f.character, f.kind(), f.frames, &f.name);
     finish(app, created, |app, id| {
         app.select(id);
-        app.info("Animation angelegt");
+        app.info(tr("Animation angelegt", "Animation created"));
     })
 }
 
 fn rename(app: &mut App, ui: &mut egui::Ui, id: AssetId, name: &mut String) -> Outcome {
-    ui.heading(format!("{} umbenennen", id.kind.label()));
+    ui.heading(trf!("{} umbenennen", "Rename {}", id.kind.label()));
     ui.add(egui::TextEdit::singleline(name).desired_width(260.0));
-    let (ok, cancel) = buttons(ui, "Umbenennen", !name.trim().is_empty());
+    let (ok, cancel) = buttons(ui, tr("Umbenennen", "Rename"), !name.trim().is_empty());
     if cancel {
         return Outcome::Close;
     }
@@ -487,13 +530,13 @@ fn rename(app: &mut App, ui: &mut egui::Ui, id: AssetId, name: &mut String) -> O
         return Outcome::Close;
     };
     let renamed = doc.rename(id, name);
-    finish(app, renamed, |app, ()| app.info("Umbenannt"))
+    finish(app, renamed, |app, ()| app.info(tr("Umbenannt", "Renamed")))
 }
 
 fn rename_layer(app: &mut App, ui: &mut egui::Ui, layer: usize, name: &mut String) -> Outcome {
-    ui.heading("Ebene umbenennen");
+    ui.heading(tr("Ebene umbenennen", "Rename layer"));
     ui.add(egui::TextEdit::singleline(name).desired_width(260.0));
-    let (ok, cancel) = buttons(ui, "Umbenennen", !name.trim().is_empty());
+    let (ok, cancel) = buttons(ui, tr("Umbenennen", "Rename"), !name.trim().is_empty());
     if cancel {
         return Outcome::Close;
     }
@@ -507,17 +550,24 @@ fn rename_layer(app: &mut App, ui: &mut egui::Ui, layer: usize, name: &mut Strin
     let renamed = doc.edit(id, |s| {
         // Dieselben Regeln wie im MCP-Server, der Ebenen über ihren Namen findet.
         if new_name.len() > 64 {
-            return Err("Der Name darf höchstens 64 Zeichen lang sein".into());
+            return Err(tr(
+                "Der Name darf höchstens 64 Zeichen lang sein",
+                "The name may have at most 64 characters",
+            )
+            .into());
         }
         if s.layer_index(&new_name).is_some_and(|other| other != layer) {
-            return Err(format!("Eine Ebene namens „{new_name}“ gibt es schon"));
+            return Err(trf!(
+                "Eine Ebene namens „{new_name}“ gibt es schon",
+                "A layer named \"{new_name}\" already exists"
+            ));
         }
         s.rename_layer(layer, new_name.clone())
             .map_err(|e| e.to_string())
     });
     finish(app, renamed, |app, ()| {
         app.fix_selection();
-        app.info("Ebene umbenannt");
+        app.info(tr("Ebene umbenannt", "Layer renamed"));
     })
 }
 
@@ -526,17 +576,21 @@ fn delete(app: &mut App, ui: &mut egui::Ui, id: AssetId) -> Outcome {
         return Outcome::Close;
     };
     let name = doc.asset_name(id).unwrap_or_default().to_string();
-    ui.heading(format!("„{name}“ löschen?"));
+    ui.heading(trf!("„{name}“ löschen?", "Delete \"{name}\"?"));
     if id.kind == AssetKind::Character {
         let n = doc.project().animations_of(id.id).count();
         if n > 0 {
-            ui.label(format!(
-                "Mit der Figur werden auch ihre {n} Animationen gelöscht."
+            ui.label(trf!(
+                "Mit der Figur werden auch ihre {n} Animationen gelöscht.",
+                "Its {n} animations are deleted together with the character."
             ));
         }
     }
-    ui.label("Das lässt sich nicht rückgängig machen.");
-    let (ok, cancel) = buttons(ui, "Löschen", true);
+    ui.label(tr(
+        "Das lässt sich nicht rückgängig machen.",
+        "This cannot be undone.",
+    ));
+    let (ok, cancel) = buttons(ui, tr("Löschen", "Delete"), true);
     if cancel {
         return Outcome::Close;
     }
@@ -546,7 +600,7 @@ fn delete(app: &mut App, ui: &mut egui::Ui, id: AssetId) -> Outcome {
     let deleted = doc.delete(id);
     finish(app, deleted, |app, ()| {
         app.fix_selection();
-        app.info(format!("„{name}“ gelöscht"));
+        app.info(trf!("„{name}“ gelöscht", "\"{name}\" deleted"));
     })
 }
 
@@ -560,37 +614,37 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     };
     let (w, h, frames) = (s.width(), s.height(), s.frames().len());
     let name = doc.asset_name(id).unwrap_or_default().to_string();
-    ui.heading(format!("„{name}“ exportieren"));
+    ui.heading(trf!("„{name}“ exportieren", "Export \"{name}\""));
 
     section(ui, "Format");
     egui::Grid::new("export-formats")
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.weak("Einzelbilder");
+            ui.weak(tr("Einzelbilder", "Single images"));
             ui.horizontal(|ui| {
                 ui.radio_value(&mut f.kind, ExportKind::Png, "PNG")
-                    .on_hover_text("Verlustfrei, mit Transparenz");
-                ui.radio_value(&mut f.kind, ExportKind::PngIndexed, "PNG mit Palette")
+                    .on_hover_text(tr("Verlustfrei, mit Transparenz", "Lossless, with transparency"));
+                ui.radio_value(&mut f.kind, ExportKind::PngIndexed, tr("PNG mit Palette", "PNG with palette"))
                     .on_hover_text(
-                        "Dieselben Pixel, aber mit Farbtabelle gespeichert (PNG-8). Kleinere Datei, höchstens 256 Farben.",
+                        tr("Dieselben Pixel, aber mit Farbtabelle gespeichert (PNG-8). Kleinere Datei, höchstens 256 Farben.", "The same pixels, saved with a color table (PNG-8). Smaller file, at most 256 colors."),
                     );
                 ui.radio_value(&mut f.kind, ExportKind::Jpg, "JPG")
-                    .on_hover_text("Ohne Transparenz, leicht verlustbehaftet");
+                    .on_hover_text(tr("Ohne Transparenz, leicht verlustbehaftet", "No transparency, slightly lossy"));
             });
             ui.end_row();
             ui.weak("Animation");
             ui.horizontal(|ui| {
                 ui.radio_value(&mut f.kind, ExportKind::Sheet, "Spritesheet")
                     .on_hover_text(
-                        "Alle Frames in einem PNG, dazu eine JSON-Datei mit den Positionen",
+                        tr("Alle Frames in einem PNG, dazu eine JSON-Datei mit den Positionen", "All frames in one PNG, plus a JSON file with their positions"),
                     );
                 ui.radio_value(&mut f.kind, ExportKind::Gif, "GIF")
                     .on_hover_text(
-                        "Animiertes Bild, das überall abspielt. Bis 255 Farben bleiben exakt.",
+                        tr("Animiertes Bild, das überall abspielt. Bis 255 Farben bleiben exakt.", "Animated image that plays everywhere. Up to 255 colors stay exact."),
                     );
                 ui.radio_value(&mut f.kind, ExportKind::WebM, "WebM")
-                    .on_hover_text("Video mit Transparenz, braucht das Programm ffmpeg");
+                    .on_hover_text(tr("Video mit Transparenz, braucht das Programm ffmpeg", "Video with transparency, needs the program ffmpeg"));
             });
             ui.end_row();
         });
@@ -601,7 +655,7 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     if even_only && !f.scale.is_multiple_of(2) {
         f.scale = (f.scale + 1).min(MAX_SCALE);
     }
-    section(ui, "Vergrößerung");
+    section(ui, tr("Vergrößerung", "Scale"));
     ui.horizontal(|ui| {
         let lowest = if even_only { 2 } else { 1 };
         ui.add(
@@ -609,8 +663,9 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
                 .range(lowest..=MAX_SCALE)
                 .suffix("×"),
         );
-        ui.weak(format!(
+        ui.weak(trf!(
             "ein Frame wird {}×{} Pixel groß, ohne Weichzeichnen",
+            "one frame becomes {}×{} pixels, without blurring",
             w * f.scale,
             h * f.scale
         ));
@@ -625,32 +680,51 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     // Ein Video kennt keine Schleife, das entscheidet das Abspielprogramm.
     let timing = |ui: &mut egui::Ui, mentions_loop: bool| {
         ui.weak(if frames < 2 {
-            "Das Asset hat nur einen Frame, es entsteht ein Standbild."
+            tr(
+                "Das Asset hat nur einen Frame, es entsteht ein Standbild.",
+                "The asset has only one frame, so this gives a still image.",
+            )
         } else if !mentions_loop {
-            "Spielt mit den Frame-Dauern aus der Zeitleiste."
+            tr(
+                "Spielt mit den Frame-Dauern aus der Zeitleiste.",
+                "Plays with the frame durations from the timeline.",
+            )
         } else if looping {
-            "Spielt mit den Frame-Dauern aus der Zeitleiste, in Schleife."
+            tr(
+                "Spielt mit den Frame-Dauern aus der Zeitleiste, in Schleife.",
+                "Plays with the frame durations from the timeline, looping.",
+            )
         } else {
-            "Spielt mit den Frame-Dauern aus der Zeitleiste, einmal bis zum Ende."
+            tr(
+                "Spielt mit den Frame-Dauern aus der Zeitleiste, einmal bis zum Ende.",
+                "Plays with the frame durations from the timeline, once to the end.",
+            )
         });
     };
     match f.kind {
         ExportKind::Sheet => {
-            section(ui, "Spalten");
+            section(ui, tr("Spalten", "Columns"));
             ui.horizontal(|ui| {
                 ui.add(egui::DragValue::new(&mut f.columns).range(0..=frames as u32));
-                ui.weak("0 legt alle Frames in eine Zeile");
+                ui.weak(tr(
+                    "0 legt alle Frames in eine Zeile",
+                    "0 puts all frames in one row",
+                ));
             });
         }
         ExportKind::Png | ExportKind::PngIndexed | ExportKind::Jpg => {
             if frames > 1 {
                 section(ui, "Frames");
                 ui.horizontal(|ui| {
-                    ui.radio_value(&mut f.all_frames, true, format!("alle {frames} einzeln"));
+                    ui.radio_value(
+                        &mut f.all_frames,
+                        true,
+                        trf!("alle {frames} einzeln", "all {frames} separately"),
+                    );
                     ui.radio_value(
                         &mut f.all_frames,
                         false,
-                        format!("nur Frame {}", app.frame + 1),
+                        trf!("nur Frame {}", "only frame {}", app.frame + 1),
                     );
                 });
             }
@@ -658,12 +732,12 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
         ExportKind::Gif => {
             section(ui, "GIF");
             timing(ui, true);
-            ui.weak("GIF kennt nur ganz deckend oder ganz durchsichtig. Halbtransparente Pixel werden zu einem von beiden.");
+            ui.weak(tr("GIF kennt nur ganz deckend oder ganz durchsichtig. Halbtransparente Pixel werden zu einem von beiden.", "GIF only knows fully opaque or fully transparent. Half-transparent pixels become one of the two."));
         }
         ExportKind::WebM => {
             section(ui, "WebM");
             timing(ui, false);
-            ui.weak("Video-Kompression kann Farben um ein bis zwei Stufen verschieben. Für exakte Pixel nimm Spritesheet, PNG oder GIF.");
+            ui.weak(tr("Video-Kompression kann Farben um ein bis zwei Stufen verschieben. Für exakte Pixel nimm Spritesheet, PNG oder GIF.", "Video compression can shift colors by one or two steps. For exact pixels use sprite sheet, PNG or GIF."));
             let found = *f
                 .ffmpeg
                 .get_or_insert_with(|| pixel_core::video::find_ffmpeg().is_some());
@@ -671,30 +745,36 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("ffmpeg wird installiert. Windows zeigt den Fortschritt in einem eigenen Fenster; das kann ein paar Minuten dauern.");
+                    ui.label(tr("ffmpeg wird installiert. Windows zeigt den Fortschritt in einem eigenen Fenster; das kann ein paar Minuten dauern.", "ffmpeg is being installed. Windows shows the progress in its own window; this can take a few minutes."));
                 });
             } else if !found {
                 ui.add_space(4.0);
                 ui.colored_label(
                     ui.visuals().warn_fg_color,
-                    "Für WebM fehlt noch das kostenlose Programm ffmpeg.",
+                    tr(
+                        "Für WebM fehlt noch das kostenlose Programm ffmpeg.",
+                        "WebM still needs the free program ffmpeg.",
+                    ),
                 );
                 if pixel_core::video::CAN_INSTALL_FFMPEG {
                     ui.horizontal(|ui| {
                         install_ffmpeg = ui
-                            .button(RichText::new("ffmpeg jetzt installieren").strong())
+                            .button(RichText::new(tr("ffmpeg jetzt installieren", "Install ffmpeg now")).strong())
                             .on_hover_text(
-                                "Lädt ffmpeg über den Windows-Paketmanager winget herunter und richtet es ein. Danach geht der WebM-Export sofort, auch für Claude.",
+                                tr("Lädt ffmpeg über den Windows-Paketmanager winget herunter und richtet es ein. Danach geht der WebM-Export sofort, auch für Claude.", "Downloads ffmpeg with the Windows package manager winget and sets it up. After that WebM export works right away, also for Claude."),
                             )
                             .clicked();
-                        if ui.button("Erneut suchen").clicked() {
+                        if ui.button(tr("Erneut suchen", "Search again")).clicked() {
                             f.ffmpeg = None;
                         }
                     });
-                    ui.weak(pixel_core::video::FFMPEG_MANUAL);
+                    ui.weak(pixel_core::video::ffmpeg_manual());
                 } else {
-                    ui.weak("Installiere ffmpeg über die Paketverwaltung deines Systems.");
-                    if ui.button("Erneut suchen").clicked() {
+                    ui.weak(tr(
+                        "Installiere ffmpeg über die Paketverwaltung deines Systems.",
+                        "Install ffmpeg with your system's package manager.",
+                    ));
+                    if ui.button(tr("Erneut suchen", "Search again")).clicked() {
                         f.ffmpeg = None;
                     }
                 }
@@ -704,12 +784,12 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     if f.kind == ExportKind::Jpg {
         section(ui, "JPG");
         ui.horizontal(|ui| {
-            ui.label("Hintergrund");
+            ui.label(tr("Hintergrund", "Background"));
             ui.color_edit_button_srgb(&mut f.background);
             ui.add(
                 egui::DragValue::new(&mut f.quality)
                     .range(1..=100)
-                    .prefix("Qualität "),
+                    .prefix(tr("Qualität ", "Quality ")),
             );
         });
     }
@@ -720,15 +800,15 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     }
     if !f.written.is_empty() {
         ui.add_space(8.0);
-        ui.label(RichText::new("Exportiert:").strong());
+        ui.label(RichText::new(tr("Exportiert:", "Exported:")).strong());
         for path in f.written.iter().take(6) {
             ui.monospace(path.display().to_string());
         }
         if f.written.len() > 6 {
-            ui.weak(format!("und {} weitere", f.written.len() - 6));
+            ui.weak(trf!("und {} weitere", "and {} more", f.written.len() - 6));
         }
         if let Some(dir) = f.written.first().and_then(|p| p.parent()) {
-            if ui.button("Ordner öffnen").clicked() {
+            if ui.button(tr("Ordner öffnen", "Open folder")).clicked() {
                 help::open_folder(dir);
             }
         }
@@ -738,8 +818,10 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
     let mut go = false;
     let mut close = false;
     ui.horizontal(|ui| {
-        go = ui.button(RichText::new("Exportieren").strong()).clicked();
-        close = ui.button("Schließen").clicked();
+        go = ui
+            .button(RichText::new(tr("Exportieren", "Export")).strong())
+            .clicked();
+        close = ui.button(tr("Schließen", "Close")).clicked();
     });
     if close {
         return Outcome::Close;
@@ -766,17 +848,17 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
             Ok(out) => {
                 app.dialog_error = None;
                 if let Some(info) = out.gif.filter(|info| !info.exact) {
-                    f.note = Some(format!(
-                        "Das Bild hat mehr Farben, als ein GIF fasst. Sie wurden auf {} ähnliche Farben reduziert. Exakt bleiben Spritesheet und PNG.",
+                    f.note = Some(trf!(
+                        "Das Bild hat mehr Farben, als ein GIF fasst. Sie wurden auf {} ähnliche Farben reduziert. Exakt bleiben Spritesheet und PNG.", "The image has more colors than a GIF holds. They were reduced to {} similar colors. Sprite sheet and PNG stay exact.",
                         info.colors
                     ));
                 }
                 let n = out.files.len();
                 f.written = out.files;
                 app.info(if n == 1 {
-                    "1 Datei exportiert".to_string()
+                    tr("1 Datei exportiert", "1 file exported").to_string()
                 } else {
-                    format!("{n} Dateien exportiert")
+                    trf!("{n} Dateien exportiert", "{n} files exported")
                 });
             }
             Err(err) => app.dialog_error = Some(err),
@@ -793,7 +875,10 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
 fn copy_block(app: &mut App, ui: &mut egui::Ui, text: &str, button: &str, rows: usize) {
     if ui.button(button).clicked() {
         ui.ctx().copy_text(text.to_string());
-        app.info("In die Zwischenablage kopiert");
+        app.info(tr(
+            "In die Zwischenablage kopiert",
+            "Copied to the clipboard",
+        ));
     }
     let mut shown = text;
     ui.add(
@@ -808,71 +893,135 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
     ui.set_width(640.0);
     let project = app.doc.as_ref().map(|d| d.name().to_string());
     let info = ConnectInfo::detect(app.ws.home(), project.as_deref());
-    ui.heading("Mit Claude verbinden");
-    ui.label("Claude zeichnet über einen MCP-Server, und der steckt in diesem Programm: Mit der Angabe „--mcp“ gestartet, öffnet es kein Fenster, sondern arbeitet für Claude. Claude startet es so von selbst, sobald es einmal eingetragen ist. Beide arbeiten im selben Arbeitsordner. Deshalb siehst du hier nach kurzer Zeit, was Claude zeichnet, und Claude sieht, was du zeichnest.");
+    ui.heading(tr("Mit Claude verbinden", "Connect to Claude"));
+    ui.label(tr("Claude zeichnet über einen MCP-Server, und der steckt in diesem Programm: Mit der Angabe „--mcp“ gestartet, öffnet es kein Fenster, sondern arbeitet für Claude. Claude startet es so von selbst, sobald es einmal eingetragen ist. Beide arbeiten im selben Arbeitsordner. Deshalb siehst du hier nach kurzer Zeit, was Claude zeichnet, und Claude sieht, was du zeichnest.", "Claude draws through an MCP server, and that server is built into this program: started with \"--mcp\" it opens no window but works for Claude. Claude starts it like that by itself once it is set up. Both work in the same workspace folder, so you see here shortly what Claude draws, and Claude sees what you draw."));
     ui.add_space(6.0);
     egui::Grid::new("connect-facts")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Programm:");
+            ui.label(tr("Programm:", "Program:"));
             ui.monospace(info.server.display().to_string());
             ui.end_row();
-            ui.label("Arbeitsordner:");
+            ui.label(tr("Arbeitsordner:", "Workspace folder:"));
             ui.horizontal(|ui| {
                 ui.monospace(info.home.display().to_string());
-                if ui.small_button("öffnen").clicked() {
+                if ui.small_button(tr("öffnen", "open")).clicked() {
                     help::open_folder(&info.home);
                 }
             });
             ui.end_row();
         });
-    ui.weak("Die Angaben unten gelten für diesen Speicherort. Verschiebst du das Programm, trage es bei Claude neu ein.");
+    ui.weak(tr("Die Angaben unten gelten für diesen Speicherort. Verschiebst du das Programm, trage es bei Claude neu ein.", "The details below are for this location. If you move the program, set it up in Claude again."));
     ui.add_space(6.0);
 
     egui::ScrollArea::vertical()
         .max_height(430.0)
         .show(ui, |ui| {
-            egui::CollapsingHeader::new("1. Am einfachsten: Claude richtet es selbst ein")
+            egui::CollapsingHeader::new(tr("1. Am einfachsten: Claude richtet es selbst ein", "1. Easiest: Claude sets it up by itself"))
                 .default_open(true)
                 .show(ui, |ui| {
-                    ui.label("Kopiere diesen Text und schick ihn Claude. Er enthält alle Angaben. Das klappt überall, wo Claude auf deinem PC Befehle ausführen oder Dateien bearbeiten darf, zum Beispiel in Claude Code. Im normalen Chat ohne Zugriff auf deinen PC nimm stattdessen Weg 2.");
-                    copy_block(app, ui, &info.setup_prompt(), "Prompt kopieren", 8);
+                    ui.label(tr("Kopiere diesen Text und schick ihn Claude. Er enthält alle Angaben. Das klappt überall, wo Claude auf deinem PC Befehle ausführen oder Dateien bearbeiten darf, zum Beispiel in Claude Code. Im normalen Chat ohne Zugriff auf deinen PC nimm stattdessen Weg 2.", "Copy this text and send it to Claude. It contains all details. This works wherever Claude may run commands or edit files on your PC, for example in Claude Code. In a normal chat without access to your PC use way 2 instead."));
+                    copy_block(app, ui, &info.setup_prompt(), tr("Prompt kopieren", "Copy prompt"), 8);
                 });
-            egui::CollapsingHeader::new("2. Claude Desktop von Hand").show(ui, |ui| {
-                ui.label("1. In Claude Desktop: Einstellungen → Entwickler → Konfiguration bearbeiten. Es öffnet sich die Datei claude_desktop_config.json.");
-                ui.label("2. Diesen Inhalt eintragen. Steht dort schon ein Abschnitt \"mcpServers\", nur den Eintrag \"pixelart\" dazusetzen, mit einem Komma getrennt.");
-                copy_block(app, ui, &info.desktop_json(), "Eintrag kopieren", 9);
-                ui.label("3. Claude Desktop ganz beenden, auch im Infobereich neben der Uhr, und neu starten.");
+            egui::CollapsingHeader::new(tr("2. Claude Desktop von Hand", "2. Claude Desktop by hand")).show(ui, |ui| {
+                ui.label(tr("1. In Claude Desktop: Einstellungen › Entwickler › Konfiguration bearbeiten. Es öffnet sich die Datei claude_desktop_config.json.", "1. In Claude Desktop: Settings › Developer › Edit Config. This opens the file claude_desktop_config.json."));
+                ui.label(tr("2. Diesen Inhalt eintragen. Steht dort schon ein Abschnitt \"mcpServers\", nur den Eintrag \"pixelart\" dazusetzen, mit einem Komma getrennt.", "2. Enter this content. If there already is a section \"mcpServers\", only add the entry \"pixelart\", separated by a comma."));
+                copy_block(app, ui, &info.desktop_json(), tr("Eintrag kopieren", "Copy entry"), 9);
+                ui.label(tr("3. Claude Desktop ganz beenden, auch im Infobereich neben der Uhr, und neu starten.", "3. Quit Claude Desktop completely, also in the system tray next to the clock, and start it again."));
             });
-            egui::CollapsingHeader::new("3. Claude Code von Hand").show(ui, |ui| {
-                ui.label("Diesen Befehl einmal in der Eingabeaufforderung ausführen:");
-                copy_block(app, ui, &info.claude_code_command(), "Befehl kopieren", 2);
+            egui::CollapsingHeader::new(tr("3. Claude Code von Hand", "3. Claude Code by hand")).show(ui, |ui| {
+                ui.label(tr("Diesen Befehl einmal in der Eingabeaufforderung ausführen:", "Run this command once in a command prompt:"));
+                copy_block(app, ui, &info.claude_code_command(), tr("Befehl kopieren", "Copy command"), 2);
             });
-            egui::CollapsingHeader::new("4. Andere MCP-Programme").show(ui, |ui| {
-                ui.label("Jedes Programm, das lokale MCP-Server über stdio starten kann, funktioniert. Einzutragen sind immer dieselben Angaben:");
-                let text = format!(
-                    "Programm:  {}\nArgumente: {} --home \"{}\"\nÜbertragung: stdio",
+            egui::CollapsingHeader::new(tr("4. Andere MCP-Programme", "4. Other MCP programs")).show(ui, |ui| {
+                ui.label(tr("Jedes Programm, das lokale MCP-Server über stdio starten kann, funktioniert. Einzutragen sind immer dieselben Angaben:", "Every program that can start local MCP servers over stdio works. You always enter the same details:"));
+                let text = trf!(
+                    "Programm:  {}\nArgumente: {} --home \"{}\"\nÜbertragung: stdio", "Program:   {}\nArguments: {} --home \"{}\"\nTransport: stdio",
                     info.server.display(),
                     help::MCP_FLAG,
                     info.home.display()
                 );
-                copy_block(app, ui, &text, "Angaben kopieren", 3);
+                copy_block(app, ui, &text, tr("Angaben kopieren", "Copy details"), 3);
             });
-            egui::CollapsingHeader::new("5. Prompt zum Loslegen, wenn die Verbindung steht")
+            egui::CollapsingHeader::new(tr("5. Prompt zum Loslegen, wenn die Verbindung steht", "5. Prompt to get started once connected"))
                 .show(ui, |ui| {
-                    ui.label("Dieser Text erklärt Claude, wie es mit dem Studio arbeitet. Schick ihn am Anfang eines Gesprächs und schreib darunter, was gezeichnet werden soll.");
-                    copy_block(app, ui, &info.usage_prompt(), "Prompt kopieren", 8);
+                    ui.label(tr("Dieser Text erklärt Claude, wie es mit dem Studio arbeitet. Schick ihn am Anfang eines Gesprächs und schreib darunter, was gezeichnet werden soll.", "This text explains to Claude how to work with the studio. Send it at the start of a conversation and write below what should be drawn."));
+                    copy_block(app, ui, &info.usage_prompt(), tr("Prompt kopieren", "Copy prompt"), 8);
                 });
         });
     ui.add_space(8.0);
-    if ui.button("Schließen").clicked() {
+    if ui.button(tr("Schließen", "Close")).clicked() {
         return Outcome::Close;
     }
     Outcome::Keep
 }
 
+fn settings(app: &mut App, ui: &mut egui::Ui, f: &mut SettingsForm) -> Outcome {
+    ui.set_width(520.0);
+    ui.heading(tr("Einstellungen", "Settings"));
+
+    section(ui, tr("Speicherordner", "Save folder"));
+    ui.label(tr(
+        "Hier liegen deine Projekte, und hierhin wird exportiert.",
+        "Your projects live here, and exports are written here.",
+    ));
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(&mut f.home).desired_width(360.0));
+        if ui.button(tr("Durchsuchen…", "Browse…")).clicked() {
+            let mut dialog =
+                rfd::FileDialog::new().set_title(tr("Speicherordner wählen", "Choose save folder"));
+            let current = PathBuf::from(f.home.trim());
+            if current.is_dir() {
+                dialog = dialog.set_directory(&current);
+            }
+            if let Some(dir) = dialog.pick_folder() {
+                f.home = dir.display().to_string();
+            }
+        }
+    });
+    let changed = std::path::Path::new(f.home.trim()) != app.ws.home();
+    if changed {
+        ui.weak(tr(
+            "Nach dem Wechsel öffnet sich das zuletzt bearbeitete Projekt im neuen Ordner. Claude arbeitet weiter im alten Ordner, bis du die Verbindung neu einträgst (Hilfe › Mit Claude verbinden).",
+            "After switching, the most recently edited project in the new folder opens. Claude keeps working in the old folder until you set up the connection again (Help › Connect to Claude).",
+        ));
+    }
+    if std::env::var_os("PIXELART_HOME").is_some_and(|v| !v.is_empty()) {
+        ui.colored_label(
+            ui.visuals().warn_fg_color,
+            tr(
+                "Die Umgebungsvariable PIXELART_HOME ist gesetzt. Sie gilt beim nächsten Start vor dieser Einstellung.",
+                "The environment variable PIXELART_HOME is set. At the next start it takes precedence over this setting.",
+            ),
+        );
+    }
+
+    section(ui, tr("Sprache", "Language"));
+    ui.horizontal(|ui| {
+        for lang in Lang::ALL {
+            ui.radio_value(&mut f.lang, lang, lang.name());
+        }
+    });
+    ui.weak(tr(
+        "Gilt sofort für das ganze Programm. Claude bekommt seine Werkzeuge immer auf Englisch.",
+        "Applies right away to the whole program. Claude always gets its tools in English.",
+    ));
+
+    let (ok, cancel) = buttons(ui, tr("Übernehmen", "Apply"), !f.home.trim().is_empty());
+    if cancel {
+        return Outcome::Close;
+    }
+    if !ok {
+        return Outcome::Keep;
+    }
+    let result = app.apply_settings(PathBuf::from(f.home.trim()), f.lang);
+    finish(app, result, |app, ()| {
+        app.info(tr("Einstellungen gespeichert", "Settings saved"));
+    })
+}
+
 fn shortcuts(ui: &mut egui::Ui) -> Outcome {
-    ui.heading("Tastenkürzel");
+    ui.heading(tr("Tastenkürzel", "Keyboard shortcuts"));
     egui::Grid::new("shortcuts")
         .num_columns(2)
         .spacing([24.0, 4.0])
@@ -883,17 +1032,47 @@ fn shortcuts(ui: &mut egui::Ui) -> Outcome {
                 ui.end_row();
             }
             let rows = [
-                ("Rechte Maustaste", "Farbe aufnehmen"),
-                ("Mausrad", "Vergrößern und verkleinern"),
-                ("+  −  0", "Vergrößern, verkleinern, einpassen"),
-                ("Leertaste + Ziehen", "Ausschnitt verschieben"),
-                ("Mittlere Maustaste", "Ausschnitt verschieben"),
-                ("←  →", "Vorheriger und nächster Frame"),
-                ("Eingabetaste", "Animation abspielen und anhalten"),
-                ("Strg+Z", "Rückgängig"),
-                ("Strg+Y", "Wiederholen"),
-                ("Strg+E", "Exportieren"),
-                ("Strg+I", "Bild importieren"),
+                (
+                    tr("Rechte Maustaste", "Right mouse button"),
+                    tr("Farbe aufnehmen", "Pick color"),
+                ),
+                (
+                    tr("Mausrad", "Mouse wheel"),
+                    tr("Vergrößern und verkleinern", "Zoom in and out"),
+                ),
+                (
+                    "+  −  0",
+                    tr(
+                        "Vergrößern, verkleinern, einpassen",
+                        "Zoom in, zoom out, fit",
+                    ),
+                ),
+                (
+                    tr("Leertaste + Ziehen", "Space + drag"),
+                    tr("Ausschnitt verschieben", "Pan the view"),
+                ),
+                (
+                    tr("Mittlere Maustaste", "Middle mouse button"),
+                    tr("Ausschnitt verschieben", "Pan the view"),
+                ),
+                (
+                    tr("Pfeil links / rechts", "Left / right arrow"),
+                    tr("Vorheriger und nächster Frame", "Previous and next frame"),
+                ),
+                (
+                    tr("Eingabetaste", "Enter"),
+                    tr(
+                        "Animation abspielen und anhalten",
+                        "Play and pause the animation",
+                    ),
+                ),
+                (tr("Strg+Z", "Ctrl+Z"), tr("Rückgängig", "Undo")),
+                (tr("Strg+Y", "Ctrl+Y"), tr("Wiederholen", "Redo")),
+                (tr("Strg+E", "Ctrl+E"), tr("Exportieren", "Export")),
+                (
+                    tr("Strg+I", "Ctrl+I"),
+                    tr("Bild importieren", "Import image"),
+                ),
             ];
             for (key, what) in rows {
                 ui.monospace(key);
@@ -902,7 +1081,7 @@ fn shortcuts(ui: &mut egui::Ui) -> Outcome {
             }
         });
     ui.add_space(8.0);
-    if ui.button("Schließen").clicked() {
+    if ui.button(tr("Schließen", "Close")).clicked() {
         return Outcome::Close;
     }
     Outcome::Keep
@@ -912,15 +1091,21 @@ fn about(app: &mut App, ui: &mut egui::Ui) -> Outcome {
     ui.heading("PixelArt Studio");
     ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
     ui.add_space(6.0);
-    ui.label("Ein Editor für echte Pixel-Art, den auch Claude über MCP bedienen kann.");
-    ui.label("Gespeichert wird automatisch nach jeder Änderung.");
+    ui.label(tr(
+        "Ein Editor für echte Pixel-Art, den auch Claude über MCP bedienen kann.",
+        "An editor for real pixel art that Claude can also use through MCP.",
+    ));
+    ui.label(tr(
+        "Gespeichert wird automatisch nach jeder Änderung.",
+        "Everything is saved automatically after each change.",
+    ));
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.label("Arbeitsordner:");
+        ui.label(tr("Arbeitsordner:", "Workspace folder:"));
         ui.monospace(app.ws.home().display().to_string());
     });
     ui.add_space(8.0);
-    if ui.button("Schließen").clicked() {
+    if ui.button(tr("Schließen", "Close")).clicked() {
         return Outcome::Close;
     }
     Outcome::Keep

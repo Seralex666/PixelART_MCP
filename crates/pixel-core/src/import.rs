@@ -47,15 +47,24 @@ pub struct Picture {
 pub fn read(path: &Path) -> Result<Picture> {
     let unreadable = |err: std::io::Error| {
         Error::Import(if err.kind() == std::io::ErrorKind::NotFound {
-            format!("Die Datei {} gibt es nicht", path.display())
+            crate::trf!(
+                "Die Datei {} gibt es nicht",
+                "The file {} does not exist",
+                path.display()
+            )
         } else {
-            format!("{} lässt sich nicht lesen: {err}", path.display())
+            crate::trf!(
+                "{} lässt sich nicht lesen: {err}",
+                "{} cannot be read: {err}",
+                path.display()
+            )
         })
     };
     let size = std::fs::metadata(path).map_err(unreadable)?.len();
     if size > MAX_FILE_BYTES {
-        return fail(format!(
+        return fail(crate::trf!(
             "Die Datei ist {} MB groß, erlaubt sind {} MB",
+            "The file is {} MB, at most {} MB are allowed",
             size / (1024 * 1024),
             MAX_FILE_BYTES / (1024 * 1024)
         ));
@@ -68,8 +77,9 @@ pub fn read(path: &Path) -> Result<Picture> {
 /// Frame je Bild samt Dauer, alles andere einen einzelnen Frame.
 pub fn decode(bytes: &[u8]) -> Result<Picture> {
     let unreadable = |err: image::ImageError| {
-        Error::Import(format!(
-            "Die Datei ist kein lesbares PNG, JPG oder GIF ({err})"
+        Error::Import(crate::trf!(
+            "Die Datei ist kein lesbares PNG, JPG oder GIF ({err})",
+            "The file is not a readable PNG, JPG or GIF ({err})"
         ))
     };
     let mut limits = image::Limits::default();
@@ -92,12 +102,16 @@ pub fn decode(bytes: &[u8]) -> Result<Picture> {
         for frame in decoder.into_frames() {
             let frame = frame.map_err(unreadable)?;
             if frames.len() == MAX_FRAMES {
-                return fail(format!(
-                    "Das GIF hat mehr als {MAX_FRAMES} Frames, so viele übernimmt ein Import höchstens"
+                return fail(crate::trf!(
+                    "Das GIF hat mehr als {MAX_FRAMES} Frames, so viele übernimmt ein Import höchstens",
+                    "The GIF has more than {MAX_FRAMES} frames, which is the most an import takes"
                 ));
             }
             if per_frame * (frames.len() as u64 + 1) > MAX_SOURCE_PIXELS {
-                return fail("Das GIF ist zu groß: zu viele Frames für diese Bildgröße");
+                return fail(crate::lang::tr(
+                    "Das GIF ist zu groß: zu viele Frames für diese Bildgröße",
+                    "The GIF is too large: too many frames for this picture size",
+                ));
             }
             let (ms, per) = frame.delay().numer_denom_ms();
             let ms = ms.checked_div(per).unwrap_or(0);
@@ -112,7 +126,10 @@ pub fn decode(bytes: &[u8]) -> Result<Picture> {
             });
         }
         if frames.is_empty() {
-            return fail("Das GIF enthält kein Bild");
+            return fail(crate::lang::tr(
+                "Das GIF enthält kein Bild",
+                "The GIF contains no picture",
+            ));
         }
         let timed = frames.len() > 1;
         return Ok(Picture {
@@ -182,9 +199,11 @@ impl Picture {
             return Ok(self.clone());
         }
         if !self.width.is_multiple_of(factor) || !self.height.is_multiple_of(factor) {
-            return fail(format!(
+            return fail(crate::trf!(
                 "{}×{} lässt sich nicht glatt durch {factor} teilen",
-                self.width, self.height
+                "{}×{} cannot be divided evenly by {factor}",
+                self.width,
+                self.height
             ));
         }
         let (w, h) = (self.width / factor, self.height / factor);
@@ -213,22 +232,28 @@ impl Picture {
     /// von links oben.
     pub fn split(&self, cell_w: u32, cell_h: u32) -> Result<Picture> {
         if self.frames.len() != 1 {
-            return fail("Die Datei hat schon mehrere Frames und lässt sich nicht zusätzlich als Spritesheet teilen");
+            return fail(crate::lang::tr(
+                "Die Datei hat schon mehrere Frames und lässt sich nicht zusätzlich als Spritesheet teilen",
+                "The file already has several frames and cannot also be split as a sprite sheet",
+            ));
         }
         if cell_w == 0
             || cell_h == 0
             || !self.width.is_multiple_of(cell_w)
             || !self.height.is_multiple_of(cell_h)
         {
-            return fail(format!(
+            return fail(crate::trf!(
                 "Ein Bild von {}×{} lässt sich nicht in Frames von {cell_w}×{cell_h} teilen",
-                self.width, self.height
+                "A {}×{} picture cannot be split into frames of {cell_w}×{cell_h}",
+                self.width,
+                self.height
             ));
         }
         let (columns, rows) = (self.width / cell_w, self.height / cell_h);
         if (columns * rows) as usize > MAX_FRAMES {
-            return fail(format!(
+            return fail(crate::trf!(
                 "Das ergäbe {} Frames, erlaubt sind {MAX_FRAMES}",
+                "That would give {} frames, {MAX_FRAMES} are allowed",
                 columns * rows
             ));
         }
@@ -273,8 +298,9 @@ impl Picture {
     /// Baut aus den Frames ein Sprite mit einer Ebene.
     pub fn to_sprite(&self, depth: ColorDepth, colors: Colors) -> Result<(Sprite, Report)> {
         if self.frames.len() > MAX_FRAMES {
-            return fail(format!(
+            return fail(crate::trf!(
                 "Die Datei hat {} Frames, erlaubt sind {MAX_FRAMES}",
+                "The file has {} frames, {MAX_FRAMES} are allowed",
                 self.frames.len()
             ));
         }
@@ -438,8 +464,9 @@ pub fn prepare(picture: &Picture, options: Options) -> Result<Prepared> {
                 || !small.width.is_multiple_of(columns)
                 || !small.height.is_multiple_of(rows)
             {
-                return fail(format!(
+                return fail(crate::trf!(
                     "Ein Bild von {}×{} lässt sich nicht in {columns} Spalten und {rows} Zeilen teilen",
+                    "A {}×{} picture cannot be split into {columns} columns and {rows} rows",
                     small.width, small.height
                 ));
             }
@@ -563,8 +590,9 @@ pub fn add_animation(
     let character = project.character(character_id)?;
     let (w, h) = character.size();
     if (picture.width, picture.height) != (w, h) {
-        return fail(format!(
+        return fail(crate::trf!(
             "Die Frames sind {}×{} Pixel groß, die Figur „{}“ aber {w}×{h}. Eine Animation hat immer die Größe ihrer Figur.",
+            "The frames are {}×{} pixels, but the character \"{}\" is {w}×{h}. An animation always has the size of its character.",
             picture.width, picture.height, character.name
         ));
     }
@@ -577,8 +605,9 @@ pub fn add_animation(
             if !c.is_transparent() && !character.palette().contains(c) && !missing.contains(&c) {
                 missing.push(c);
                 if before + missing.len() > Palette::MAX_COLORS {
-                    return fail(format!(
+                    return fail(crate::trf!(
                         "Die Animation bringt mehr neue Farben mit, als in die Palette der Figur passen (sie hat {before} von {} Farben). Lass die Farben stattdessen an die Palette der Figur anpassen.",
+                        "The animation brings more new colors than fit into the character's palette (it has {before} of {} colors). Let the colors snap to the character's palette instead.",
                         Palette::MAX_COLORS
                     ));
                 }

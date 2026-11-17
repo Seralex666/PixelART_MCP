@@ -1,13 +1,17 @@
 //! Das Hauptfenster: Zustand des Editors und die Leisten rund um die Leinwand.
 
 use crate::canvas;
-use crate::dialogs::{self, Dialog, ExportForm, NewAnimation, NewSprite};
+use crate::dialogs::{self, Dialog, ExportForm, NewAnimation, NewSprite, SettingsForm};
 use crate::doc::{AssetEntry, AssetId, AssetKind, Doc, Res};
 use crate::help;
+use crate::icons::Icons;
 use crate::import_dialog::ImportForm;
+use crate::settings::Settings;
 use crate::tools::{Brush, Stroke, Tool, MAX_BRUSH};
 use eframe::egui::{self, Color32, Key, RichText, Sense, StrokeKind};
 use pixel_core::draw::{self, Target};
+use pixel_core::lang::{tr, Lang};
+use pixel_core::trf;
 use pixel_core::{Rgba, Sprite, Workspace};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -71,6 +75,8 @@ pub struct App {
     /// Läuft gerade eine Installation von ffmpeg, kommt hier ihr Ergebnis an.
     ffmpeg_install: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     shot: Option<Shot>,
+    pub settings: Settings,
+    icons: Icons,
 }
 
 /// Bildschirmfoto für automatische Prüfungen (`PIXELART_SHOT=<datei.png>`).
@@ -82,7 +88,7 @@ struct Shot {
 }
 
 impl App {
-    pub fn new(ws: Workspace, project: Option<String>) -> Self {
+    pub fn new(ws: Workspace, project: Option<String>, settings: Settings) -> Self {
         let mut app = Self {
             projects: ws.project_names(),
             ws,
@@ -122,21 +128,15 @@ impl App {
                 requested: false,
                 done: Arc::new(AtomicBool::new(false)),
             }),
+            settings,
+            icons: Icons::default(),
         };
-        // Das gewünschte, sonst das zuletzt bearbeitete Projekt öffnen.
-        let latest = project.or_else(|| {
-            app.projects
-                .iter()
-                .max_by_key(|name| app.ws.modified(name))
-                .cloned()
-        });
-        if let Some(name) = latest {
-            app.open_project(&name);
-        }
+        app.open_latest(project);
         match std::env::var("PIXELART_SHOT_DIALOG").as_deref() {
             Ok("connect") => app.dialog = Dialog::Connect,
             Ok("export") => app.dialog = Dialog::Export(ExportForm::default()),
             Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
+            Ok("settings") => app.dialog = Dialog::Settings(SettingsForm::new(&app)),
             Ok(other) => {
                 // „import:<datei>“ öffnet den Import-Dialog mit dieser Datei.
                 if let Some(path) = other.strip_prefix("import:") {
@@ -190,9 +190,55 @@ impl App {
                 self.sel = None;
                 self.fix_selection();
                 self.fit_color();
-                self.info(format!("Projekt „{name}“ geöffnet"));
+                self.info(trf!(
+                    "Projekt „{name}“ geöffnet",
+                    "Project \"{name}\" opened"
+                ));
             }
-            Err(err) => self.error(format!("Projekt „{name}“ lässt sich nicht öffnen: {err}")),
+            Err(err) => self.error(trf!(
+                "Projekt „{name}“ lässt sich nicht öffnen: {err}",
+                "Project \"{name}\" cannot be opened: {err}"
+            )),
+        }
+    }
+
+    /// Übernimmt Speicherordner und Sprache aus dem Einstellungs-Dialog und speichert sie.
+    pub fn apply_settings(&mut self, home: std::path::PathBuf, lang: Lang) -> Res<()> {
+        if home != self.ws.home() {
+            let ws = Workspace::open(&home).map_err(|err| {
+                trf!(
+                    "Der Ordner {} lässt sich nicht als Speicherordner nutzen: {err}",
+                    "The folder {} cannot be used as save folder: {err}",
+                    home.display()
+                )
+            })?;
+            self.ws = ws;
+            self.doc = None;
+            self.sel = None;
+            self.projects = self.ws.project_names();
+            self.open_latest(None);
+        }
+        pixel_core::lang::set(lang);
+        self.settings.lang = lang;
+        // Nur ein Ordner, der vom Standard abweicht, wird gemerkt. So folgt das
+        // Programm dem Standard, falls der sich ändert (etwa ein „Projekte“-Ordner
+        // neben der exe).
+        let default = Settings { home: None, lang }.effective_home();
+        self.settings.home =
+            (default.as_deref() != Some(self.ws.home())).then(|| self.ws.home().to_path_buf());
+        self.settings.save()
+    }
+
+    /// Öffnet das gewünschte, sonst das zuletzt bearbeitete Projekt.
+    fn open_latest(&mut self, project: Option<String>) {
+        let latest = project.or_else(|| {
+            self.projects
+                .iter()
+                .max_by_key(|name| self.ws.modified(name))
+                .cloned()
+        });
+        if let Some(name) = latest {
+            self.open_project(&name);
         }
     }
 
@@ -259,7 +305,11 @@ impl App {
         match result {
             Ok(Some(id)) => {
                 self.select(id);
-                self.info(if redo { "Wiederholt" } else { "Rückgängig" });
+                self.info(if redo {
+                    tr("Wiederholt", "Redone")
+                } else {
+                    tr("Rückgängig", "Undone")
+                });
             }
             Ok(None) => {}
             Err(err) => self.error(err),
@@ -296,7 +346,7 @@ impl App {
         });
         self.ffmpeg_install = Some(receiver);
         self.dialog_error = None;
-        self.info("ffmpeg wird installiert …");
+        self.info(tr("ffmpeg wird installiert …", "Installing ffmpeg …"));
     }
 
     fn poll_ffmpeg_install(&mut self) {
@@ -307,9 +357,11 @@ impl App {
         let outcome = match receiver.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => {
-                Err("Die Installation von ffmpeg wurde unerwartet beendet.".to_string())
-            }
+            Err(TryRecvError::Disconnected) => Err(tr(
+                "Die Installation von ffmpeg wurde unerwartet beendet.",
+                "The installation of ffmpeg ended unexpectedly.",
+            )
+            .to_string()),
         };
         self.ffmpeg_install = None;
         // Der Export-Dialog soll danach neu nachsehen, ob ffmpeg da ist.
@@ -317,7 +369,11 @@ impl App {
             form.ffmpeg = None;
         }
         match outcome {
-            Ok(path) => self.info(format!("ffmpeg ist installiert: {}", path.display())),
+            Ok(path) => self.info(trf!(
+                "ffmpeg ist installiert: {}",
+                "ffmpeg is installed: {}",
+                path.display()
+            )),
             Err(err) => {
                 if matches!(self.dialog, Dialog::Export(_)) {
                     self.dialog_error = Some(err.clone());
@@ -337,7 +393,10 @@ impl App {
             if let Some(doc) = &mut self.doc {
                 if doc.poll(self.sel) {
                     self.fix_selection();
-                    self.info("Von außen geändert (zum Beispiel durch Claude), neu geladen");
+                    self.info(tr(
+                        "Von außen geändert (zum Beispiel durch Claude), neu geladen",
+                        "Changed from outside (for example by Claude), reloaded",
+                    ));
                 }
             }
         }
@@ -473,79 +532,110 @@ impl App {
             .as_ref()
             .is_some_and(|d| !d.project().characters.is_empty());
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("Datei", |ui| {
-                if ui.button("Neues Projekt…").clicked() {
+            ui.menu_button(tr("Datei", "File"), |ui| {
+                if ui.button(tr("Neues Projekt…", "New project…")).clicked() {
                     self.open_dialog(Dialog::NewProject {
                         name: String::new(),
                     });
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(has_doc, egui::Button::new("Neue Figur…"))
+                    .add_enabled(
+                        has_doc,
+                        egui::Button::new(tr("Neue Figur…", "New character…")),
+                    )
                     .clicked()
                 {
                     self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
                 }
                 if ui
-                    .add_enabled(has_character, egui::Button::new("Neue Animation…"))
+                    .add_enabled(
+                        has_character,
+                        egui::Button::new(tr("Neue Animation…", "New animation…")),
+                    )
                     .clicked()
                 {
                     self.new_animation_dialog(None);
                 }
                 if ui
-                    .add_enabled(has_doc, egui::Button::new("Neues Bild…"))
+                    .add_enabled(has_doc, egui::Button::new(tr("Neues Bild…", "New image…")))
                     .clicked()
                 {
                     self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(has_doc, egui::Button::new("Bild importieren…  Strg+I"))
+                    .add_enabled(
+                        has_doc,
+                        egui::Button::new(tr("Bild importieren…  Strg+I", "Import image…  Ctrl+I")),
+                    )
                     .clicked()
                 {
                     self.import_dialog(None);
                 }
                 if ui
-                    .add_enabled(has_sel, egui::Button::new("Exportieren…  Strg+E"))
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Exportieren…  Strg+E", "Export…  Ctrl+E")),
+                    )
                     .clicked()
                 {
                     self.open_dialog(Dialog::Export(ExportForm::default()));
                 }
-                if ui.button("Arbeitsordner öffnen").clicked() {
+                if ui
+                    .button(tr("Arbeitsordner öffnen", "Open workspace folder"))
+                    .clicked()
+                {
                     help::open_folder(self.ws.home());
                 }
+                if ui.button(tr("Einstellungen…", "Settings…")).clicked() {
+                    let form = SettingsForm::new(self);
+                    self.open_dialog(Dialog::Settings(form));
+                }
                 ui.separator();
-                if ui.button("Beenden").clicked() {
+                if ui.button(tr("Beenden", "Quit")).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("Bearbeiten", |ui| {
+            ui.menu_button(tr("Bearbeiten", "Edit"), |ui| {
                 let (can_undo, can_redo) = self
                     .doc
                     .as_ref()
                     .map_or((false, false), |d| (d.can_undo(), d.can_redo()));
                 if ui
-                    .add_enabled(can_undo, egui::Button::new("Rückgängig  Strg+Z"))
+                    .add_enabled(
+                        can_undo,
+                        egui::Button::new(tr("Rückgängig  Strg+Z", "Undo  Ctrl+Z")),
+                    )
                     .clicked()
                 {
                     self.undo(false);
                 }
                 if ui
-                    .add_enabled(can_redo, egui::Button::new("Wiederholen  Strg+Y"))
+                    .add_enabled(
+                        can_redo,
+                        egui::Button::new(tr("Wiederholen  Strg+Y", "Redo  Ctrl+Y")),
+                    )
                     .clicked()
                 {
                     self.undo(true);
                 }
                 ui.separator();
                 if ui
-                    .add_enabled(has_sel, egui::Button::new("Ebene spiegeln"))
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Ebene spiegeln", "Mirror layer")),
+                    )
                     .clicked()
                 {
                     let t = self.target();
                     self.edit(|s| draw::flip_horizontal(s, t).map_err(|e| e.to_string()));
                 }
                 if ui
-                    .add_enabled(has_sel, egui::Button::new("Ebene leeren"))
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Ebene leeren", "Clear layer")),
+                    )
                     .clicked()
                 {
                     let t = self.target();
@@ -556,38 +646,55 @@ impl App {
                     });
                 }
             });
-            ui.menu_button("Ansicht", |ui| {
-                ui.checkbox(&mut self.grid, "Raster");
-                ui.checkbox(&mut self.onion, "Zwiebelhaut (vorheriger Frame)");
+            ui.menu_button(tr("Ansicht", "View"), |ui| {
+                ui.checkbox(&mut self.grid, tr("Raster", "Grid"));
+                ui.checkbox(
+                    &mut self.onion,
+                    tr(
+                        "Zwiebelhaut (vorheriger Frame)",
+                        "Onion skin (previous frame)",
+                    ),
+                );
                 ui.separator();
-                if ui.button("Vergrößern  +").clicked() {
+                if ui.button(tr("Vergrößern  +", "Zoom in  +")).clicked() {
                     self.set_zoom(1);
                 }
-                if ui.button("Verkleinern  −").clicked() {
+                if ui.button(tr("Verkleinern  −", "Zoom out  −")).clicked() {
                     self.set_zoom(-1);
                 }
-                if ui.button("Einpassen  0").clicked() {
+                if ui.button(tr("Einpassen  0", "Fit  0")).clicked() {
                     self.view.fit = true;
                 }
             });
-            ui.menu_button("Hilfe", |ui| {
-                if ui.button("Mit Claude verbinden…").clicked() {
+            ui.menu_button(tr("Hilfe", "Help"), |ui| {
+                if ui
+                    .button(tr("Mit Claude verbinden…", "Connect to Claude…"))
+                    .clicked()
+                {
                     self.open_dialog(Dialog::Connect);
                 }
-                if ui.button("Tastenkürzel").clicked() {
+                if ui
+                    .button(tr("Tastenkürzel", "Keyboard shortcuts"))
+                    .clicked()
+                {
                     self.open_dialog(Dialog::Shortcuts);
                 }
-                if ui.button("Über PixelArt Studio").clicked() {
+                if ui
+                    .button(tr("Über PixelArt Studio", "About PixelArt Studio"))
+                    .clicked()
+                {
                     self.open_dialog(Dialog::About);
                 }
             });
 
             ui.separator();
-            ui.label("Projekt:");
+            ui.label(tr("Projekt:", "Project:"));
             let current = self
                 .doc
                 .as_ref()
-                .map_or("(keins)".to_string(), |d| d.name().to_string());
+                .map_or(tr("(keins)", "(none)").to_string(), |d| {
+                    d.name().to_string()
+                });
             let mut open = None;
             egui::ComboBox::from_id_salt("project")
                 .selected_text(current.clone())
@@ -614,7 +721,10 @@ impl App {
     /// Öffnet den Import-Dialog, auf Wunsch gleich mit einer Datei.
     pub fn import_dialog(&mut self, path: Option<std::path::PathBuf>) {
         let Some(doc) = &self.doc else {
-            self.error("Lege erst ein Projekt an, dann lassen sich Bilder importieren");
+            self.error(tr(
+                "Lege erst ein Projekt an, dann lassen sich Bilder importieren",
+                "Create a project first, then images can be imported",
+            ));
             return;
         };
         // Vorauswahl für Animationen: die Figur, an der gerade gearbeitet wird.
@@ -647,34 +757,54 @@ impl App {
     fn tool_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             for tool in Tool::ALL {
-                ui.selectable_value(&mut self.brush.tool, tool, tool.label())
-                    .on_hover_text(format!("Taste {}", tool.key()));
+                let icon = self.icons.get(ui.ctx(), tool);
+                let image = egui::Image::new((icon, egui::vec2(24.0, 24.0)));
+                let button = egui::Button::image_and_text(image, tool.label())
+                    .selected(self.brush.tool == tool);
+                if ui
+                    .add(button)
+                    .on_hover_text(trf!("Taste {}", "Key {}", tool.key()))
+                    .clicked()
+                {
+                    self.brush.tool = tool;
+                }
             }
             ui.separator();
             ui.add_enabled(
                 self.brush.tool.uses_size(),
                 egui::DragValue::new(&mut self.brush.size)
                     .range(1..=MAX_BRUSH)
-                    .prefix("Größe "),
+                    .prefix(tr("Größe ", "Size ")),
             );
             ui.add_enabled(
                 self.brush.tool.uses_fill(),
-                egui::Checkbox::new(&mut self.brush.filled, "Gefüllt"),
+                egui::Checkbox::new(&mut self.brush.filled, tr("Gefüllt", "Filled")),
             );
             ui.separator();
-            if ui.button("−").on_hover_text("Verkleinern").clicked() {
+            if ui
+                .button("−")
+                .on_hover_text(tr("Verkleinern", "Zoom out"))
+                .clicked()
+            {
                 self.set_zoom(-1);
             }
             ui.label(format!("{}×", self.view.zoom));
-            if ui.button("+").on_hover_text("Vergrößern").clicked() {
+            if ui
+                .button("+")
+                .on_hover_text(tr("Vergrößern", "Zoom in"))
+                .clicked()
+            {
                 self.set_zoom(1);
             }
-            if ui.button("Einpassen").clicked() {
+            if ui.button(tr("Einpassen", "Fit")).clicked() {
                 self.view.fit = true;
             }
-            ui.checkbox(&mut self.grid, "Raster");
-            ui.checkbox(&mut self.onion, "Zwiebelhaut")
-                .on_hover_text("Zeigt den vorherigen Frame blass unter dem aktuellen");
+            ui.checkbox(&mut self.grid, tr("Raster", "Grid"));
+            ui.checkbox(&mut self.onion, tr("Zwiebelhaut", "Onion skin"))
+                .on_hover_text(tr(
+                    "Zeigt den vorherigen Frame blass unter dem aktuellen",
+                    "Shows the previous frame faintly under the current one",
+                ));
         });
     }
 
@@ -688,7 +818,13 @@ impl App {
             ui.colored_label(color, &self.status);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some(s) = self.sprite() {
-                    let mut text = format!("{}×{} · {} Bit", s.width(), s.height(), s.depth.bits());
+                    let mut text = trf!(
+                        "{}×{} · {} Bit",
+                        "{}×{} · {} bit",
+                        s.width(),
+                        s.height(),
+                        s.depth.bits()
+                    );
                     if let Some((x, y)) = self.hover_cell {
                         text = format!("x {x}, y {y} · {text}");
                     }
@@ -703,8 +839,8 @@ impl App {
     fn asset_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         if self.doc.is_none() {
-            ui.label("Noch kein Projekt geöffnet.");
-            if ui.button("Neues Projekt…").clicked() {
+            ui.label(tr("Noch kein Projekt geöffnet.", "No project open yet."));
+            if ui.button(tr("Neues Projekt…", "New project…")).clicked() {
                 self.open_dialog(Dialog::NewProject {
                     name: String::new(),
                 });
@@ -714,7 +850,7 @@ impl App {
         let assets = self.doc.as_ref().map(|d| d.assets()).unwrap_or_default();
         let has_character = assets.iter().any(|a| a.id.kind == AssetKind::Character);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Figur").clicked() {
+            if ui.button(tr("+ Figur", "+ Character")).clicked() {
                 self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
             }
             if ui
@@ -723,19 +859,19 @@ impl App {
             {
                 self.new_animation_dialog(None);
             }
-            if ui.button("+ Bild").clicked() {
+            if ui.button(tr("+ Bild", "+ Image")).clicked() {
                 self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
             }
         });
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.strong("Figuren");
+            ui.strong(tr("Figuren", "Characters"));
             let characters: Vec<&AssetEntry> = assets
                 .iter()
                 .filter(|a| a.id.kind == AssetKind::Character)
                 .collect();
             if characters.is_empty() {
-                ui.weak("Noch keine. Eine Figur hat eine feste Größe und Palette, damit sie in jeder Animation gleich aussieht.");
+                ui.weak(tr("Noch keine. Eine Figur hat eine feste Größe und Palette, damit sie in jeder Animation gleich aussieht.", "None yet. A character has a fixed size and palette so it looks the same in every animation."));
             }
             for c in &characters {
                 self.asset_row(ui, c, false);
@@ -754,14 +890,14 @@ impl App {
                 self.asset_row(ui, a, false);
             }
             ui.add_space(8.0);
-            ui.strong("Bilder");
+            ui.strong(tr("Bilder", "Images"));
             let mut any = false;
             for i in assets.iter().filter(|a| a.id.kind == AssetKind::Image) {
                 any = true;
                 self.asset_row(ui, i, false);
             }
             if !any {
-                ui.weak("Noch keine. Bilder sind frei: Tiles, Items, Szenen.");
+                ui.weak(tr("Noch keine. Bilder sind frei: Tiles, Items, Szenen.", "None yet. Images are free: tiles, items, scenes."));
             }
         });
     }
@@ -777,36 +913,37 @@ impl App {
             } else {
                 format!("{} Frames", a.frames)
             };
-            let resp = ui
-                .selectable_label(selected, &a.name)
-                .on_hover_text(format!(
-                    "{} · {}×{} · {} Bit · {frames}",
-                    a.id.kind.label(),
-                    a.width,
-                    a.height,
-                    a.bits
-                ));
+            let resp = ui.selectable_label(selected, &a.name).on_hover_text(trf!(
+                "{} · {}×{} · {} Bit · {frames}",
+                "{} · {}×{} · {} bit · {frames}",
+                a.id.kind.label(),
+                a.width,
+                a.height,
+                a.bits
+            ));
             if resp.clicked() {
                 self.select(a.id);
             }
             resp.context_menu(|ui| {
-                if a.id.kind == AssetKind::Character && ui.button("Neue Animation…").clicked() {
+                if a.id.kind == AssetKind::Character
+                    && ui.button(tr("Neue Animation…", "New animation…")).clicked()
+                {
                     self.new_animation_dialog(Some(a.id.id));
                     ui.close();
                 }
-                if ui.button("Umbenennen…").clicked() {
+                if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
                     self.open_dialog(Dialog::Rename {
                         id: a.id,
                         name: a.name.clone(),
                     });
                     ui.close();
                 }
-                if ui.button("Exportieren…").clicked() {
+                if ui.button(tr("Exportieren…", "Export…")).clicked() {
                     self.select(a.id);
                     self.open_dialog(Dialog::Export(ExportForm::default()));
                     ui.close();
                 }
-                if ui.button("Löschen…").clicked() {
+                if ui.button(tr("Löschen…", "Delete…")).clicked() {
                     self.open_dialog(Dialog::Delete(a.id));
                     ui.close();
                 }
@@ -819,7 +956,7 @@ impl App {
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         let Some(id) = self.sel else {
-            ui.weak("Kein Bild ausgewählt.");
+            ui.weak(tr("Kein Bild ausgewählt.", "No image selected."));
             return;
         };
         let Some(s) = self.sprite() else { return };
@@ -828,7 +965,7 @@ impl App {
         let character = self.doc.as_ref().and_then(|d| d.character_of(id));
 
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.strong("Farbe");
+            ui.strong(tr("Farbe", "Color"));
             ui.horizontal(|ui| {
                 let mut rgba = self.brush.color.to_array();
                 if ui
@@ -844,16 +981,16 @@ impl App {
             let exact = depth.conform(wanted);
             if palette.locked {
                 if !palette.contains(exact) && !exact.is_transparent() {
-                    ui.weak("Nicht in der Palette der Figur. Gezeichnet wird die ähnlichste Palettenfarbe.");
+                    ui.weak(tr("Nicht in der Palette der Figur. Gezeichnet wird die ähnlichste Palettenfarbe.", "Not in the character's palette. The most similar palette color is drawn."));
                     if let Some(character) = character {
-                        if ui.button("In die Palette der Figur aufnehmen").clicked() {
+                        if ui.button(tr("In die Palette der Figur aufnehmen", "Add to the character's palette")).clicked() {
                             let result = self
                                 .doc
                                 .as_mut()
                                 .map(|d| d.add_character_color(character, exact));
                             if let Some(Ok(())) = result {
                                 self.brush.color = exact;
-                                self.info("Farbe in die Palette der Figur aufgenommen");
+                                self.info(tr("Farbe in die Palette der Figur aufgenommen", "Color added to the character's palette"));
                             } else if let Some(Err(err)) = result {
                                 self.error(err);
                             }
@@ -861,8 +998,8 @@ impl App {
                     }
                 }
             } else if exact != wanted {
-                ui.weak(format!(
-                    "Bei {} Bit wird daraus {exact}.",
+                ui.weak(trf!(
+                    "Bei {} Bit wird daraus {exact}.", "At {} bit this becomes {exact}.",
                     depth.bits()
                 ));
             }
@@ -870,10 +1007,10 @@ impl App {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.strong("Palette");
-                ui.weak(format!("{} Farben", palette.len()));
+                ui.weak(trf!("{} Farben", "{} colors", palette.len()));
                 if palette.locked {
-                    ui.weak("· fest")
-                        .on_hover_text("Die Palette gehört zu einer Figur und kann nur wachsen. So bleibt die Figur überall gleich.");
+                    ui.weak(tr("· fest", "· fixed"))
+                        .on_hover_text(tr("Die Palette gehört zu einer Figur und kann nur wachsen. So bleibt die Figur überall gleich.", "The palette belongs to a character and can only grow. That keeps the character the same everywhere."));
                 }
             });
             ui.horizontal_wrapped(|ui| {
@@ -901,7 +1038,7 @@ impl App {
                 && !palette.contains(exact)
                 && !exact.is_transparent()
                 && !palette.is_full()
-                && ui.button("+ aktuelle Farbe").clicked()
+                && ui.button(tr("+ aktuelle Farbe", "+ current color")).clicked()
             {
                 self.edit(|s| s.palette.add(exact).map(|_| ()).map_err(|e| e.to_string()));
             }
@@ -922,12 +1059,16 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        ui.strong("Ebenen");
+        ui.strong(tr("Ebenen", "Layers"));
         // Die oberste Ebene steht oben, wie sie auch gezeichnet wird.
         for (i, (name, visible)) in layers.iter().enumerate().rev() {
             ui.horizontal(|ui| {
                 let mut v = *visible;
-                if ui.checkbox(&mut v, "").on_hover_text("Sichtbar").changed() {
+                if ui
+                    .checkbox(&mut v, "")
+                    .on_hover_text(tr("Sichtbar", "Visible"))
+                    .changed()
+                {
                     self.edit(|s| {
                         for f in 0..s.frames().len() {
                             s.layer_mut(f, i).map_err(|e| e.to_string())?.visible = v;
@@ -949,14 +1090,17 @@ impl App {
         }
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(layers.len() < MAX_LAYERS, egui::Button::new("+ Ebene"))
+                .add_enabled(
+                    layers.len() < MAX_LAYERS,
+                    egui::Button::new(tr("+ Ebene", "+ Layer")),
+                )
                 .clicked()
             {
                 // Der Name wird erst in der Änderung gewählt, also nach dem Abgleich mit
                 // der Datei. Der MCP-Server findet Ebenen über ihren Namen.
                 if let Some(i) = self.edit(|s| {
                     let name = (s.layer_count() + 1..)
-                        .map(|n| format!("Ebene {n}"))
+                        .map(|n| trf!("Ebene {n}", "Layer {n}"))
                         .find(|name| s.layer_index(name).is_none())
                         .unwrap_or_default();
                     Ok(s.add_layer(name))
@@ -964,7 +1108,7 @@ impl App {
                     self.layer = i;
                 }
             }
-            if ui.button("Umbenennen").clicked() {
+            if ui.button(tr("Umbenennen", "Rename")).clicked() {
                 if let Some((name, _)) = layers.get(self.layer) {
                     self.open_dialog(Dialog::RenameLayer {
                         layer: self.layer,
@@ -973,7 +1117,7 @@ impl App {
                 }
             }
             if ui
-                .add_enabled(layers.len() > 1, egui::Button::new("Löschen"))
+                .add_enabled(layers.len() > 1, egui::Button::new(tr("Löschen", "Delete")))
                 .clicked()
             {
                 let i = self.layer;
@@ -986,7 +1130,10 @@ impl App {
 
     fn timeline(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.sprite() else {
-            ui.weak("Wähle links ein Bild, eine Figur oder eine Animation.");
+            ui.weak(tr(
+                "Wähle links ein Bild, eine Figur oder eine Animation.",
+                "Choose an image, a character or an animation on the left.",
+            ));
             return;
         };
         let durations: Vec<u32> = s.frames().iter().map(|f| f.duration_ms).collect();
@@ -994,19 +1141,26 @@ impl App {
         self.update_thumbs(ui.ctx());
         ui.add_space(2.0);
         ui.horizontal(|ui| {
-            let label = if self.playing { "Pause" } else { "Abspielen" };
+            let label = if self.playing {
+                "Pause"
+            } else {
+                tr("Abspielen", "Play")
+            };
             if ui
                 .add_enabled(n > 1, egui::Button::new(label))
-                .on_hover_text("Eingabetaste")
+                .on_hover_text(tr("Eingabetaste", "Enter"))
                 .clicked()
             {
                 self.toggle_play();
             }
-            ui.label(format!("Frame {} von {n}", self.frame + 1));
+            ui.label(trf!("Frame {} von {n}", "Frame {} of {n}", self.frame + 1));
             if let (Some(mut looping), Some(id)) = (self.looping(), self.sel) {
                 if ui
-                    .checkbox(&mut looping, "Schleife")
-                    .on_hover_text("Ob die Animation nach dem letzten Frame von vorn beginnt")
+                    .checkbox(&mut looping, tr("Schleife", "Loop"))
+                    .on_hover_text(tr(
+                        "Ob die Animation nach dem letzten Frame von vorn beginnt",
+                        "Whether the animation starts over after the last frame",
+                    ))
                     .changed()
                 {
                     let result = self.doc.as_mut().map(|d| d.set_looping(id.id, looping));
@@ -1018,7 +1172,7 @@ impl App {
             ui.separator();
             if ui
                 .add_enabled(n < MAX_FRAMES, egui::Button::new("+ Frame"))
-                .on_hover_text("Leerer Frame am Ende")
+                .on_hover_text(tr("Leerer Frame am Ende", "Empty frame at the end"))
                 .clicked()
             {
                 if let Some(i) = self.edit(|s| Ok(s.add_frame())) {
@@ -1026,8 +1180,14 @@ impl App {
                 }
             }
             if ui
-                .add_enabled(n < MAX_FRAMES, egui::Button::new("Duplizieren"))
-                .on_hover_text("Kopie des aktuellen Frames direkt dahinter")
+                .add_enabled(
+                    n < MAX_FRAMES,
+                    egui::Button::new(tr("Duplizieren", "Duplicate")),
+                )
+                .on_hover_text(tr(
+                    "Kopie des aktuellen Frames direkt dahinter",
+                    "Copy of the current frame right after it",
+                ))
                 .clicked()
             {
                 let f = self.frame;
@@ -1036,7 +1196,7 @@ impl App {
                 }
             }
             if ui
-                .add_enabled(n > 1, egui::Button::new("Löschen"))
+                .add_enabled(n > 1, egui::Button::new(tr("Löschen", "Delete")))
                 .clicked()
             {
                 let f = self.frame;
@@ -1051,7 +1211,7 @@ impl App {
                 egui::DragValue::new(&mut value)
                     .range(10..=10_000)
                     .suffix(" ms")
-                    .prefix("Dauer "),
+                    .prefix(tr("Dauer ", "Duration ")),
             );
             if resp.changed() {
                 self.duration_edit = Some(value);
@@ -1068,8 +1228,11 @@ impl App {
                 }
             }
             if ui
-                .add_enabled(n > 1, egui::Button::new("für alle"))
-                .on_hover_text("Diese Dauer für alle Frames übernehmen")
+                .add_enabled(n > 1, egui::Button::new(tr("für alle", "for all")))
+                .on_hover_text(tr(
+                    "Diese Dauer für alle Frames übernehmen",
+                    "Use this duration for all frames",
+                ))
                 .clicked()
             {
                 self.edit(|s| {

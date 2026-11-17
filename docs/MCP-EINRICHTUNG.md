@@ -4,7 +4,7 @@ Editor und MCP-Server sind dieselbe Datei: `pixelart-studio.exe`. Per Doppelklic
 Mit der Angabe `--mcp` gestartet, öffnet sie kein Fenster, sondern arbeitet als MCP-Server für Claude.
 Sie braucht keine Installation. Claude startet sie so von selbst, sobald sie eingetragen ist.
 
-**Am einfachsten:** Im Editor unter **Hilfe → Mit Claude verbinden…** stehen
+**Am einfachsten:** Im Editor unter **Hilfe › Mit Claude verbinden…** stehen
 alle Angaben schon mit den Pfaden deines Rechners, jeweils mit einem Knopf zum Kopieren. Dort gibt es
 auch einen fertigen Prompt, mit dem Claude die Verbindung selbst einrichtet. Diese Seite beschreibt
 dasselbe zum Nachlesen.
@@ -15,15 +15,16 @@ durch deinen Windows-Benutzernamen.
 ## Wo liegen meine Projekte?
 
 Im Arbeitsordner. Dort legt der Server pro Projekt eine Datei `<Name>.pxproj` an und schreibt
-Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne Angabe gilt: Liegt neben
-dem Programm ein Ordner `Projekte`, wird er genommen, sonst `Dokumente\PixelArt Studio`.
+Exporte nach `exports\<Projekt>\`. Den Ordner bestimmst du mit `--home`. Ohne Angabe gilt der Speicherordner
+aus Datei › Einstellungen; ist dort keiner gesetzt und liegt neben dem Programm ein Ordner `Projekte`,
+wird er genommen, sonst `Dokumente\PixelArt Studio`.
 
 Editor und MCP-Server müssen denselben Arbeitsordner benutzen, damit du im Editor siehst, was Claude
 zeichnet. Weil beide dieselbe Datei sind, passt das von selbst.
 
 ## Claude Desktop
 
-1. In Claude Desktop: **Einstellungen → Entwickler → Konfiguration bearbeiten**. Es öffnet sich die
+1. In Claude Desktop: **Einstellungen › Entwickler › Konfiguration bearbeiten**. Es öffnet sich die
    Datei `claude_desktop_config.json` (sie liegt unter `%APPDATA%\Claude\`).
 2. Diesen Inhalt eintragen. Falls schon andere Server eingetragen sind, nur den Block `"pixelart"`
    in `"mcpServers"` ergänzen. In JSON müssen Backslashes doppelt geschrieben werden.
@@ -54,7 +55,7 @@ claude mcp add --scope user pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Stud
 ## Claude richtet es selbst ein
 
 Wo Claude auf deinem Rechner Befehle ausführen oder Dateien bearbeiten darf (zum Beispiel in Claude
-Code), kannst du die Einrichtung abgeben: Im Editor unter **Hilfe → Mit Claude verbinden…** den Prompt
+Code), kannst du die Einrichtung abgeben: Im Editor unter **Hilfe › Mit Claude verbinden…** den Prompt
 aus Abschnitt 1 kopieren und an Claude schicken. Er nennt Programm, Argumente, den Befehl für Claude
 Code, den Eintrag für Claude Desktop und wie Claude das Ergebnis prüft.
 
@@ -96,7 +97,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 
 - **Server erscheint nicht:** Pfad zur exe prüfen und ob die Backslashes in der JSON-Datei doppelt sind.
   Claude Desktop schreibt Fehler nach `%APPDATA%\Claude\logs\`.
-- **Windows warnt vor der exe:** Die Datei ist nicht signiert. Über „Weitere Informationen → Trotzdem
+- **Windows warnt vor der exe:** Die Datei ist nicht signiert. Über „Weitere Informationen › Trotzdem
   ausführen“ lässt sie sich starten.
 - **WebM-Export meldet, ffmpeg fehle:** Im Editor den Export-Dialog öffnen (Strg+E), „WebM“ wählen und
   auf „ffmpeg jetzt installieren“ klicken. Von Hand geht es mit `winget install Gyan.FFmpeg` in der

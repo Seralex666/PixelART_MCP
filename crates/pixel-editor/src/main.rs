@@ -6,8 +6,9 @@
 //! zeichnet. Arbeitsordner, in dieser Reihenfolge:
 //! 1. `--home <ordner>`
 //! 2. Umgebungsvariable `PIXELART_HOME`
-//! 3. ein Ordner `Projekte` neben dem Programm
-//! 4. `Dokumente/PixelArt Studio`
+//! 3. der Ordner aus den Einstellungen (Datei → Einstellungen)
+//! 4. ein Ordner `Projekte` neben dem Programm
+//! 5. `Dokumente/PixelArt Studio`
 //!
 //! `--project <name>` öffnet ein bestimmtes Projekt, sonst das zuletzt bearbeitete.
 
@@ -19,7 +20,9 @@ mod canvas;
 mod dialogs;
 mod doc;
 mod help;
+mod icons;
 mod import_dialog;
+mod settings;
 mod tools;
 
 use eframe::egui;
@@ -27,7 +30,12 @@ use pixel_core::Workspace;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "PixelArt Studio\n\nOhne Angabe startet der Editor.\n\n  --mcp              als MCP-Server über stdin/stdout laufen (so startet ihn Claude)\n  --home <Ordner>    Arbeitsordner für Projekte und Exporte\n  --project <Name>   dieses Projekt im Editor öffnen\n  --version          Version ausgeben";
+fn usage() -> &'static str {
+    pixel_core::lang::tr(
+        "PixelArt Studio\n\nOhne Angabe startet der Editor.\n\n  --mcp              als MCP-Server über stdin/stdout laufen (so startet ihn Claude)\n  --home <Ordner>    Arbeitsordner für Projekte und Exporte\n  --project <Name>   dieses Projekt im Editor öffnen\n  --version          Version ausgeben",
+        "PixelArt Studio\n\nWithout arguments the editor starts.\n\n  --mcp              run as an MCP server over stdin/stdout (this is how Claude starts it)\n  --home <folder>    workspace folder for projects and exports\n  --project <name>   open this project in the editor\n  --version          print the version",
+    )
+}
 
 /// Was das Programm tun soll.
 #[derive(Debug, PartialEq)]
@@ -57,11 +65,17 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "--home" => {
                 home = Some(PathBuf::from(
-                    args.next().ok_or("--home braucht einen Ordner")?,
+                    args.next().ok_or(pixel_core::lang::tr(
+                        "--home braucht einen Ordner",
+                        "--home needs a folder",
+                    ))?,
                 ));
             }
             "--project" => {
-                project = Some(args.next().ok_or("--project braucht einen Projektnamen")?);
+                project = Some(args.next().ok_or(pixel_core::lang::tr(
+                    "--project braucht einen Projektnamen",
+                    "--project needs a project name",
+                ))?);
             }
             "--mcp" => mcp = true,
             "--version" | "-V" => {
@@ -73,13 +87,14 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
             }
             "--help" | "-h" => {
                 return Ok(Args {
-                    mode: Mode::Print(USAGE.to_string()),
+                    mode: Mode::Print(usage().to_string()),
                     home,
                 })
             }
             other => {
-                return Err(format!(
-                    "Unbekanntes Argument „{other}“. Erlaubt sind --mcp, --home <Ordner>, --project <Name> und --version."
+                return Err(pixel_core::trf!(
+                    "Unbekanntes Argument „{other}“. Erlaubt sind --mcp, --home <Ordner>, --project <Name> und --version.",
+                    "Unknown argument \"{other}\". Allowed are --mcp, --home <folder>, --project <name> and --version."
                 ))
             }
         }
@@ -92,9 +107,16 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     Ok(Args { mode, home })
 }
 
-fn home_or_default(home: Option<PathBuf>) -> Result<PathBuf, String> {
-    home.or_else(Workspace::default_home).ok_or_else(|| {
-        "Es wurde kein Dokumente-Ordner gefunden. Starte mit --home <Ordner>.".into()
+fn home_or_default(
+    home: Option<PathBuf>,
+    settings: &settings::Settings,
+) -> Result<PathBuf, String> {
+    home.or_else(|| settings.effective_home()).ok_or_else(|| {
+        pixel_core::lang::tr(
+            "Es wurde kein Dokumente-Ordner gefunden. Starte mit --home <Ordner>.",
+            "No documents folder was found. Start with --home <folder>.",
+        )
+        .into()
     })
 }
 
@@ -157,7 +179,10 @@ struct Failed(String);
 impl eframe::App for Failed {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("PixelArt Studio kann nicht starten");
+            ui.heading(pixel_core::lang::tr(
+                "PixelArt Studio kann nicht starten",
+                "PixelArt Studio cannot start",
+            ));
             ui.add_space(8.0);
             ui.label(&self.0);
         });
@@ -165,6 +190,8 @@ impl eframe::App for Failed {
 }
 
 fn main() -> ExitCode {
+    let settings = settings::Settings::load();
+    pixel_core::lang::set(settings.lang);
     let args = parse_args(std::env::args().skip(1));
     let (home, project) = match args {
         Ok(Args {
@@ -180,7 +207,7 @@ fn main() -> ExitCode {
             home,
         }) => {
             attach_parent_console();
-            return match home_or_default(home).and_then(pixel_mcp::serve_stdio) {
+            return match home_or_default(home, &settings).and_then(pixel_mcp::serve_stdio) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(err) => {
                     eprintln!("pixelart-studio --mcp: {err}");
@@ -191,13 +218,14 @@ fn main() -> ExitCode {
         Ok(Args {
             mode: Mode::Editor { project },
             home,
-        }) => (home_or_default(home), project),
+        }) => (home_or_default(home, &settings), project),
         Err(err) => (Err(err), None),
     };
     let start = home.and_then(|home| {
         let ws = Workspace::open(&home).map_err(|err| {
-            format!(
+            pixel_core::trf!(
                 "Der Arbeitsordner {} lässt sich nicht anlegen: {err}",
+                "The workspace folder {} cannot be created: {err}",
                 home.display()
             )
         })?;
@@ -216,7 +244,9 @@ fn main() -> ExitCode {
         options,
         Box::new(move |_cc| {
             Ok(match start {
-                Ok((ws, project)) => Box::new(app::App::new(ws, project)) as Box<dyn eframe::App>,
+                Ok((ws, project)) => {
+                    Box::new(app::App::new(ws, project, settings)) as Box<dyn eframe::App>
+                }
                 Err(err) => Box::new(Failed(err)),
             })
         }),

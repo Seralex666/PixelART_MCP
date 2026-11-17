@@ -281,22 +281,41 @@ impl Project {
                 })
             };
             let Ok(c) = self.character(a.character_id) else {
-                issue("Die zugehörige Figur fehlt im Projekt.".into());
+                issue(
+                    crate::lang::tr(
+                        "Die zugehörige Figur fehlt im Projekt.",
+                        "Its character is missing from the project.",
+                    )
+                    .into(),
+                );
                 continue;
             };
             let (w, h) = c.size();
             if (a.sprite.width(), a.sprite.height()) != (w, h) {
-                issue(format!(
+                issue(crate::trf!(
                     "Größe {}×{} weicht von der Figur ({w}×{h}) ab.",
+                    "Size {}×{} differs from the character ({w}×{h}).",
                     a.sprite.width(),
                     a.sprite.height()
                 ));
             }
             if a.sprite.depth != c.base.depth {
-                issue("Farbtiefe weicht von der Figur ab.".into());
+                issue(
+                    crate::lang::tr(
+                        "Farbtiefe weicht von der Figur ab.",
+                        "Color depth differs from the character.",
+                    )
+                    .into(),
+                );
             }
             if a.sprite.palette.colors != c.palette().colors {
-                issue("Palette weicht von der Figur ab.".into());
+                issue(
+                    crate::lang::tr(
+                        "Palette weicht von der Figur ab.",
+                        "Palette differs from the character.",
+                    )
+                    .into(),
+                );
             }
             let mut foreign = std::collections::BTreeSet::new();
             for f in a.sprite.frames() {
@@ -310,8 +329,9 @@ impl Project {
             }
             if !foreign.is_empty() {
                 let list: Vec<_> = foreign.iter().take(8).cloned().collect();
-                issue(format!(
+                issue(crate::trf!(
                     "{} Farbe(n) gehören nicht zur Palette der Figur: {}",
+                    "{} color(s) are not in the character's palette: {}",
                     foreign.len(),
                     list.join(", ")
                 ));

@@ -361,6 +361,8 @@ pub struct StyleArgs<'a> {
 
 impl Studio {
     pub fn new(home: PathBuf) -> Res<Self> {
+        // Alles, was der Server sagt, ist Englisch, auch Meldungen aus dem Kern.
+        pixel_core::lang::set(pixel_core::lang::Lang::En);
         let ws = Workspace::open(&home)
             .map_err(|err| format!("cannot create workspace {}: {err}", home.display()))?;
         Ok(Self {
@@ -427,7 +429,7 @@ impl Studio {
                 "id": t.id,
                 "width": t.width,
                 "height": t.height,
-                "purpose": template_purpose(t.id),
+                "purpose": t.purpose_en,
             })).collect::<Vec<_>>(),
             "palette_presets": ["default16", "gray4", "gray8", "gray16"],
             "animation_presets": AnimationKind::PRESETS.iter().map(|k| json!({
@@ -435,7 +437,7 @@ impl Studio {
                 "frames": k.default_frames(),
                 "frame_ms": k.default_frame_ms(),
                 "loops": k.loops_by_default(),
-                "guide": animation_guide(k),
+                "guide": k.guide(),
             })).collect::<Vec<_>>(),
         })))
     }
@@ -2609,42 +2611,6 @@ fn list_frames(frames: &[usize]) -> String {
         .map(|f| f.to_string())
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn template_purpose(id: &str) -> &'static str {
-    match id {
-        "icon-8" => "tiny icons, particles",
-        "icon-16" => "items, icons, classic tiles",
-        "tile-16" => "tiles for tile maps",
-        "char-16x24" => "small game character",
-        "tile-32" => "tiles, characters, items",
-        "char-32x48" => "medium game character",
-        "char-48" => "character with weapon or cape",
-        "char-64" => "detailed character, enemy",
-        "portrait-96" => "dialog portraits",
-        "boss-128" => "large enemies, bosses",
-        "scene-160x144" => "scene in the format of classic handhelds",
-        "scene-256x224" => "scene in the format of classic home consoles",
-        "scene-320x180" => "modern 16:9 pixel scene, scales cleanly to 1080p",
-        "scene-480x270" => "larger 16:9 scene",
-        "art-256" => "free pixel artwork",
-        "art-512" => "large artwork",
-        "art-1024" => "maximum size",
-        _ => "canvas",
-    }
-}
-
-fn animation_guide(kind: &AnimationKind) -> &'static str {
-    match kind {
-        AnimationKind::Idle => "Resting pose with light breathing: the upper body rises and falls by 1 pixel.",
-        AnimationKind::Walk => "Walk cycle: contact, down, passing, up, then the same with the other leg.",
-        AnimationKind::Run => "Run cycle with a flight phase: body leaning forward, arms swinging strongly in opposition.",
-        AnimationKind::Jump => "Crouch, take-off, rise, apex, landing.",
-        AnimationKind::Attack => "Wind-up, strike with a motion arc, hit, return to the base pose.",
-        AnimationKind::Hurt => "Knock-back, short color flash, return.",
-        AnimationKind::Death => "Stagger, fall, impact, stay on the ground.",
-        AnimationKind::Custom(_) => "Custom animation.",
-    }
 }
 
 /// Ziffern 0 bis 9 als 3×5-Raster für die Koordinaten am Rand der Vorschau.

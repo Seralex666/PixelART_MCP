@@ -5,6 +5,8 @@ use crate::dialogs::Dialog;
 use crate::tools::{Stroke, Tool};
 use eframe::egui::{self, Color32, Key, PointerButton, Rect, Sense, StrokeKind};
 use pixel_core::draw::Target;
+use pixel_core::lang::tr;
+use pixel_core::trf;
 use pixel_core::Sprite;
 
 /// Ab dieser Vergrößerung lohnt sich das Pixelraster.
@@ -230,9 +232,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
 fn welcome(app: &mut App, ui: &mut egui::Ui, area: Rect) {
     let text = if app.doc.is_none() {
-        "Willkommen im PixelArt Studio.\n\nLege über „Datei → Neues Projekt…“ ein Projekt an.\nWie Claude hier mitzeichnet, steht unter „Hilfe → Mit Claude verbinden…“."
+        tr("Willkommen im PixelArt Studio.\n\nLege über „Datei › Neues Projekt…“ ein Projekt an.\nWie Claude hier mitzeichnet, steht unter „Hilfe › Mit Claude verbinden…“.", "Welcome to PixelArt Studio.\n\nCreate a project with \"File › New project…\".\nHow Claude draws along is explained under \"Help › Connect to Claude…\".")
     } else {
-        "Dieses Projekt ist noch leer.\n\nLege links eine Figur oder ein Bild an,\noder lass Claude über den MCP-Server zeichnen."
+        tr("Dieses Projekt ist noch leer.\n\nLege links eine Figur oder ein Bild an,\noder lass Claude über den MCP-Server zeichnen.", "This project is still empty.\n\nCreate a character or an image on the left,\nor let Claude draw through the MCP server.")
     };
     ui.painter().text(
         area.center(),
@@ -254,10 +256,10 @@ fn pick(app: &mut App, (x, y): (i64, i64)) {
     };
     let c = pixels[y as usize * s.width() as usize + x as usize];
     if c.is_transparent() {
-        app.info("Dort ist nichts gezeichnet");
+        app.info(tr("Dort ist nichts gezeichnet", "Nothing is drawn there"));
     } else {
         app.brush.color = c;
-        app.info(format!("Farbe {c} aufgenommen"));
+        app.info(trf!("Farbe {c} aufgenommen", "Picked color {c}"));
     }
 }
 
@@ -286,7 +288,11 @@ fn begin(app: &mut App, at: (i64, i64)) {
         .and_then(|s| s.layer(target.frame, target.layer).ok())
         .is_some_and(|l| !l.visible);
     let started = if hidden {
-        Err("Die gewählte Ebene ist ausgeblendet. Blende sie ein, um darauf zu zeichnen.".into())
+        Err(tr(
+            "Die gewählte Ebene ist ausgeblendet. Blende sie ein, um darauf zu zeichnen.",
+            "The selected layer is hidden. Show it to draw on it.",
+        )
+        .into())
     } else {
         doc.stroke_sprite(id)
             .and_then(|s| Stroke::begin(s, target, brush, at))
@@ -319,7 +325,10 @@ fn end(app: &mut App) {
     };
     if let Some(doc) = &mut app.doc {
         if let Err(err) = doc.end_stroke(id) {
-            app.error(format!("Speichern fehlgeschlagen: {err}"));
+            app.error(trf!(
+                "Speichern fehlgeschlagen: {err}",
+                "Saving failed: {err}"
+            ));
         }
     }
 }

@@ -135,16 +135,23 @@ pub fn install_ffmpeg() -> Result<PathBuf> {
     if let Some(found) = find_ffmpeg() {
         return Ok(found);
     }
+    let manual = ffmpeg_manual();
     Err(Error::Video(match status {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => format!(
-            "Der Windows-Paketmanager winget wurde nicht gefunden. {FFMPEG_MANUAL}"
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => crate::trf!(
+            "Der Windows-Paketmanager winget wurde nicht gefunden. {manual}",
+            "The Windows package manager winget was not found. {manual}"
         ),
-        Err(err) => format!("winget lässt sich nicht starten ({err}). {FFMPEG_MANUAL}"),
-        Ok(status) if status.success() => format!(
-            "winget meldet Erfolg, aber ffmpeg ist nicht zu finden. Starte das Studio neu. {FFMPEG_MANUAL}"
+        Err(err) => crate::trf!(
+            "winget lässt sich nicht starten ({err}). {manual}",
+            "winget cannot be started ({err}). {manual}"
         ),
-        Ok(status) => format!(
-            "Die Installation ist fehlgeschlagen (winget: {status}). {FFMPEG_MANUAL}"
+        Ok(status) if status.success() => crate::trf!(
+            "winget meldet Erfolg, aber ffmpeg ist nicht zu finden. Starte das Studio neu. {manual}",
+            "winget reports success, but ffmpeg cannot be found. Restart the studio. {manual}"
+        ),
+        Ok(status) => crate::trf!(
+            "Die Installation ist fehlgeschlagen (winget: {status}). {manual}",
+            "The installation failed (winget: {status}). {manual}"
         ),
     }))
 }
@@ -154,7 +161,11 @@ pub fn install_ffmpeg() -> Result<PathBuf> {
 pub fn install_ffmpeg() -> Result<PathBuf> {
     find_ffmpeg().ok_or_else(|| {
         Error::Video(
-            "Die automatische Installation gibt es nur unter Windows. Installiere ffmpeg über die Paketverwaltung deines Systems.".into(),
+            crate::lang::tr(
+                "Die automatische Installation gibt es nur unter Windows. Installiere ffmpeg über die Paketverwaltung deines Systems.",
+                "Automatic installation is only available on Windows. Install ffmpeg with your system's package manager.",
+            )
+            .into(),
         )
     })
 }
@@ -163,10 +174,22 @@ pub fn install_ffmpeg() -> Result<PathBuf> {
 pub const CAN_INSTALL_FFMPEG: bool = cfg!(windows);
 
 /// Der Weg von Hand, falls die Installation aus dem Programm nicht klappt.
-pub const FFMPEG_MANUAL: &str = "Von Hand geht es so: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen.";
+pub fn ffmpeg_manual() -> &'static str {
+    crate::lang::tr(
+        "Von Hand geht es so: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen.",
+        "To do it by hand: run \"winget install Gyan.FFmpeg\" in a command prompt, or put ffmpeg.exe into the same folder as the studio.",
+    )
+}
 
-/// Hinweis für Menschen, wie man ffmpeg bekommt.
-pub const FFMPEG_HELP: &str = "Für WebM wird das kostenlose Programm ffmpeg gebraucht. Im Studio lässt es sich im Export-Dialog bei „WebM“ mit einem Klick installieren. Von Hand: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen.";
+/// Hinweis, wie man ffmpeg bekommt, auf Deutsch.
+pub fn ffmpeg_help_de() -> &'static str {
+    "Für WebM wird das kostenlose Programm ffmpeg gebraucht. Im Studio lässt es sich im Export-Dialog bei „WebM“ mit einem Klick installieren. Von Hand: in der Eingabeaufforderung „winget install Gyan.FFmpeg“ ausführen, oder ffmpeg.exe in denselben Ordner wie das Studio legen."
+}
+
+/// Hinweis, wie man ffmpeg bekommt, auf Englisch.
+pub fn ffmpeg_help_en() -> &'static str {
+    "WebM needs the free program ffmpeg. The studio can install it with one click in the export dialog under \"WebM\". By hand: run \"winget install Gyan.FFmpeg\" in a command prompt, or put ffmpeg.exe into the same folder as the studio."
+}
 
 /// Wie die Frames eines Sprites auf Videobilder verteilt werden.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -245,8 +268,9 @@ pub fn animation_webm(s: &Sprite, scale: u32, out: &Path, ffmpeg: &Path) -> Resu
     let durations: Vec<u32> = s.frames().iter().map(|f| f.duration_ms).collect();
     let plan = VideoPlan::new(&durations);
     if plan.total_frames() > MAX_VIDEO_FRAMES {
-        return Err(Error::Video(format!(
+        return Err(Error::Video(crate::trf!(
             "Das Video hätte {} Bilder, erlaubt sind {MAX_VIDEO_FRAMES}. Kürzere oder einheitlichere Frame-Dauern helfen.",
+            "The video would have {} pictures, {MAX_VIDEO_FRAMES} are allowed. Shorter or more even frame durations help.",
             plan.total_frames()
         )));
     }
@@ -295,9 +319,12 @@ fn encode(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = command
-        .spawn()
-        .map_err(|e| failed(format!("lässt sich nicht starten: {e}")))?;
+    let mut child = command.spawn().map_err(|e| {
+        failed(crate::trf!(
+            "lässt sich nicht starten: {e}",
+            "cannot be started: {e}"
+        ))
+    })?;
     // Die Fehlerausgabe wird nebenher gelesen. Sonst könnten beide Seiten
     // aufeinander warten: ffmpeg auf Platz für seine Meldungen, wir auf ffmpeg.
     let stderr = child.stderr.take();
@@ -334,7 +361,7 @@ fn encode(
     let message = messages.join().unwrap_or_default();
     if !status.success() {
         return Err(failed(if message.is_empty() {
-            format!("beendet mit {status}")
+            crate::trf!("beendet mit {status}", "exited with {status}")
         } else {
             message
         }));

@@ -1,6 +1,8 @@
 //! Menü „Hilfe“: wie Claude (oder ein anderer MCP-Client) mit dem Studio
 //! verbunden wird, samt fertigen Texten zum Kopieren.
 
+use pixel_core::lang::tr;
+use pixel_core::trf;
 use std::path::{Path, PathBuf};
 
 /// Name, unter dem der Server beim MCP-Client eingetragen wird.
@@ -70,7 +72,13 @@ impl ConnectInfo {
     /// Prompt, mit dem Claude die Verbindung selbst einrichtet. Dafür muss Claude
     /// auf dem Rechner Befehle ausführen oder Dateien bearbeiten dürfen.
     pub fn setup_prompt(&self) -> String {
-        format!(
+        let name = SERVER_NAME;
+        let flag = MCP_FLAG;
+        let server = self.server_str();
+        let home = self.home_str();
+        let command = self.claude_code_command();
+        let json = self.desktop_json();
+        trf!(
             r#"Bitte richte für mich den MCP-Server "{name}" ein. Er gehört zum Programm "PixelArt Studio" und lässt dich echte Pixel-Art zeichnen, die ich live im Editor sehe.
 
 Angaben zum Server:
@@ -96,24 +104,49 @@ Prüfen:
 - Sobald der Server verbunden ist, rufe das Werkzeug get_studio_info auf und nenne mir den Arbeitsordner. Er muss {home} sein.
 
 Wenn etwas davon nicht geht, sag mir genau, welcher Schritt und welche Fehlermeldung."#,
-            name = SERVER_NAME,
-            flag = MCP_FLAG,
-            server = self.server_str(),
-            home = self.home_str(),
-            command = self.claude_code_command(),
-            json = self.desktop_json(),
+            r#"Please set up the MCP server "{name}" for me. It belongs to the program "PixelArt Studio" and lets you draw real pixel art that I see live in the editor.
+
+Server details:
+- Name: {name}
+- Program: {server}
+- Arguments: {flag} --home "{home}"
+- Transport: stdio (local program, no network, no credentials)
+- Note: It is the same file as the editor. With {flag} it opens no window and speaks MCP over stdin/stdout.
+
+How to set it up, depending on where you run:
+
+1. Claude Code: Run this command and check the result with "claude mcp list".
+   {command}
+
+2. Claude Desktop: Open the file %APPDATA%\Claude\claude_desktop_config.json (create it if it is missing) and add the entry "{name}" under "mcpServers". Leave all existing entries unchanged. This is the entry:
+{json}
+   Afterwards Claude Desktop must be quit completely (also in the system tray next to the clock) and started again. Tell me when I should do that.
+
+3. Other MCP client: Add a local stdio server with the program and the arguments from above.
+
+Check:
+- "{server}" --version must print "pixelart-studio" and a version number.
+- As soon as the server is connected, call the tool get_studio_info and tell me the workspace folder. It must be {home}.
+
+If any of this does not work, tell me exactly which step and which error message."#
         )
     }
 
     /// Prompt für ein bereits verbundenes Claude: so arbeitet man mit dem Studio.
     pub fn usage_prompt(&self) -> String {
         let project = match &self.project {
-            Some(p) => format!(
-                "Arbeite im Projekt \"{p}\" (get_project zeigt, was es dort schon gibt)."
+            Some(p) => trf!(
+                "Arbeite im Projekt \"{p}\" (get_project zeigt, was es dort schon gibt).",
+                "Work in the project \"{p}\" (get_project shows what is already there)."
             ),
-            None => "Frag mich, in welchem Projekt du arbeiten sollst, oder lege mit create_project ein neues an.".to_string(),
+            None => tr(
+                "Frag mich, in welchem Projekt du arbeiten sollst, oder lege mit create_project ein neues an.",
+                "Ask me which project to work in, or create a new one with create_project.",
+            )
+            .to_string(),
         };
-        format!(
+        let name = SERVER_NAME;
+        trf!(
             r#"Du bist über den MCP-Server "{name}" mit meinem PixelArt Studio verbunden. Ich sehe im Editor live, was du zeichnest.
 
 So arbeitest du damit:
@@ -127,7 +160,19 @@ So arbeitest du damit:
 8. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
-            name = SERVER_NAME,
+            r#"You are connected to my PixelArt Studio through the MCP server "{name}". I see live in the editor what you draw.
+
+How to work with it:
+1. First call get_studio_info. It lists the workspace folder, projects, canvas templates, palettes and animation presets.
+2. {project}
+3. Create a character with create_character. Its size and palette are fixed afterwards. Derive animations (idle, walk, run, jump, attack, hurt, death) from the character with create_animation; every frame starts as a copy of the base pose. That keeps the character the same everywhere.
+4. Create free images such as tiles, items or scenes with create_image (at most 1024×1024, color depth 8, 16 or 32 bit).
+5. Draw with draw. Besides pixels, shapes and the text grid (grid) there are techniques for more depth: outline, shade, gradient, dither, noise, stamp and shader (a formula per pixel). One call can draw several frames (frame: "all", differences via per_frame). Look at the result with view (grid and zoom_region help to look closely), read exact pixels with get_pixels and take back mistakes with undo.
+6. If a character needs another color, add it to its palette with add_character_colors. set_style sets palette, light direction and outline color for the whole project, palette_from_image reads the colors from a reference, reduce_colors brings an asset down to fewer colors. get_project gives hints on typical slips such as stray pixels or gaps in an outline.
+7. export writes PNG, JPG, a sprite sheet, an animated GIF or a WebM video into the folder "exports" in the workspace folder.
+8. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
+
+Work in small steps and check every intermediate result with view before you continue drawing."#
         )
     }
 }
