@@ -95,6 +95,48 @@ impl Palette {
         )
     }
 
+    /// Palette aus Farbtreppen: `hues` Farbtöne mit je `steps` Stufen von dunkel nach hell,
+    /// dazu `grays` Grautöne. Die Stufen wandern wie in klassischer Pixel-Art im Farbton:
+    /// Schatten ins Kühle, Lichter ins Warme.
+    pub fn ramps(name: impl Into<String>, hues: usize, steps: usize, grays: usize) -> Self {
+        let mut colors = Vec::new();
+        for g in 0..grays {
+            let v = if grays < 2 {
+                0.5
+            } else {
+                g as f64 / (grays - 1) as f64
+            };
+            colors.push(hsl(230.0, 0.12, 0.08 + 0.86 * v));
+        }
+        for k in 0..hues {
+            let hue = k as f64 * 360.0 / hues as f64;
+            for i in 0..steps {
+                let t = if steps < 2 {
+                    0.5
+                } else {
+                    i as f64 / (steps - 1) as f64
+                };
+                let target = if t < 0.5 { 250.0 } else { 60.0 };
+                let h = toward(hue, target, (t - 0.5).abs() * 2.0 * 0.22);
+                let sat = 0.78 - (t - 0.5).abs() * 0.3;
+                let light = 0.16 + 0.68 * t;
+                colors.push(hsl(h, sat, light));
+            }
+        }
+        colors.truncate(Self::MAX_COLORS);
+        Self::new(name, colors)
+    }
+
+    /// 32 Farben: 7 Farbtreppen mit 4 Stufen und 4 Grautöne.
+    pub fn ramps_32() -> Self {
+        Self::ramps(crate::lang::tr("Farbtreppen 32", "Ramps 32"), 7, 4, 4)
+    }
+
+    /// 64 Farben: 12 Farbtreppen mit 5 Stufen und 4 Grautöne.
+    pub fn ramps_64() -> Self {
+        Self::ramps(crate::lang::tr("Farbtreppen 64", "Ramps 64"), 12, 5, 4)
+    }
+
     /// Graustufen mit `n` Stufen (2 bis 256).
     pub fn grayscale(n: usize) -> Self {
         let n = n.clamp(2, Self::MAX_COLORS);
@@ -112,4 +154,28 @@ impl Default for Palette {
     fn default() -> Self {
         Self::default_16()
     }
+}
+
+/// Dreht den Farbton `h` um den Anteil `share` des Abstands auf `target` zu, auf dem
+/// kürzeren Weg. Verschiedene Farbtöne bleiben so verschieden.
+fn toward(h: f64, target: f64, share: f64) -> f64 {
+    let diff = (target - h + 540.0).rem_euclid(360.0) - 180.0;
+    (h + diff * share).rem_euclid(360.0)
+}
+
+/// Farbe aus Farbton (Grad), Sättigung und Helligkeit (je 0 bis 1).
+fn hsl(h: f64, s: f64, l: f64) -> Rgba {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match (h / 60.0) as u32 % 6 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let v = |f: f64| ((f + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Rgba::rgb(v(r), v(g), v(b))
 }

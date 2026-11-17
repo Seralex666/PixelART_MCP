@@ -103,6 +103,11 @@ impl Selection {
         self.inside.iter().filter(|&&b| b).count()
     }
 
+    /// Ob der Pixel `(x, y)` ausgewählt ist.
+    pub fn contains_point(&self, x: i64, y: i64) -> bool {
+        self.contains(x, y)
+    }
+
     fn contains(&self, x: i64, y: i64) -> bool {
         x >= 0
             && y >= 0

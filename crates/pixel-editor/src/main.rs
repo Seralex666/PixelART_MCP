@@ -23,7 +23,9 @@ mod help;
 mod icons;
 mod import_dialog;
 mod outline_dialog;
+mod selection;
 mod settings;
+mod toolbar;
 mod tools;
 
 use eframe::egui;

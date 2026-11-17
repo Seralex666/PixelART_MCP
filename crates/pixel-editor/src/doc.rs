@@ -539,6 +539,76 @@ impl Doc {
         Ok(targets.len() - 1)
     }
 
+    /// Ändert die Leinwand eines Assets um `(dx, dy)` versetzt auf `width × height`.
+    /// Eine Figur ändert sich mit allen Animationen, damit sie gleich groß bleiben;
+    /// bei einer Animation gilt das für ihre Figur. Gibt die Zahl der mitgeänderten
+    /// Assets zurück. Nur die Änderung an einem einzelnen Asset lässt sich rückgängig machen.
+    pub fn resize_canvas(
+        &mut self,
+        id: AssetId,
+        width: u32,
+        height: u32,
+        dx: i64,
+        dy: i64,
+    ) -> Res<usize> {
+        self.poll(Some(id));
+        let character = match id.kind {
+            AssetKind::Character => Some(id.id),
+            AssetKind::Animation => self.character_of(id),
+            AssetKind::Image => None,
+        };
+        let mut targets = Vec::new();
+        if let Some(c) = character {
+            targets.push(AssetId::new(AssetKind::Character, c));
+            targets.extend(
+                self.project
+                    .animations_of(c)
+                    .map(|a| AssetId::new(AssetKind::Animation, a.id)),
+            );
+        } else {
+            targets.push(id);
+        }
+        let mut changes = Vec::new();
+        for &t in &targets {
+            let s = self.sprite_mut(t)?;
+            let base = s.clone();
+            let result = s
+                .resize_canvas(width, height, dx, dy)
+                .and_then(|()| s.refresh_outline().map(|_| ()));
+            if let Err(err) = result {
+                *s = base;
+                for change in changes {
+                    if let Change::Edit { id, base } = change {
+                        if let Ok(s) = self.sprite_mut(id) {
+                            *s = base;
+                        }
+                    }
+                }
+                return Err(e(err));
+            }
+            changes.push(Change::Edit { id: t, base });
+        }
+        if let Some(c) = character {
+            if let Ok(ch) = self.project.character_mut(c) {
+                let clamp = |v: i64, max: u32| v.clamp(0, i64::from(max) - 1) as u32;
+                ch.anchor = (
+                    clamp(i64::from(ch.anchor.0) + dx, width),
+                    clamp(i64::from(ch.anchor.1) + dy, height),
+                );
+            }
+        }
+        if let [Change::Edit { id, base }] = changes.as_slice() {
+            self.undo.push(UndoStep {
+                asset: *id,
+                sprite: base.clone(),
+            });
+            self.trim_undo();
+        }
+        self.redo.clear();
+        self.commit(Change::Batch(changes))?;
+        Ok(targets.len() - 1)
+    }
+
     // ------------------------------------------------------------ Assets
 
     fn check_name(&self, name: &str, except: Option<AssetId>) -> Res<String> {

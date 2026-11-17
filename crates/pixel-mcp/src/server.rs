@@ -17,13 +17,13 @@ const INSTRUCTIONS: &str = r##"PixelArt Studio creates REAL pixel art: every ima
 Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
 2. create_project, optionally set_style (shared palette, light direction, outline color), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
-3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
-4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
+3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. The `shape` op draws hearts, stars, diamonds and other shapes at any size, also custom shapes saved with custom_shapes; `mirror` makes symmetric drawing easy. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
+4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `lighten`/`darken` to push pixels one step along the palette's color ramps, `spray` for soft scattered texture, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
 5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
 7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
 8. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
-Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
+Canvas too small or too big: resize_canvas (keeps a character and its animations the same size). Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
 
 Consistency rules:
 - A character's palette is locked when it is created. Colors drawn on the character or its animations snap to the nearest palette color, so choose the full palette up front (skin, hair, clothes, outline, shadows, highlights). add_character_colors appends colors later without changing existing ones.
@@ -172,6 +172,9 @@ pub struct Draw {
     /// Example: [{}, {"colors": {"#ef7d57": "#ffcd75"}}, {"ops": [{"op": "shift", "dx": 0, "dy": -1}]}]
     #[serde(default)]
     per_frame: Vec<PerFrame>,
+    /// Symmetric drawing: everything the ops change is copied to the mirrored side of the
+    /// canvas. "left_right" (mirror at the vertical center line), "top_bottom" or "both".
+    mirror: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -231,7 +234,7 @@ pub struct EditLayers {
     project: String,
     /// Name or id of a character, animation or image.
     asset: String,
-    /// "add" (needs name), "remove" (needs layer), "rename" (needs layer and name) or "set" (needs layer plus visible and/or opacity).
+    /// "add" (needs name), "remove" (needs layer), "rename" (needs layer and name), "set" (needs layer plus visible and/or opacity) or "move" (needs layer and to).
     action: String,
     /// Layer index or name.
     layer: Option<Value>,
@@ -241,6 +244,8 @@ pub struct EditLayers {
     visible: Option<bool>,
     /// Layer opacity, 0 to 255.
     opacity: Option<u8>,
+    /// For "move": the new index of the layer, 0 = bottom.
+    to: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -420,6 +425,43 @@ pub struct Export {
 
 // ------------------------------------------------------------------ Werkzeuge
 
+#[derive(Deserialize, JsonSchema)]
+pub struct CustomShapes {
+    /// "list" (default), "save" (needs name, project and asset) or "delete" (needs name).
+    action: Option<String>,
+    /// Name of the custom shape.
+    name: Option<String>,
+    /// For "save": project of the asset to take the shape from.
+    project: Option<String>,
+    /// For "save": name or id of the character, animation or image.
+    asset: Option<String>,
+    /// For "save": frame index. Default 0.
+    frame: Option<usize>,
+    /// For "save": layer index or name. Default 0.
+    layer: Option<Value>,
+    /// For "save": only this area [x, y, w, h]. The shape is trimmed to what is drawn inside.
+    area: Option<[i64; 4]>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct ResizeCanvas {
+    /// Project name.
+    project: String,
+    /// Name or id of a character, animation or image.
+    asset: String,
+    /// New width in pixels. Default: unchanged.
+    width: Option<u32>,
+    /// New height in pixels. Default: unchanged.
+    height: Option<u32>,
+    /// Where the existing content stays: "center" (default), "top", "bottom", "left",
+    /// "right" or a corner like "bottom-left". For characters "bottom" keeps the feet in place.
+    anchor: Option<String>,
+    /// Instead of a size: cut the canvas down to the smallest box around everything drawn,
+    /// over all frames and layers.
+    #[serde(default)]
+    crop_to_content: bool,
+}
+
 #[tool_router]
 impl PixelServer {
     #[tool(
@@ -521,7 +563,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Draw on one layer with a list of operations, on one frame or on several at once (`frame`: index, list or \"all\"; `per_frame` for what differs). Basic ops: pixels, line, rect, ellipse, fill, grid, replace_color, shift, flip_h, flip_v, clear. Pixel-art techniques: outline, shade (light and shadow), dither, gradient (hard steps), noise, shader (per-pixel formula), stamp (copy and paste a piece). Everything is pixel-exact, without anti-aliasing, and respects locked palettes. Returns a preview of the frames drawn on. Drawing with color \"transparent\" erases.",
+        description = "Draw on one layer with a list of operations, on one frame or on several at once (`frame`: index, list or \"all\"; `per_frame` for what differs). Basic ops: pixels, line, rect, ellipse, shape (heart, diamond, star, triangle, cross, hexagon, arrow, circle or a saved custom shape), fill, grid, spray, replace_color, shift, flip_h, flip_v, clear, and for an area move_area, flip_area, clear_area. Pixel-art techniques: outline, shade (light and shadow), lighten and darken (one step along the palette's color ramps), dither, gradient (hard steps), noise, shader (per-pixel formula), stamp (copy and paste a piece). `mirror` draws symmetrically. Everything is pixel-exact, without anti-aliasing, and respects locked palettes. Returns a preview of the frames drawn on. Drawing with color \"transparent\" erases.",
         annotations(title = "Draw", destructive_hint = false)
     )]
     fn draw(&self, Parameters(a): Parameters<Draw>) -> CallToolResult {
@@ -533,6 +575,7 @@ impl PixelServer {
                 a.layer.as_ref(),
                 a.ops,
                 a.per_frame,
+                a.mirror.as_deref(),
             )
         })
     }
@@ -600,6 +643,7 @@ impl PixelServer {
                 a.name.as_deref(),
                 a.visible,
                 a.opacity,
+                a.to,
             )
         })
     }
@@ -712,6 +756,41 @@ impl PixelServer {
                 layer: a.layer.as_deref(),
                 with_animations: a.with_animations,
             })
+        })
+    }
+
+    #[tool(
+        description = "Custom shapes the user or you drew and saved: list them, save a new one from a drawing (one layer of a frame, optionally an area; trimmed to what is drawn) or delete one. Saved shapes live in the workspace, work in every project and can be drawn at any size with the draw op `shape`, in one color or in their own colors (`keep_colors`).",
+        annotations(title = "Custom shapes", destructive_hint = true)
+    )]
+    fn custom_shapes(&self, Parameters(a): Parameters<CustomShapes>) -> CallToolResult {
+        self.run(|s| {
+            s.custom_shapes(
+                a.action.as_deref().unwrap_or("list"),
+                a.name.as_deref(),
+                a.project.as_deref(),
+                a.asset.as_deref(),
+                a.frame,
+                a.layer.as_ref(),
+                a.area,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Change the canvas size of an asset without scaling: add room around the content or cut it away, keeping the content at `anchor`, or crop to the drawn content. A character and all its animations always change together so they stay the same size; the anchor point moves along. Returns a preview.",
+        annotations(title = "Resize canvas", destructive_hint = true)
+    )]
+    fn resize_canvas(&self, Parameters(a): Parameters<ResizeCanvas>) -> CallToolResult {
+        self.run(|s| {
+            s.resize_canvas(
+                &a.project,
+                &a.asset,
+                a.width,
+                a.height,
+                a.anchor.as_deref(),
+                a.crop_to_content,
+            )
         })
     }
 

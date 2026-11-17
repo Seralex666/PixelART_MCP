@@ -3,6 +3,7 @@
 
 use crate::export::{self, GifInfo, SheetMeta};
 use crate::project::PROJECT_EXT;
+use crate::shapes::CustomShape;
 use crate::{video, Error, Project, Result, Rgba, Sprite};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -11,6 +12,9 @@ use std::time::SystemTime;
 pub const DEFAULT_FOLDER: &str = "PixelArt Studio";
 /// Liegt ein Ordner dieses Namens neben dem Programm, ist er der Arbeitsordner.
 pub const PORTABLE_FOLDER: &str = "Projekte";
+
+/// Größte Kantenlänge einer eigenen Form.
+pub const SHAPE_MAX: u32 = 256;
 
 /// Unterordner für die Sperrdateien der Projekte.
 const LOCK_FOLDER: &str = ".locks";
@@ -232,6 +236,84 @@ impl Workspace {
     pub fn exports_dir(&self, project: &str) -> PathBuf {
         // Der Projektname ist als Dateiname geprüft und eindeutig.
         self.home.join("exports").join(project.trim())
+    }
+
+    /// Ordner mit den eigenen Formen. Sie gelten für alle Projekte.
+    pub fn shapes_dir(&self) -> PathBuf {
+        self.home.join("shapes")
+    }
+
+    /// Alle eigenen Formen, alphabetisch. Unlesbare Dateien werden übersprungen.
+    pub fn custom_shapes(&self) -> Vec<CustomShape> {
+        let mut shapes: Vec<CustomShape> = std::fs::read_dir(self.shapes_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.extension()?.to_str()?.eq_ignore_ascii_case("png") {
+                    return None;
+                }
+                let name = path.file_stem()?.to_str()?.replace('_', " ");
+                let picture = crate::import::read(&path).ok()?;
+                let frame = picture.frames.into_iter().next()?;
+                (picture.width <= SHAPE_MAX && picture.height <= SHAPE_MAX).then_some(CustomShape {
+                    name,
+                    width: picture.width,
+                    height: picture.height,
+                    pixels: frame.pixels,
+                })
+            })
+            .collect();
+        shapes.sort_by_key(|s| s.name.to_lowercase());
+        shapes
+    }
+
+    /// Eine eigene Form nach Namen, ohne Rücksicht auf Groß- und Kleinschreibung.
+    pub fn custom_shape(&self, name: &str) -> Option<CustomShape> {
+        let key = name_key(name);
+        self.custom_shapes()
+            .into_iter()
+            .find(|s| name_key(&s.name) == key)
+    }
+
+    /// Speichert eine eigene Form als PNG. Eine gleichnamige wird ersetzt.
+    pub fn save_shape(&self, shape: &CustomShape) -> Result<PathBuf> {
+        if shape.name.trim().is_empty() {
+            return Err(Error::InvalidName(
+                crate::lang::tr("Die Form braucht einen Namen", "The shape needs a name").into(),
+            ));
+        }
+        if shape.width > SHAPE_MAX || shape.height > SHAPE_MAX {
+            return Err(Error::Effect(crate::trf!(
+                "Eine Form darf höchstens {SHAPE_MAX}×{SHAPE_MAX} Pixel groß sein",
+                "A shape can be at most {SHAPE_MAX}×{SHAPE_MAX} pixels"
+            )));
+        }
+        let dir = self.shapes_dir();
+        std::fs::create_dir_all(&dir)?;
+        let mut sprite = Sprite::new(
+            shape.width,
+            shape.height,
+            crate::ColorDepth::Rgba32,
+            crate::Palette::default(),
+        )?;
+        sprite
+            .layer_mut(0, 0)?
+            .replace_pixels(shape.pixels.clone())?;
+        let path = dir.join(format!("{}.png", file_safe(&shape.name)));
+        std::fs::write(&path, export::frame_png(&sprite, 0, 1)?)?;
+        Ok(path)
+    }
+
+    /// Löscht eine eigene Form. Gibt zurück, ob es sie gab.
+    pub fn delete_shape(&self, name: &str) -> Result<bool> {
+        let path = self.shapes_dir().join(format!("{}.png", file_safe(name)));
+        if path.exists() {
+            std::fs::remove_file(path)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Exportiert ein Sprite in den Export-Ordner des Projekts.

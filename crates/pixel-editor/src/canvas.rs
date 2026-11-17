@@ -2,7 +2,7 @@
 
 use crate::app::{c32, App, ZOOM_LEVELS};
 use crate::dialogs::Dialog;
-use crate::tools::{Stroke, Tool};
+use crate::tools::{ShapeChoice, Stroke, Tool};
 use eframe::egui::{self, Color32, Key, PointerButton, Rect, Sense, StrokeKind};
 use pixel_core::draw::Target;
 use pixel_core::lang::tr;
@@ -155,8 +155,51 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     app.hover_cell =
         hover.filter(|&(x, y)| x >= 0 && y >= 0 && x < i64::from(w) && y < i64::from(h));
 
-    // Pinsel-Umriss unter dem Mauszeiger.
-    if let (Some((x, y)), None) = (hover, &app.stroke) {
+    // Auswahl: gestrichelter Rahmen.
+    if let Some(a) = app.selection {
+        let r = Rect::from_min_size(
+            origin + egui::vec2(a.x as f32 * cell, a.y as f32 * cell),
+            egui::vec2(a.w as f32 * cell, a.h as f32 * cell),
+        );
+        let clip = painter.with_clip_rect(area);
+        let corners = [
+            r.left_top(),
+            r.right_top(),
+            r.right_bottom(),
+            r.left_bottom(),
+            r.left_top(),
+        ];
+        clip.add(egui::Shape::line(
+            corners.to_vec(),
+            egui::Stroke::new(1.0, Color32::WHITE),
+        ));
+        clip.extend(egui::Shape::dashed_line(
+            &corners,
+            egui::Stroke::new(1.0, Color32::BLACK),
+            4.0,
+            4.0,
+        ));
+    }
+
+    // Spiegelachsen.
+    if app.brush.tool.mirrors() && (app.brush.mirror_x || app.brush.mirror_y) {
+        let axis = egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(0, 200, 230, 160));
+        if app.brush.mirror_x {
+            painter.vline(image_rect.center().x, image_rect.y_range(), axis);
+        }
+        if app.brush.mirror_y {
+            painter.hline(image_rect.x_range(), image_rect.center().y, axis);
+        }
+    }
+
+    // Pinsel-Umriss unter dem Mauszeiger; bei der Sprühdose ein Kreis.
+    if let (Some((x, y)), None, Tool::Spray) = (hover, &app.stroke, app.brush.tool) {
+        let r = app.brush.size as f32 + 0.5;
+        let c = origin + egui::vec2((x as f32 + 0.5) * cell, (y as f32 + 0.5) * cell);
+        let clip = painter.with_clip_rect(area);
+        clip.circle_stroke(c, r * cell + 1.0, egui::Stroke::new(1.0, Color32::BLACK));
+        clip.circle_stroke(c, r * cell, egui::Stroke::new(1.0, Color32::WHITE));
+    } else if let (Some((x, y)), None) = (hover, &app.stroke) {
         let n = if app.brush.tool.uses_size() {
             i64::from(app.brush.size)
         } else {
@@ -222,6 +265,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         if down {
             if let Some(p) = pos {
                 drag(app, cell_at(p));
+            }
+            // Die Sprühdose sprüht weiter, solange die Taste gedrückt bleibt.
+            let now = ui.input(|i| i.time);
+            if now - app.last_puff > 0.04 {
+                app.last_puff = now;
+                tick(app);
             }
         } else {
             end(app);
@@ -289,6 +338,19 @@ fn begin(app: &mut App, at: (i64, i64)) {
     }
     let target = Target::new(app.frame, app.layer);
     let brush = app.brush;
+    let custom = match brush.shape {
+        ShapeChoice::Custom(i) if brush.tool == Tool::Shape => app.custom_shapes.get(i).cloned(),
+        _ => None,
+    };
+    let lifted = if brush.tool == Tool::Select {
+        app.lift_at(at)
+    } else {
+        None
+    };
+    if brush.tool == Tool::Select && lifted.is_none() {
+        // Eine neue Auswahl beginnt; was schwebte, bleibt liegen.
+        app.floating = None;
+    }
     let Some(doc) = &mut app.doc else { return };
     let hidden = doc
         .sprite(id)
@@ -302,7 +364,7 @@ fn begin(app: &mut App, at: (i64, i64)) {
         .into())
     } else {
         doc.stroke_sprite(id)
-            .and_then(|s| Stroke::begin(s, target, brush, at))
+            .and_then(|s| Stroke::begin(s, target, brush, at, custom, lifted))
     };
     match started {
         Ok(stroke) => app.stroke = Some((id, stroke)),
@@ -321,13 +383,28 @@ fn drag(app: &mut App, at: (i64, i64)) {
         return;
     }
     let result = doc.stroke_sprite(*id).and_then(|s| stroke.drag(s, at));
+    if stroke.tool() == Tool::Select {
+        app.selection = stroke.selection();
+    }
     if let Err(err) = result {
         app.error(err);
     }
 }
 
+fn tick(app: &mut App) {
+    let (Some(doc), Some((id, stroke))) = (&mut app.doc, &mut app.stroke) else {
+        return;
+    };
+    if stroke.tool() != Tool::Spray {
+        return;
+    }
+    if let Err(err) = doc.stroke_sprite(*id).and_then(|s| stroke.tick(s)) {
+        app.error(err);
+    }
+}
+
 fn end(app: &mut App) {
-    let Some((id, _)) = app.stroke.take() else {
+    let Some((id, stroke)) = app.stroke.take() else {
         return;
     };
     if let Some(doc) = &mut app.doc {
@@ -336,6 +413,16 @@ fn end(app: &mut App) {
                 "Speichern fehlgeschlagen: {err}",
                 "Saving failed: {err}"
             ));
+        }
+    }
+    if stroke.tool() == Tool::Select {
+        if !stroke.dragged() && !stroke.is_moving() {
+            // Ein einfacher Klick neben die Auswahl hebt sie auf.
+            app.deselect();
+        } else {
+            app.selection = stroke.selection();
+            let floating = stroke.finish();
+            app.set_floating(floating);
         }
     }
 }

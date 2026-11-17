@@ -17,7 +17,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 23 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 25 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -25,6 +25,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | 7 | Prüf-Hinweise, Paletten aus Bildern, Farbreduktion, Projekt-Stil | fertig |
 | 8 | Einstellungen (Speicherordner, Sprache Deutsch/Englisch), Werkzeug-Symbole | fertig |
 | 9 | Automatische Konturen, Projekte löschen, aufgeräumte Seitenleisten, Programmsymbol | fertig |
+| 10 | Formen und eigene Formen, Sprühdose, Aufhellen/Abdunkeln, Auswahl, Spiegeln, Pixel-perfekt, Farbe ersetzen, Leinwandgröße, Paletten mit 32 und 64 Farben | fertig |
 
 ## Aufbau
 
@@ -50,9 +51,20 @@ Wichtige Typen in `pixel-core`:
 `pixelart-studio` ist das Programm zum Selberzeichnen:
 
 - Leinwand mit pixelgenauer Vergrößerung, Raster und Zwiebelhaut (vorheriger Frame scheint durch)
-- Stift, Radierer, Füllen, Pipette, Linie, Rechteck, Ellipse, Verschieben, jeweils mit eigenem Pixel-Symbol
+- Werkzeuge mit eigenem Pixel-Symbol: Stift (auf Wunsch pixel-perfekt), Radierer, Füllen, Pipette, Sprühdose,
+  Aufhellen/Abdunkeln entlang der Farbtreppen der Palette, Linie, Rechteck, Ellipse, Formen, Auswahl und
+  Ebene verschieben; vorn die Pinselgröße in px, darunter die Einstellungen des gewählten Werkzeugs
+- **Formen:** Herz, Raute, Stern, Dreieck, Kreuz, Sechseck, Pfeil und Kreis, gefüllt oder als Umriss, in jeder
+  Größe aufgezogen. **Als Form speichern…** macht Gezeichnetes (die Auswahl oder eine Ebene) zu einer eigenen
+  Form; sie liegt als PNG im Speicherordner unter `shapes` und steht in allen Projekten bereit
+- **Auswahl:** Bereich aufziehen, verschieben, kopieren, ausschneiden, einfügen (auch Bilder aus der
+  Zwischenablage), spiegeln und leeren; Strg+A, Strg+C, Strg+X, Strg+V, Entf, Esc
+- **Spiegeln beim Zeichnen** links-rechts und oben-unten, die Achsen sind auf der Leinwand zu sehen
+- **Farbe ersetzen…** im aktuellen oder in allen Frames, auf einer oder allen Ebenen; **Leinwandgröße…**
+  mit Ausrichtung oder auf den Inhalt zugeschnitten (eine Figur ändert sich mit allen Animationen)
+- Neue Figuren und Bilder mit Farbtreppen aus 32 oder 64 Farben, der Palette des Projekts oder den Farben eines Bildes
 - Oberfläche auf Deutsch oder Englisch (Datei › Einstellungen)
-- Palette, Ebenen mit Vorschaubild, Timeline mit Vorschaubildern und Animationsvorschau
+- Palette, Ebenen mit Vorschaubild, Deckkraft und Reihenfolge, Timeline mit Vorschaubildern und Animationsvorschau
 - Automatische Kontur (Kontur…), siehe unten
 - Projekte löschen: Datei › Projekt löschen… oder Rechtsklick in der Projektliste
 - Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG, Spritesheet, GIF oder WebM
@@ -86,6 +98,10 @@ gesperrte Paletten.
 | `noise` | Körnung mit festem Startwert, also jedes Mal dasselbe Bild |
 | `shader` | Formel je Pixel mit `x`, `y`, `frame`, `dist()`, `noise()`, `rand()`: für Glut, Licht und Muster |
 | `stamp` | Ein Stück kopieren und einfügen, auch gespiegelt, gedreht, umgefärbt oder aus einem anderen Asset |
+| `shape` | Herz, Raute, Stern, Dreieck, Kreuz, Sechseck, Pfeil, Kreis oder eine eigene Form in jeder Größe |
+| `spray` | Sprühdose: zufällig gestreute Pixel in einem Kreis, mit Dichte und festem Startwert |
+| `lighten`, `darken` | Gezeichnetes eine Stufe heller oder dunkler, entlang der Farbtreppen der Palette |
+| `move_area`, `flip_area`, `clear_area` | Einen Ausschnitt verschieben, spiegeln oder leeren |
 
 Die Flächen-Ops nehmen einen Ausschnitt (`x`, `y`, `w`, `h`) und eine Maske (`mask`: alles, nur Gezeichnetes,
 nur Leeres oder nur eine bestimmte Farbe). Die Formel von `shader` kann nur rechnen: Es gibt keine Schleifen,
@@ -94,11 +110,13 @@ keinen Zugriff auf Dateien und keinen fremden Code, und ihre Länge ist begrenzt
 Ein Aufruf kann mehrere Frames auf einmal zeichnen (`frame`: Zahl, Liste oder `"all"`). `per_frame` legt fest,
 was sich von Frame zu Frame ändert: andere Farben oder zusätzliche Ops wie eine Verschiebung. `undo` nimmt die
 letzten Zeichen-Aufrufe zurück, solange das Bild inzwischen nicht anders geändert wurde. `view` zeigt auf Wunsch
-ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneinander.
+ein Pixelraster mit Koordinaten, einen Ausschnitt oder die Kachel 3×3 nebeneinander. Mit `mirror` wird jeder
+Aufruf spiegelsymmetrisch. Eigene Formen verwaltet Claude mit `custom_shapes`, die Leinwand ändert
+`resize_canvas`, und `edit_layers` verschiebt Ebenen nach oben oder unten.
 
 ## Automatische Kontur
 
-Über **Kontur…** (unter den Ebenen, im Menü Bearbeiten oder per Rechtsklick auf ein Asset) bekommt ein Bild,
+Über **Kontur…** (oben in der Werkzeugleiste, im Menü Bearbeiten oder per Rechtsklick auf ein Asset) bekommt ein Bild,
 eine Animation oder eine Figur samt allen Animationen eine Kontur auf einer eigenen Ebene ganz oben. Sie entsteht
 aus allen anderen sichtbaren Ebenen und wird nach jeder Änderung in allen Frames neu gezeichnet, egal ob du
 zeichnest oder Claude. Claude benutzt dafür `set_outline`. Die Kontur ist freiwillig; ohne sie ändert sich nichts.

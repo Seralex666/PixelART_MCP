@@ -161,6 +161,8 @@ fn lists_all_tools_with_schemas() {
         "reduce_colors",
         "set_outline",
         "delete_project",
+        "custom_shapes",
+        "resize_canvas",
     ] {
         assert!(names.contains(&expected), "tool {expected} is missing");
     }
@@ -177,6 +179,7 @@ fn lists_all_tools_with_schemas() {
     let schema = draw["inputSchema"].to_string();
     for op in [
         "outline", "shade", "dither", "gradient", "noise", "shader", "stamp", "grid", "flip_v",
+        "shape", "spray", "lighten",
     ] {
         assert!(
             schema.contains(&format!("\"{op}\"")),
@@ -759,10 +762,21 @@ fn import_brings_files_back_as_image_character_and_animation() {
 
 /// Die Farben einer Ebene als Zeilen, je Pixel ein Farbwert ("." = durchsichtig).
 fn colors(c: &mut Client, asset: &str, frame: usize, layer: usize) -> Vec<Vec<String>> {
+    colors_in(c, "P", asset, frame, layer)
+}
+
+/// Wie [`colors`], für ein Projekt mit anderem Namen.
+fn colors_in(
+    c: &mut Client,
+    project: &str,
+    asset: &str,
+    frame: usize,
+    layer: usize,
+) -> Vec<Vec<String>> {
     let px: Value = serde_json::from_str(
         &c.ok(
             "get_pixels",
-            json!({"project": "P", "asset": asset, "frame": frame, "layer": layer}),
+            json!({"project": project, "asset": asset, "frame": frame, "layer": layer}),
         )
         .text,
     )
@@ -1613,4 +1627,164 @@ fn projects_are_deleted_only_with_the_name_repeated() {
             json!({"project": "Weg", "confirm": "Weg"})
         )
         .contains("no project"));
+}
+
+#[test]
+fn shapes_spray_tone_mirror_and_areas() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "F"}));
+    c.ok(
+        "create_image",
+        json!({"project": "F", "name": "Bild", "width": 16, "height": 12, "palette_preset": "ramps32"}),
+    );
+    let info: Value = serde_json::from_str(&c.ok("get_studio_info", json!({})).text).unwrap();
+    assert!(info["shapes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == "heart"));
+    assert!(info["palette_presets"]["ramps64"].is_string());
+
+    let heart = c.ok(
+        "draw",
+        json!({"project": "F", "asset": "Bild",
+               "ops": [{"op": "shape", "shape": "heart", "color": "#b13e53", "x": 0, "y": 0, "w": 7, "h": 7, "filled": true}]}),
+    );
+    assert!(heart.image.is_some());
+    let px = colors_in(&mut c, "F", "Bild", 0, 0);
+    assert_eq!(px[0][0], ".");
+    assert_ne!(px[0][1], ".");
+    assert_ne!(px[6][3], ".");
+    assert!(c
+        .err(
+            "draw",
+            json!({"project": "F", "asset": "Bild",
+                   "ops": [{"op": "shape", "shape": "blob", "color": "#000000", "x": 0, "y": 0, "w": 3, "h": 3}]}),
+        )
+        .contains("heart"));
+
+    // Eine eigene Form aus dem Herz, in einem anderen Projekt gezeichnet.
+    let saved = c.ok(
+        "custom_shapes",
+        json!({"action": "save", "name": "Mein Herz", "project": "F", "asset": "Bild", "area": [0, 0, 8, 8]}),
+    );
+    assert!(saved.text.contains("7×7"), "{}", saved.text);
+    c.ok("create_project", json!({"project": "G"}));
+    c.ok(
+        "create_image",
+        json!({"project": "G", "name": "Leer", "width": 20, "height": 20}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer",
+               "ops": [{"op": "shape", "shape": "mein herz", "keep_colors": true, "x": 0, "y": 0, "w": 14, "h": 14, "filled": true}]}),
+    );
+    let big = colors_in(&mut c, "G", "Leer", 0, 0);
+    assert_ne!(big[13][6], ".");
+    assert!(c.ok("custom_shapes", json!({})).text.contains("Mein Herz"));
+    c.ok(
+        "custom_shapes",
+        json!({"action": "delete", "name": "Mein Herz"}),
+    );
+    assert!(c
+        .ok("custom_shapes", json!({}))
+        .text
+        .contains("No custom shapes"));
+
+    // Spiegeln: ein Pixel links oben erscheint in allen vier Ecken.
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer", "mirror": "both",
+               "ops": [{"op": "clear"}, {"op": "pixels", "points": [[1, 2]], "color": "#ffffff"}]}),
+    );
+    let m = colors_in(&mut c, "G", "Leer", 0, 0);
+    for (x, y) in [(1, 2), (18, 2), (1, 17), (18, 17)] {
+        assert_eq!(m[y][x], "#ffffff", "{x},{y}");
+    }
+
+    // Sprühen, Aufhellen und Abdunkeln, Ausschnitte.
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer",
+               "ops": [{"op": "clear"}, {"op": "spray", "color": "#3b5dc9", "x": 10, "y": 10, "radius": 3, "density": 1.0}]}),
+    );
+    let sprayed = colors_in(&mut c, "G", "Leer", 0, 0);
+    assert_ne!(sprayed[10][13], ".");
+    assert_eq!(sprayed[10][14], ".");
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer",
+               "ops": [{"op": "clear"}, {"op": "rect", "x": 0, "y": 0, "w": 2, "h": 1, "color": "#808080", "filled": true},
+                       {"op": "lighten", "x": 0, "y": 0, "w": 1, "h": 1}, {"op": "darken", "x": 1, "y": 0, "w": 1, "h": 1}]}),
+    );
+    let toned = colors_in(&mut c, "G", "Leer", 0, 0);
+    assert_ne!(toned[0][0], "#808080");
+    assert_ne!(toned[0][1], "#808080");
+    assert_ne!(toned[0][0], toned[0][1]);
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer",
+               "ops": [{"op": "move_area", "area": [0, 0, 2, 1], "dx": 5, "dy": 5},
+                       {"op": "flip_area", "area": [5, 5, 2, 1], "horizontal": true}]}),
+    );
+    let moved = colors_in(&mut c, "G", "Leer", 0, 0);
+    assert_eq!(moved[0][0], ".");
+    assert_eq!(moved[5][6], toned[0][0]);
+    assert_eq!(moved[5][5], toned[0][1]);
+    c.ok(
+        "draw",
+        json!({"project": "G", "asset": "Leer", "ops": [{"op": "clear_area", "area": [5, 5, 2, 1]}]}),
+    );
+    assert_eq!(colors_in(&mut c, "G", "Leer", 0, 0)[5][5], ".");
+}
+
+#[test]
+fn canvas_resizes_with_the_character_and_layers_move() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "R"}));
+    c.ok(
+        "create_character",
+        json!({"project": "R", "name": "Held", "width": 8, "height": 8,
+               "palette": ["#000000", "#41a6f6"], "layers": ["body", "head"]}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "R", "asset": "Held", "ops": [{"op": "pixels", "points": [[3, 7]], "color": "#41a6f6"}]}),
+    );
+    c.ok(
+        "create_animation",
+        json!({"project": "R", "character": "Held", "kind": "walk", "frames": 2}),
+    );
+    let r = c.ok(
+        "resize_canvas",
+        json!({"project": "R", "asset": "Held walk", "width": 12, "height": 10, "anchor": "bottom"}),
+    );
+    assert!(
+        r.text.contains("12×10") && r.text.contains("animation"),
+        "{}",
+        r.text
+    );
+    // Die Füße bleiben unten: (3, 7) wandert nach (5, 9).
+    assert_eq!(colors_in(&mut c, "R", "Held", 0, 0)[9][5], "#41a6f6");
+    assert_eq!(colors_in(&mut c, "R", "Held walk", 1, 0)[9][5], "#41a6f6");
+    let o: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "R"})).text).unwrap();
+    assert!(o["consistency_issues"].as_array().unwrap().is_empty());
+    let crop = c.ok(
+        "resize_canvas",
+        json!({"project": "R", "asset": "Held", "crop_to_content": true}),
+    );
+    assert!(crop.text.contains("1×1"), "{}", crop.text);
+
+    let moved = c.ok(
+        "edit_layers",
+        json!({"project": "R", "asset": "Held", "action": "move", "layer": "head", "to": 0}),
+    );
+    assert!(moved.text.contains("head, body"), "{}", moved.text);
+    assert!(c
+        .err(
+            "edit_layers",
+            json!({"project": "R", "asset": "Held", "action": "move", "layer": "head", "to": 5}),
+        )
+        .contains("`to`"));
 }
