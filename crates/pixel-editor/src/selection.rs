@@ -66,6 +66,13 @@ impl App {
             ));
             return false;
         }
+        if self.sprite().is_some_and(|s| s.is_reference(self.layer)) {
+            self.error(tr(
+                "Diese Ebene ist eine Vorlage zum Nachzeichnen. Wähle eine andere Ebene.",
+                "This layer is a reference to trace over. Pick another layer.",
+            ));
+            return false;
+        }
         true
     }
 

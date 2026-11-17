@@ -355,8 +355,9 @@ pub fn build_palette<'a>(frames: impl IntoIterator<Item = &'a [Rgba]>, n: usize)
             sums[i].1 += k;
         }
         for (p, (s, k)) in palette.iter_mut().zip(sums) {
-            if k > 0 {
-                *p = Rgba::rgb((s[0] / k) as u8, (s[1] / k) as u8, (s[2] / k) as u8);
+            let mean = |v: u64| v.checked_div(k).map(|m| m as u8);
+            if let (Some(r), Some(g), Some(b)) = (mean(s[0]), mean(s[1]), mean(s[2])) {
+                *p = Rgba::rgb(r, g, b);
             }
         }
     }
@@ -486,7 +487,8 @@ pub struct Converted {
     pub frames: Vec<Vec<Rgba>>,
     /// Die benutzten Farben, von dunkel nach hell.
     pub palette: Vec<Rgba>,
-    /// Wie viele Pixel des Originals als Hintergrund entfielen (über alle Frames).
+    /// Wie viele Pixel als Hintergrund entfielen (über alle Frames; bei großen
+    /// Bildern gezählt in der grob verkleinerten Fassung).
     pub background_removed: usize,
 }
 
@@ -501,13 +503,20 @@ pub fn convert(frames: &[&[Rgba]], w: u32, h: u32, options: &Pixelate) -> Result
         return fail("the frames do not match the picture size");
     }
     let (tw, th) = (options.width, options.height);
+    // Sehr große Bilder erst grob verkleinern: höchstens das Vierfache der Zielgröße.
+    // Das Ergebnis bleibt gleich (Flächenmittel), geht aber viel schneller.
+    let (pw, ph) = (w.min(tw.saturating_mul(4)), h.min(th.saturating_mul(4)));
     let mut removed = 0;
     let small: Vec<Vec<Rgba>> = frames
         .iter()
         .map(|f| {
-            let mut px = f.to_vec();
-            removed += remove_background(&mut px, w, h, options.background, options.tolerance);
-            let mut out = resample(&px, w, h, tw, th, true);
+            let mut px = if (pw, ph) == (w, h) {
+                f.to_vec()
+            } else {
+                resample(f, w, h, pw, ph, false)
+            };
+            removed += remove_background(&mut px, pw, ph, options.background, options.tolerance);
+            let mut out = resample(&px, pw, ph, tw, th, true);
             if options.vivid {
                 out.iter_mut()
                     .filter(|c| !c.is_transparent())

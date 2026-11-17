@@ -92,7 +92,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `reduce_colors` | Bild oder Figur samt Animationen auf weniger Farben bringen |
 | `set_outline` | Automatische Kontur auf eigener Ebene für ein Bild, eine Animation oder eine Figur samt Animationen; folgt jeder Änderung |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
-| `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen |
+| `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen; mit `pixelate` Fotos und Zeichnungen in Pixel-Art umwandeln, mit `as: "reference"` als Vorlage-Ebene zum Nachzeichnen |
 | `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video |
 | `delete_asset` | Figur, Animation oder Bild löschen |
 | `delete_project` | Ganzes Projekt löschen, auf Wunsch samt Exporten; der Name muss zur Sicherheit wiederholt werden |

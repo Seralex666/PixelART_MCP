@@ -1867,7 +1867,10 @@ fn photos_turn_into_pixel_art_and_references_help_tracing() {
         .text,
     )
     .unwrap();
-    assert_ne!(middle["rows"][0], ".", "the reference layer has the picture");
+    assert_ne!(
+        middle["rows"][0], ".",
+        "the reference layer has the picture"
+    );
     let r = c.ok("view", json!({"project": "Foto", "asset": "Held"}));
     let img = image::load_from_memory(r.image.as_ref().unwrap())
         .unwrap()

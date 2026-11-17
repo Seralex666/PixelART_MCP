@@ -1312,6 +1312,7 @@ impl App {
     fn layer_list(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.sprite() else { return };
         let auto = s.outline_layer();
+        let refs: Vec<bool> = (0..s.layer_count()).map(|i| s.is_reference(i)).collect();
         let layers: Vec<(String, bool)> = s
             .frame(self.frame)
             .map(|f| {
@@ -1382,7 +1383,17 @@ impl App {
             };
             let x = thumb.max.x + 8.0;
             let is_auto = auto == Some(i);
-            let y = if is_auto {
+            let note = if is_auto {
+                Some(tr("automatische Kontur", "automatic outline"))
+            } else if refs.get(i).copied().unwrap_or(false) {
+                Some(tr(
+                    "Vorlage, nicht im Bild",
+                    "reference, not in the picture",
+                ))
+            } else {
+                None
+            };
+            let y = if note.is_some() {
                 rect.center().y - 7.0
             } else {
                 rect.center().y
@@ -1394,11 +1405,11 @@ impl App {
                 egui::FontId::proportional(14.0),
                 text_color,
             );
-            if is_auto {
+            if let Some(note) = note {
                 painter.text(
                     egui::pos2(x, rect.center().y + 8.0),
                     egui::Align2::LEFT_CENTER,
-                    tr("automatische Kontur", "automatic outline"),
+                    note,
                     egui::FontId::proportional(11.0),
                     visuals.weak_text_color(),
                 );
