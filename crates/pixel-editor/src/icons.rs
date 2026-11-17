@@ -1,4 +1,4 @@
-//! Kleine Pixel-Symbole für die Werkzeuge, als 16×16-Raster im Programm selbst.
+//! Kleine Pixel-Symbole für Werkzeuge und Schalter, als 16×16-Raster im Programm selbst.
 //!
 //! `#` ist die Umrissfarbe und folgt dem hellen oder dunklen Erscheinungsbild,
 //! die Buchstaben sind feste Farben, `.` ist durchsichtig.
@@ -8,7 +8,102 @@ use eframe::egui::{self, Color32};
 
 const SIZE: usize = 16;
 
-fn art(tool: Tool) -> [&'static str; SIZE] {
+/// Ein Symbol: ein Werkzeug oder ein Schalter der Werkzeugleiste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Icon {
+    Tool(Tool),
+    /// Pinsel vor der Pinselgröße.
+    Brush,
+    /// Knopf „Kontur…“.
+    Outline,
+    /// Spiegeln links und rechts.
+    MirrorX,
+    /// Spiegeln oben und unten.
+    MirrorY,
+}
+
+impl Icon {
+    pub fn all() -> Vec<Icon> {
+        let mut all: Vec<Icon> = Tool::ALL.iter().map(|&t| Icon::Tool(t)).collect();
+        all.extend([Icon::Brush, Icon::Outline, Icon::MirrorX, Icon::MirrorY]);
+        all
+    }
+}
+
+fn rows(icon: Icon) -> Vec<String> {
+    match icon {
+        Icon::Tool(t) => tool_art(t).iter().map(|r| r.to_string()).collect(),
+        Icon::Brush => lines(&[
+            "................",
+            "...........##...",
+            "..........#gg#..",
+            ".........#gg#...",
+            "........#gg#....",
+            ".......#gg#.....",
+            "......#ww#......",
+            ".....#ww#.......",
+            "....#bb#........",
+            "...#bbb#........",
+            "..#bbb#.........",
+            "..#bb#..........",
+            "..###...........",
+            "................",
+            "................",
+            "................",
+        ]),
+        Icon::Outline => lines(&[
+            "................",
+            "......####......",
+            ".....#yyyy#.....",
+            "....#yyyyyy#....",
+            "....#yyyyyy#....",
+            ".....#yyyy#.....",
+            "......####......",
+            "....########....",
+            "...#bbbbbbbb#...",
+            "..#bbbbbbbbbb#..",
+            "..#bbbbbbbbbb#..",
+            "..#bbbbbbbbbb#..",
+            "...##########...",
+            "................",
+            "................",
+            "................",
+        ]),
+        Icon::MirrorX => lines(&MIRROR),
+        Icon::MirrorY => {
+            // Dasselbe Bild, an der Diagonale gekippt.
+            let m: Vec<&[u8]> = MIRROR.iter().map(|r| r.as_bytes()).collect();
+            (0..SIZE)
+                .map(|y| (0..SIZE).map(|x| m[x][y] as char).collect())
+                .collect()
+        }
+    }
+}
+
+fn lines(rows: &[&str]) -> Vec<String> {
+    rows.iter().map(|r| r.to_string()).collect()
+}
+
+const MIRROR: [&str; SIZE] = [
+    "................",
+    "................",
+    ".......##.......",
+    ".......##.......",
+    ".....#....#.....",
+    "....##....##....",
+    "...#b#.##.#c#...",
+    "..#bb#.##.#cc#..",
+    ".#bbb#....#ccc#.",
+    "..#bb#....#cc#..",
+    "...#b#.##.#c#...",
+    "....##.##.##....",
+    ".....#....#.....",
+    "................",
+    ".......##.......",
+    "................",
+];
+
+fn tool_art(tool: Tool) -> [&'static str; SIZE] {
     match tool {
         Tool::Pencil => [
             "................",
@@ -79,6 +174,78 @@ fn art(tool: Tool) -> [&'static str; SIZE] {
             "....#c#.........",
             "...##...........",
             "..b.............",
+            "................",
+            "................",
+        ],
+        Tool::Spray => [
+            "................",
+            ".........r..r...",
+            "......##...r..r.",
+            ".....#cc#.r..r..",
+            ".....####...r...",
+            "....#gggg#......",
+            "....#gggg#......",
+            "....#bbbb#......",
+            "....#bbbb#......",
+            "....#bbbb#......",
+            "....#bbbb#......",
+            "....#gggg#......",
+            "....#gggg#......",
+            "....######......",
+            "................",
+            "................",
+        ],
+        Tool::Shade => [
+            "................",
+            "................",
+            "......####......",
+            "....##ee####....",
+            "...#eeee#####...",
+            "...#eeee#####...",
+            "..#eeeee######..",
+            "..#eeeee######..",
+            "..#eeeee######..",
+            "..#eeeee######..",
+            "...#eeee#####...",
+            "...#eeee#####...",
+            "....##ee####....",
+            "......####......",
+            "................",
+            "................",
+        ],
+        Tool::Shape => [
+            "................",
+            "................",
+            "...###....###...",
+            "..#rrr#..#rrr#..",
+            ".#rrrrr##rrrrr#.",
+            ".#rrrrrrrrrrrr#.",
+            ".#rrrrrrrrrrrr#.",
+            ".#rrrrrrrrrrrr#.",
+            "..#rrrrrrrrrr#..",
+            "...#rrrrrrrr#...",
+            "....#rrrrrr#....",
+            ".....#rrrr#.....",
+            "......#rr#......",
+            ".......##.......",
+            "................",
+            "................",
+        ],
+        Tool::Select => [
+            "................",
+            ".##..##..##..#..",
+            ".#...........#..",
+            "................",
+            "................",
+            ".#...........#..",
+            ".#...........#..",
+            "................",
+            "................",
+            ".#...........#..",
+            ".#...........#..",
+            "................",
+            "................",
+            ".##..##..##..#..",
             "................",
             "................",
         ],
@@ -172,9 +339,9 @@ fn color(ch: u8, outline: Color32) -> Color32 {
     }
 }
 
-/// Das Symbol eines Werkzeugs als Bild.
-pub fn image(tool: Tool, outline: Color32) -> egui::ColorImage {
-    let rows = art(tool);
+/// Ein Symbol als Bild.
+pub fn image(icon: Icon, outline: Color32) -> egui::ColorImage {
+    let rows = rows(icon);
     let pixels = rows
         .iter()
         .flat_map(|row| row.bytes().map(|ch| color(ch, outline)))
@@ -186,30 +353,35 @@ pub fn image(tool: Tool, outline: Color32) -> egui::ColorImage {
 #[derive(Default)]
 pub struct Icons {
     outline: Option<Color32>,
-    textures: Vec<(Tool, egui::TextureHandle)>,
+    textures: Vec<(Icon, egui::TextureHandle)>,
 }
 
 impl Icons {
-    /// Das Symbol für `tool`. Wechselt das Erscheinungsbild, entstehen die Texturen neu.
+    /// Das Symbol eines Werkzeugs.
     pub fn get(&mut self, ctx: &egui::Context, tool: Tool) -> egui::TextureId {
+        self.icon(ctx, Icon::Tool(tool))
+    }
+
+    /// Ein Symbol. Wechselt das Erscheinungsbild, entstehen die Texturen neu.
+    pub fn icon(&mut self, ctx: &egui::Context, icon: Icon) -> egui::TextureId {
         let outline = ctx.global_style().visuals.strong_text_color();
         if self.outline != Some(outline) {
             self.outline = Some(outline);
-            self.textures = Tool::ALL
-                .iter()
-                .map(|&t| {
+            self.textures = Icon::all()
+                .into_iter()
+                .map(|i| {
                     let tex = ctx.load_texture(
-                        format!("tool-{t:?}"),
-                        image(t, outline),
+                        format!("icon-{i:?}"),
+                        image(i, outline),
                         egui::TextureOptions::NEAREST,
                     );
-                    (t, tex)
+                    (i, tex)
                 })
                 .collect();
         }
         self.textures
             .iter()
-            .find(|(t, _)| *t == tool)
+            .find(|(i, _)| *i == icon)
             .map(|(_, tex)| tex.id())
             .unwrap_or_default()
     }
@@ -220,9 +392,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_tool_has_a_complete_icon_in_known_colors() {
-        for tool in Tool::ALL {
-            let rows = art(tool);
+    fn every_icon_is_complete_and_in_known_colors() {
+        for tool in Icon::all() {
+            let rows = rows(tool);
+            assert_eq!(rows.len(), SIZE, "{tool:?}");
             assert!(rows.iter().all(|r| r.len() == SIZE), "{tool:?}");
             assert!(
                 rows.iter()

@@ -32,6 +32,9 @@ pub enum Dialog {
     Settings(SettingsForm),
     Outline(Box<OutlineForm>),
     DeleteProject { name: String, exports: bool },
+    ReplaceColor(ReplaceForm),
+    Resize(ResizeForm),
+    SaveShape { name: String },
 }
 
 /// Formular für Datei → Einstellungen.
@@ -51,30 +54,49 @@ impl SettingsForm {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PalettePreset {
+    Ramps32,
+    Ramps64,
     Default16,
     Gray4,
     Gray8,
     Gray16,
+    /// Die Palette aus dem Stil des Projekts.
+    Style,
+    /// Farben aus einer Bilddatei.
+    FromImage,
 }
 
 impl PalettePreset {
-    const ALL: [Self; 4] = [Self::Default16, Self::Gray4, Self::Gray8, Self::Gray16];
+    const FIXED: [Self; 6] = [
+        Self::Ramps32,
+        Self::Ramps64,
+        Self::Default16,
+        Self::Gray4,
+        Self::Gray8,
+        Self::Gray16,
+    ];
 
     fn label(self) -> &'static str {
         match self {
+            Self::Ramps32 => tr("Farbtreppen (32 Farben)", "Color ramps (32 colors)"),
+            Self::Ramps64 => tr("Farbtreppen (64 Farben)", "Color ramps (64 colors)"),
             Self::Default16 => tr("Standard (16 Farben)", "Default (16 colors)"),
             Self::Gray4 => tr("Graustufen (4)", "Grayscale (4)"),
             Self::Gray8 => tr("Graustufen (8)", "Grayscale (8)"),
             Self::Gray16 => tr("Graustufen (16)", "Grayscale (16)"),
+            Self::Style => tr("Palette des Projekts", "Project palette"),
+            Self::FromImage => tr("Aus einem Bild…", "From an image…"),
         }
     }
 
-    fn palette(self) -> Palette {
+    fn fixed(self) -> Palette {
         match self {
+            Self::Ramps64 => Palette::ramps_64(),
             Self::Default16 => Palette::default_16(),
             Self::Gray4 => Palette::grayscale(4),
             Self::Gray8 => Palette::grayscale(8),
             Self::Gray16 => Palette::grayscale(16),
+            _ => Palette::ramps_32(),
         }
     }
 }
@@ -89,6 +111,10 @@ pub struct NewSprite {
     pub height: u32,
     pub bits: u8,
     pub palette: PalettePreset,
+    /// Die Farben aus einem Bild und der Dateiname, wenn „Aus einem Bild…“ gewählt ist.
+    pub image_colors: Option<(String, Vec<Rgba>)>,
+    /// Wie viele Farben aus einem Bild höchstens übernommen werden.
+    pub image_max: usize,
 }
 
 impl NewSprite {
@@ -109,7 +135,9 @@ impl NewSprite {
             width,
             height,
             bits: 32,
-            palette: PalettePreset::Default16,
+            palette: PalettePreset::Ramps32,
+            image_colors: None,
+            image_max: 32,
         }
     }
 }
@@ -218,6 +246,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Settings(form) => settings(app, ui, form),
             Dialog::Outline(form) => crate::outline_dialog::show(app, ui, form),
             Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
+            Dialog::ReplaceColor(form) => replace_color(app, ui, form),
+            Dialog::Resize(form) => resize(app, ui, form),
+            Dialog::SaveShape { name } => save_shape(app, ui, name),
         };
         if let Some(err) = &app.dialog_error {
             ui.add_space(4.0);
@@ -382,30 +413,100 @@ fn new_sprite(app: &mut App, ui: &mut egui::Ui, f: &mut NewSprite) -> Outcome {
     });
 
     section(ui, "Palette");
+    let style: Vec<Rgba> = app
+        .doc
+        .as_ref()
+        .map(|d| d.project().style.palette.clone())
+        .unwrap_or_default();
     egui::ComboBox::from_id_salt("palette")
         .selected_text(f.palette.label())
         .width(260.0)
         .show_ui(ui, |ui| {
-            for p in PalettePreset::ALL {
+            for p in PalettePreset::FIXED {
                 ui.selectable_value(&mut f.palette, p, p.label());
             }
+            if !style.is_empty() {
+                ui.selectable_value(
+                    &mut f.palette,
+                    PalettePreset::Style,
+                    PalettePreset::Style.label(),
+                );
+            }
+            ui.selectable_value(
+                &mut f.palette,
+                PalettePreset::FromImage,
+                PalettePreset::FromImage.label(),
+            );
         });
+    if f.palette == PalettePreset::FromImage {
+        ui.horizontal(|ui| {
+            if ui.button(tr("Bild wählen…", "Choose image…")).clicked() {
+                let picked = rfd::FileDialog::new()
+                    .add_filter(tr("Bilder", "Images"), &["png", "jpg", "jpeg", "gif"])
+                    .pick_file();
+                if let Some(path) = picked {
+                    match pixel_core::import::read(&path) {
+                        Ok(picture) => {
+                            let pixels = picture
+                                .frames
+                                .iter()
+                                .flat_map(|fr| fr.pixels.iter().copied());
+                            let (colors, _) = pixel_core::quant::palette_of(pixels, f.image_max);
+                            let file = path
+                                .file_name()
+                                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                            f.image_colors = Some((file, colors));
+                            app.dialog_error = None;
+                        }
+                        Err(err) => app.dialog_error = Some(err.to_string()),
+                    }
+                }
+            }
+            ui.label(tr("höchstens", "at most"));
+            egui::ComboBox::from_id_salt("image_max")
+                .selected_text(trf!("{} Farben", "{} colors", f.image_max))
+                .show_ui(ui, |ui| {
+                    for n in [16, 32, 64, 128, 256] {
+                        ui.selectable_value(&mut f.image_max, n, trf!("{n} Farben", "{n} colors"));
+                    }
+                });
+            if let Some((file, _)) = &f.image_colors {
+                ui.weak(file);
+            }
+        });
+    }
+    let palette = match f.palette {
+        PalettePreset::Style => Some(Palette::new(tr("Projekt", "Project"), style.clone())),
+        PalettePreset::FromImage => f
+            .image_colors
+            .as_ref()
+            .map(|(name, colors)| Palette::new(name.clone(), colors.clone())),
+        other => Some(other.fixed()),
+    };
+    if let Some(p) = &palette {
+        palette_strip(ui, &p.colors);
+    }
+    ui.weak(tr(
+        "Die Farbtiefe bestimmt, welche Farben überhaupt möglich sind (32 Bit: alle). Die Palette ist deine Farbauswahl rechts zum Zeichnen. Bei 16 und 32 Bit kannst du trotzdem jede Farbe benutzen und mit „+ aktuelle Farbe“ aufnehmen, bis 256. Bei einer Figur ist die Palette fest, damit jede Animation gleich aussieht, lässt sich aber ergänzen.",
+        "The color depth sets which colors are possible at all (32 bit: all). The palette is your color selection on the right for drawing. At 16 and 32 bit you can still use any color and add it with \"+ current color\", up to 256. A character's palette is fixed so every animation looks the same, but it can be extended.",
+    ));
 
-    let (ok, cancel) = buttons(ui, tr("Anlegen", "Create"), !f.name.trim().is_empty());
+    let ready = !f.name.trim().is_empty() && palette.as_ref().is_some_and(|p| !p.is_empty());
+    let (ok, cancel) = buttons(ui, tr("Anlegen", "Create"), ready);
     if cancel {
         return Outcome::Close;
     }
-    if !ok {
+    let (true, Some(palette)) = (ok, palette) else {
         return Outcome::Keep;
-    }
+    };
     let depth = ColorDepth::from_bits(f.bits).unwrap_or(ColorDepth::Rgba32);
     let Some(doc) = &mut app.doc else {
         return Outcome::Close;
     };
     let created = if f.character {
-        doc.create_character(&f.name, f.width, f.height, depth, f.palette.palette())
+        doc.create_character(&f.name, f.width, f.height, depth, palette)
     } else {
-        doc.create_image(&f.name, f.width, f.height, depth, f.palette.palette())
+        doc.create_image(&f.name, f.width, f.height, depth, palette)
     };
     finish(app, created, |app, id| {
         app.select(id);
@@ -1147,4 +1248,390 @@ fn about(app: &mut App, ui: &mut egui::Ui) -> Outcome {
         return Outcome::Close;
     }
     Outcome::Keep
+}
+
+/// Eine Reihe kleiner Farbfelder als Vorschau einer Palette.
+fn palette_strip(ui: &mut egui::Ui, colors: &[Rgba]) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(1.0, 1.0);
+        for &c in colors.iter().take(256) {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 1.0, crate::app::c32(c));
+        }
+    });
+}
+
+// ---------------------------------------------------------------- Farbe ersetzen
+
+pub struct ReplaceForm {
+    from: Rgba,
+    to: Rgba,
+    all_frames: bool,
+    all_layers: bool,
+    used: Vec<Rgba>,
+    frames: usize,
+}
+
+impl ReplaceForm {
+    pub fn new(app: &App) -> Self {
+        let s = app.sprite();
+        let used = s.map(|s| s.used_colors()).unwrap_or_default();
+        Self {
+            from: used.first().copied().unwrap_or(Rgba::BLACK),
+            to: app.brush.color,
+            all_frames: true,
+            all_layers: false,
+            used,
+            frames: s.map_or(1, |s| s.frames().len()),
+        }
+    }
+}
+
+fn color_choice(ui: &mut egui::Ui, id: &str, c: &mut Rgba, choices: &[Rgba]) {
+    ui.horizontal(|ui| {
+        let mut rgba = c.to_array();
+        if ui.color_edit_button_srgba_unmultiplied(&mut rgba).changed() {
+            *c = Rgba::new(rgba[0], rgba[1], rgba[2], rgba[3]);
+        }
+        ui.monospace(c.to_string());
+    });
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(70.0)
+        .show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(2.0, 2.0);
+                for &k in choices {
+                    let (rect, resp) =
+                        ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+                    ui.painter().rect_filled(rect, 2.0, crate::app::c32(k));
+                    if k == *c {
+                        ui.painter().rect_stroke(
+                            rect,
+                            2.0,
+                            egui::Stroke::new(2.0, ui.visuals().strong_text_color()),
+                            egui::StrokeKind::Outside,
+                        );
+                    }
+                    if resp.on_hover_text(k.to_string()).clicked() {
+                        *c = k;
+                    }
+                }
+            });
+        });
+}
+
+fn replace_color(app: &mut App, ui: &mut egui::Ui, f: &mut ReplaceForm) -> Outcome {
+    ui.set_width(380.0);
+    ui.heading(tr("Farbe ersetzen", "Replace color"));
+    ui.label(tr(
+        "Jeder Pixel der einen Farbe bekommt die andere.",
+        "Every pixel of one color gets the other one.",
+    ));
+    section(ui, tr("Diese Farbe", "This color"));
+    color_choice(ui, "from", &mut f.from, &f.used);
+    let palette = app
+        .sprite()
+        .map(|s| s.palette.colors.clone())
+        .unwrap_or_default();
+    section(ui, tr("wird zu", "becomes"));
+    color_choice(ui, "to", &mut f.to, &palette);
+    section(ui, tr("Wo", "Where"));
+    if f.frames > 1 {
+        ui.radio_value(
+            &mut f.all_frames,
+            false,
+            tr("Nur im aktuellen Frame", "Only in the current frame"),
+        );
+        ui.radio_value(
+            &mut f.all_frames,
+            true,
+            trf!("In allen {} Frames", "In all {} frames", f.frames),
+        );
+    }
+    ui.checkbox(
+        &mut f.all_layers,
+        tr(
+            "Auf allen Ebenen (sonst nur auf der gewählten)",
+            "On all layers (otherwise only the selected one)",
+        ),
+    );
+    let (ok, cancel) = buttons(ui, tr("Ersetzen", "Replace"), f.from != f.to);
+    if cancel {
+        return Outcome::Close;
+    }
+    if !ok {
+        return Outcome::Keep;
+    }
+    let (frame, layer, from, to) = (app.frame, app.layer, f.from, f.to);
+    let (all_frames, all_layers) = (f.all_frames, f.all_layers);
+    let changed = app.sel.and_then(|id| {
+        let doc = app.doc.as_mut()?;
+        Some(doc.edit(id, |s| {
+            let frames: Vec<usize> = if all_frames {
+                (0..s.frames().len()).collect()
+            } else {
+                vec![frame]
+            };
+            let auto = s.outline_layer();
+            let layers: Vec<usize> = if all_layers {
+                (0..s.layer_count()).filter(|&l| Some(l) != auto).collect()
+            } else {
+                vec![layer]
+            };
+            let mut n = 0;
+            for &fr in &frames {
+                for &l in &layers {
+                    n += pixel_core::draw::replace_color(
+                        s,
+                        pixel_core::draw::Target::new(fr, l),
+                        from,
+                        to,
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            Ok(n)
+        }))
+    });
+    match changed {
+        Some(result) => finish(app, result, |app, n| {
+            app.info(if n == 0 {
+                tr(
+                    "Die Farbe kommt dort nicht vor",
+                    "The color does not occur there",
+                )
+                .to_string()
+            } else {
+                trf!("{n} Pixel ersetzt", "Replaced {n} pixels")
+            });
+        }),
+        None => Outcome::Close,
+    }
+}
+
+// ---------------------------------------------------------------- Leinwandgröße
+
+pub struct ResizeForm {
+    width: u32,
+    height: u32,
+    old: (u32, u32),
+    /// Wo der Inhalt bleibt, je Achse −1, 0 oder 1.
+    align: (i8, i8),
+    /// Beim Zuschneiden auf den Inhalt: der Versatz.
+    crop: Option<(i64, i64)>,
+    content: Option<(i64, i64, u32, u32)>,
+    /// Bei Figuren und Animationen: wie viele Assets mitgeändert werden.
+    together: usize,
+}
+
+impl ResizeForm {
+    pub fn new(app: &App) -> Self {
+        let s = app.sprite();
+        let old = s.map_or((32, 32), |s| (s.width(), s.height()));
+        let together = app
+            .sel
+            .and_then(|id| {
+                let doc = app.doc.as_ref()?;
+                let c = doc.character_of(id)?;
+                Some(doc.project().animations_of(c).count() + 1)
+            })
+            .unwrap_or(1);
+        // Bei Figuren bleiben die Füße unten.
+        let character = together > 1 || app.sel.is_some_and(|id| id.kind != AssetKind::Image);
+        Self {
+            width: old.0,
+            height: old.1,
+            old,
+            align: if character { (0, 1) } else { (0, 0) },
+            crop: None,
+            content: s.and_then(|s| s.content_bounds()),
+            together,
+        }
+    }
+}
+
+fn resize(app: &mut App, ui: &mut egui::Ui, f: &mut ResizeForm) -> Outcome {
+    ui.set_width(360.0);
+    ui.heading(tr("Leinwandgröße", "Canvas size"));
+    ui.label(trf!(
+        "Jetzt {}×{} Pixel. Der Inhalt wird nicht skaliert: es kommt Platz dazu oder Rand fällt weg.",
+        "Now {}×{} pixels. The content is not scaled: room is added or edges are cut away.",
+        f.old.0,
+        f.old.1
+    ));
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        let w = ui.add(
+            egui::DragValue::new(&mut f.width)
+                .range(1..=MAX_SIZE)
+                .prefix(tr("Breite ", "Width ")),
+        );
+        let h = ui.add(
+            egui::DragValue::new(&mut f.height)
+                .range(1..=MAX_SIZE)
+                .prefix(tr("Höhe ", "Height ")),
+        );
+        if w.changed() || h.changed() {
+            f.crop = None;
+        }
+    });
+    if f.crop.is_none() {
+        section(ui, tr("Inhalt bleibt", "Content stays"));
+        egui::Grid::new("anchor")
+            .spacing(egui::vec2(2.0, 2.0))
+            .show(ui, |ui| {
+                for y in -1..=1i8 {
+                    for x in -1..=1i8 {
+                        let on = f.align == (x, y);
+                        let resp = ui.add(
+                            egui::Button::new("")
+                                .min_size(egui::vec2(26.0, 22.0))
+                                .selected(on),
+                        );
+                        if on {
+                            let color = ui.visuals().strong_text_color();
+                            ui.painter().circle_filled(resp.rect.center(), 4.0, color);
+                        }
+                        if resp.clicked() {
+                            f.align = (x, y);
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    }
+    ui.add_space(4.0);
+    if let Some((x, y, w, h)) = f.content {
+        if ui
+            .button(tr("Auf den Inhalt zuschneiden", "Crop to content"))
+            .on_hover_text(tr(
+                "Kleinstes Rechteck um alles Gezeichnete, über alle Frames und Ebenen",
+                "Smallest box around everything drawn, over all frames and layers",
+            ))
+            .clicked()
+        {
+            f.width = w;
+            f.height = h;
+            f.crop = Some((-x, -y));
+        }
+    }
+    if f.together > 1 {
+        ui.add_space(4.0);
+        ui.weak(trf!(
+            "Gilt für die Figur und ihre {} Animation(en), damit alle gleich groß bleiben. Das lässt sich nicht rückgängig machen.",
+            "Applies to the character and its {} animation(s) so all stay the same size. This cannot be undone.",
+            f.together - 1
+        ));
+    }
+    let changed = (f.width, f.height) != f.old || f.crop.is_some_and(|c| c != (0, 0));
+    let (ok, cancel) = buttons(ui, tr("Übernehmen", "Apply"), changed);
+    if cancel {
+        return Outcome::Close;
+    }
+    if !ok {
+        return Outcome::Keep;
+    }
+    let (dx, dy) = f
+        .crop
+        .unwrap_or_else(|| pixel_core::sprite::canvas_offset(f.old, (f.width, f.height), f.align));
+    let (w, h) = (f.width, f.height);
+    let result = match (app.sel, app.doc.as_mut()) {
+        (Some(id), Some(doc)) => doc.resize_canvas(id, w, h, dx, dy),
+        _ => return Outcome::Close,
+    };
+    finish(app, result, |app, _| {
+        app.deselect();
+        app.fix_selection();
+        app.view.fit = true;
+        app.info(trf!(
+            "Leinwand ist jetzt {w}×{h} Pixel",
+            "Canvas is now {w}×{h} pixels"
+        ));
+    })
+}
+
+// ---------------------------------------------------------------- Form speichern
+
+fn save_shape(app: &mut App, ui: &mut egui::Ui, name: &mut String) -> Outcome {
+    ui.set_width(360.0);
+    ui.heading(tr("Als Form speichern", "Save as shape"));
+    let what = if app.selection.is_some() {
+        tr(
+            "Das Gezeichnete in der Auswahl",
+            "What is drawn inside the selection",
+        )
+        .to_string()
+    } else {
+        let layer = app
+            .sprite()
+            .map(|s| s.layer_names())
+            .and_then(|n| n.get(app.layer).cloned())
+            .unwrap_or_default();
+        trf!(
+            "Alles auf der Ebene „{layer}“",
+            "Everything on the layer \"{layer}\""
+        )
+    };
+    ui.label(trf!(
+        "{what} wird eine eigene Form. Sie steht danach beim Werkzeug Formen in allen Projekten bereit und lässt sich in jeder Größe aufziehen.",
+        "{what} becomes a custom shape. It is then available with the Shapes tool in all projects and can be dragged out at any size."
+    ));
+    ui.add_space(6.0);
+    name_field(ui, name);
+    let exists = app
+        .custom_shapes
+        .iter()
+        .any(|c| pixel_core::workspace::name_key(&c.name) == pixel_core::workspace::name_key(name));
+    let builtin = pixel_core::shapes::Shape::ALL.iter().any(|b| {
+        b.label().eq_ignore_ascii_case(name.trim()) || b.id() == name.trim().to_lowercase()
+    });
+    if exists {
+        ui.weak(tr(
+            "Eine Form mit diesem Namen wird ersetzt.",
+            "A shape with this name will be replaced.",
+        ));
+    }
+    if builtin {
+        ui.colored_label(
+            ui.visuals().error_fg_color,
+            tr(
+                "So heißt schon eine eingebaute Form.",
+                "A built-in shape already has this name.",
+            ),
+        );
+    }
+    let ok_name = !name.trim().is_empty() && name.trim().chars().count() <= 40 && !builtin;
+    let (ok, cancel) = buttons(ui, tr("Speichern", "Save"), ok_name);
+    if cancel {
+        return Outcome::Close;
+    }
+    if !ok {
+        return Outcome::Keep;
+    }
+    let area = app.selection.map(|a| (a.x, a.y, a.w, a.h));
+    let t = app.target();
+    let shape = match app.sprite() {
+        Some(s) => {
+            pixel_core::shapes::CustomShape::from_layer(name, s, t, area).map_err(|e| e.to_string())
+        }
+        None => return Outcome::Close,
+    };
+    let saved = shape.and_then(|shape| {
+        app.ws
+            .save_shape(&shape)
+            .map(|_| shape)
+            .map_err(|e| e.to_string())
+    });
+    finish(app, saved, |app, shape| {
+        app.reload_shapes(Some(&shape.name));
+        app.brush.tool = Tool::Shape;
+        app.info(trf!(
+            "Form „{}“ gespeichert ({}×{} Pixel)",
+            "Shape \"{}\" saved ({}×{} pixels)",
+            shape.name,
+            shape.width,
+            shape.height
+        ));
+    })
 }

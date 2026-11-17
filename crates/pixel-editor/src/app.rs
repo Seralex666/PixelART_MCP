@@ -7,11 +7,14 @@ use crate::help;
 use crate::icons::Icons;
 use crate::import_dialog::ImportForm;
 use crate::outline_dialog::OutlineForm;
+use crate::selection::FloatKey;
 use crate::settings::Settings;
-use crate::tools::{Brush, Stroke, Tool, MAX_BRUSH};
+use crate::tools::{Brush, Lifted, ShapeChoice, Stroke, Tool};
 use eframe::egui::{self, Color32, Key, RichText, Sense, StrokeKind};
 use pixel_core::draw::{self, Target};
+use pixel_core::effects::{Area, Patch};
 use pixel_core::lang::{tr, Lang};
+use pixel_core::shapes::CustomShape;
 use pixel_core::trf;
 use pixel_core::{Rgba, Sprite, Workspace};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -82,7 +85,18 @@ pub struct App {
     ffmpeg_install: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     shot: Option<Shot>,
     pub settings: Settings,
-    icons: Icons,
+    pub(crate) icons: Icons,
+    /// Die Auswahl auf der Leinwand.
+    pub selection: Option<Area>,
+    /// Ein angehobener Ausschnitt, der noch verschoben werden kann.
+    pub floating: Option<(FloatKey, Lifted)>,
+    pub clipboard: Option<Patch>,
+    /// Die eigenen Formen aus dem Speicherordner.
+    pub custom_shapes: Vec<CustomShape>,
+    /// Zeitpunkt des letzten Sprühstoßes.
+    pub last_puff: f64,
+    /// Deckkraft, während der Regler gezogen wird.
+    opacity_edit: Option<u32>,
 }
 
 /// Bildschirmfoto für automatische Prüfungen (`PIXELART_SHOT=<datei.png>`).
@@ -95,6 +109,7 @@ struct Shot {
 
 impl App {
     pub fn new(ws: Workspace, project: Option<String>, settings: Settings) -> Self {
+        let shapes = ws.custom_shapes();
         let mut app = Self {
             projects: ws.project_names(),
             ws,
@@ -102,12 +117,7 @@ impl App {
             sel: None,
             frame: 0,
             layer: 0,
-            brush: Brush {
-                tool: Tool::Pencil,
-                color: Rgba::BLACK,
-                size: 1,
-                filled: false,
-            },
+            brush: Brush::default(),
             view: View {
                 zoom: 8,
                 pan: egui::Vec2::ZERO,
@@ -134,8 +144,14 @@ impl App {
                 requested: false,
                 done: Arc::new(AtomicBool::new(false)),
             }),
+            custom_shapes: shapes,
             settings,
             icons: Icons::default(),
+            selection: None,
+            floating: None,
+            clipboard: None,
+            last_puff: 0.0,
+            opacity_edit: None,
         };
         app.open_latest(project);
         match std::env::var("PIXELART_SHOT_DIALOG").as_deref() {
@@ -144,6 +160,11 @@ impl App {
             Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
             Ok("settings") => app.dialog = Dialog::Settings(SettingsForm::new(&app)),
             Ok("outline") => app.outline_dialog(),
+            Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
+            Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
+            Ok("shape") => app.open_dialog(Dialog::SaveShape {
+                name: "Stern".into(),
+            }),
             Ok(other) => {
                 // „import:<datei>“ öffnet den Import-Dialog mit dieser Datei.
                 if let Some(path) = other.strip_prefix("import:") {
@@ -221,6 +242,8 @@ impl App {
                 )
             })?;
             self.ws = ws;
+            self.custom_shapes = self.ws.custom_shapes();
+            self.brush.shape = ShapeChoice::Builtin(pixel_core::shapes::Shape::Heart);
             self.doc = None;
             self.sel = None;
             self.projects = self.ws.project_names();
@@ -270,6 +293,8 @@ impl App {
     pub fn select(&mut self, id: AssetId) {
         if self.sel != Some(id) {
             self.sel = Some(id);
+            self.selection = None;
+            self.floating = None;
             self.frame = 0;
             self.layer = 0;
             self.view.fit = true;
@@ -320,7 +345,7 @@ impl App {
         self.check(result)
     }
 
-    fn target(&self) -> Target {
+    pub(crate) fn target(&self) -> Target {
         Target::new(self.frame, self.layer)
     }
 
@@ -477,6 +502,30 @@ impl App {
             return;
         }
         let pressed = |key: Key| ctx.input(|i| i.key_pressed(key));
+        // Kopieren, Ausschneiden und Einfügen kommen je nach System als eigene Ereignisse.
+        let clip = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Copy => Some(0),
+                egui::Event::Cut => Some(1),
+                egui::Event::Paste(_) => Some(2),
+                _ => None,
+            })
+        });
+        match clip {
+            Some(0) => {
+                self.copy_selection();
+                return;
+            }
+            Some(1) => {
+                self.cut_selection();
+                return;
+            }
+            Some(2) => {
+                self.paste();
+                return;
+            }
+            _ => {}
+        }
         let (command, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
         if command {
             if pressed(Key::Z) {
@@ -487,8 +536,22 @@ impl App {
                 self.dialog = Dialog::Export(ExportForm::default());
             } else if pressed(Key::I) {
                 self.import_dialog(None);
+            } else if pressed(Key::C) {
+                self.copy_selection();
+            } else if pressed(Key::X) {
+                self.cut_selection();
+            } else if pressed(Key::V) {
+                self.paste();
+            } else if pressed(Key::A) {
+                self.select_all();
             }
             return;
+        }
+        if pressed(Key::Delete) && self.selection.is_some() {
+            self.delete_selection();
+        }
+        if pressed(Key::Escape) && self.selection.is_some() {
+            self.deselect();
         }
         for tool in Tool::ALL {
             if Key::from_name(&tool.key().to_string()).is_some_and(pressed) {
@@ -671,10 +734,68 @@ impl App {
                 }
                 ui.separator();
                 if ui
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Alles auswählen  Strg+A", "Select all  Ctrl+A")),
+                    )
+                    .clicked()
+                {
+                    self.select_all();
+                }
+                let has_area = self.selection.is_some();
+                if ui
+                    .add_enabled(
+                        has_area,
+                        egui::Button::new(tr("Kopieren  Strg+C", "Copy  Ctrl+C")),
+                    )
+                    .clicked()
+                {
+                    self.copy_selection();
+                }
+                if ui
+                    .add_enabled(
+                        has_area,
+                        egui::Button::new(tr("Ausschneiden  Strg+X", "Cut  Ctrl+X")),
+                    )
+                    .clicked()
+                {
+                    self.cut_selection();
+                }
+                if ui
+                    .add_enabled(
+                        has_sel && self.clipboard.is_some(),
+                        egui::Button::new(tr("Einfügen  Strg+V", "Paste  Ctrl+V")),
+                    )
+                    .clicked()
+                {
+                    self.paste();
+                }
+                ui.separator();
+                if ui
                     .add_enabled(has_sel, egui::Button::new(tr("Kontur…", "Outline…")))
                     .clicked()
                 {
                     self.outline_dialog();
+                }
+                if ui
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Farbe ersetzen…", "Replace color…")),
+                    )
+                    .clicked()
+                {
+                    let form = dialogs::ReplaceForm::new(self);
+                    self.open_dialog(Dialog::ReplaceColor(form));
+                }
+                if ui
+                    .add_enabled(
+                        has_sel,
+                        egui::Button::new(tr("Leinwandgröße…", "Canvas size…")),
+                    )
+                    .clicked()
+                {
+                    let form = dialogs::ResizeForm::new(self);
+                    self.open_dialog(Dialog::Resize(form));
                 }
                 if ui
                     .add_enabled(
@@ -823,60 +944,6 @@ impl App {
         if let Some(character) = character {
             self.open_dialog(Dialog::NewAnimation(NewAnimation::new(character)));
         }
-    }
-
-    fn tool_bar(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            for tool in Tool::ALL {
-                let icon = self.icons.get(ui.ctx(), tool);
-                let image = egui::Image::new((icon, egui::vec2(24.0, 24.0)));
-                let button = egui::Button::image_and_text(image, tool.label())
-                    .selected(self.brush.tool == tool);
-                if ui
-                    .add(button)
-                    .on_hover_text(trf!("Taste {}", "Key {}", tool.key()))
-                    .clicked()
-                {
-                    self.brush.tool = tool;
-                }
-            }
-            ui.separator();
-            ui.add_enabled(
-                self.brush.tool.uses_size(),
-                egui::DragValue::new(&mut self.brush.size)
-                    .range(1..=MAX_BRUSH)
-                    .prefix(tr("Größe ", "Size ")),
-            );
-            ui.add_enabled(
-                self.brush.tool.uses_fill(),
-                egui::Checkbox::new(&mut self.brush.filled, tr("Gefüllt", "Filled")),
-            );
-            ui.separator();
-            if ui
-                .button("−")
-                .on_hover_text(tr("Verkleinern", "Zoom out"))
-                .clicked()
-            {
-                self.set_zoom(-1);
-            }
-            ui.label(format!("{}×", self.view.zoom));
-            if ui
-                .button("+")
-                .on_hover_text(tr("Vergrößern", "Zoom in"))
-                .clicked()
-            {
-                self.set_zoom(1);
-            }
-            if ui.button(tr("Einpassen", "Fit")).clicked() {
-                self.view.fit = true;
-            }
-            ui.checkbox(&mut self.grid, tr("Raster", "Grid"));
-            ui.checkbox(&mut self.onion, tr("Zwiebelhaut", "Onion skin"))
-                .on_hover_text(tr(
-                    "Zeigt den vorherigen Frame blass unter dem aktuellen",
-                    "Shows the previous frame faintly under the current one",
-                ));
-        });
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -1071,6 +1138,38 @@ impl App {
     }
 
     /// Öffnet den Kontur-Dialog für das ausgewählte Asset.
+    /// Liest die eigenen Formen neu ein und wählt auf Wunsch eine aus.
+    pub fn reload_shapes(&mut self, select: Option<&str>) {
+        self.custom_shapes = self.ws.custom_shapes();
+        let key = |n: &str| pixel_core::workspace::name_key(n);
+        self.brush.shape = select
+            .and_then(|name| {
+                self.custom_shapes
+                    .iter()
+                    .position(|c| key(&c.name) == key(name))
+            })
+            .map_or(
+                ShapeChoice::Builtin(pixel_core::shapes::Shape::Heart),
+                ShapeChoice::Custom,
+            );
+    }
+
+    pub fn delete_custom_shape(&mut self) {
+        let ShapeChoice::Custom(i) = self.brush.shape else {
+            return;
+        };
+        let Some(name) = self.custom_shapes.get(i).map(|c| c.name.clone()) else {
+            return;
+        };
+        match self.ws.delete_shape(&name) {
+            Ok(_) => {
+                self.reload_shapes(None);
+                self.info(trf!("Form „{name}“ gelöscht", "Shape \"{name}\" deleted"));
+            }
+            Err(err) => self.error(err.to_string()),
+        }
+    }
+
     pub fn outline_dialog(&mut self) {
         let Some(id) = self.sel else { return };
         if let Some(form) = OutlineForm::new(self, id) {
@@ -1090,6 +1189,11 @@ impl App {
         let palette = s.palette.clone();
         let depth = s.depth;
         let character = self.doc.as_ref().and_then(|d| d.character_of(id));
+
+        // Die Knöpfe der Ebenen stehen unten, die Liste bekommt den Platz darüber.
+        egui::Panel::bottom("layer_buttons")
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| self.layer_buttons(ui));
 
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.strong(tr("Farbe", "Color"));
@@ -1178,7 +1282,6 @@ impl App {
     fn layer_list(&mut self, ui: &mut egui::Ui) {
         let Some(s) = self.sprite() else { return };
         let auto = s.outline_layer();
-        let has_outline = s.auto_outline().is_some();
         let layers: Vec<(String, bool)> = s
             .frame(self.frame)
             .map(|f| {
@@ -1281,69 +1384,105 @@ impl App {
             }
             ui.add_space(2.0);
         }
+    }
 
-        // Die Knöpfe mit Abstand unter der Liste, damit sie nicht an den Ebenen kleben.
-        ui.add_space(10.0);
-        ui.spacing_mut().button_padding = egui::vec2(8.0, 4.0);
-        ui.horizontal_wrapped(|ui| {
+    fn layer_buttons(&mut self, ui: &mut egui::Ui) {
+        let Some(s) = self.sprite() else { return };
+        let count = s.layer_count();
+        let auto = s.outline_layer();
+        let layer = self.layer;
+        let names = s.layer_names();
+        let opacity = s.layer(self.frame, layer).map_or(255, |l| l.opacity);
+        ui.add_space(6.0);
+        ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+        let width = ui.available_width();
+        let gap = ui.spacing().item_spacing.x;
+        let half = (width - gap) / 2.0;
+
+        ui.horizontal(|ui| {
+            ui.label(tr("Deckkraft", "Opacity"));
+            let mut percent = self.opacity_edit.unwrap_or(u32::from(opacity) * 100 / 255);
+            let resp = ui.add(egui::Slider::new(&mut percent, 0..=100).suffix(" %"));
+            if resp.dragged() {
+                self.opacity_edit = Some(percent);
+            } else if resp.changed() || resp.drag_stopped() {
+                self.opacity_edit = None;
+                let value = (percent * 255 / 100) as u8;
+                self.edit(|s| {
+                    for f in 0..s.frames().len() {
+                        s.layer_mut(f, layer).map_err(|e| e.to_string())?.opacity = value;
+                    }
+                    Ok(())
+                });
+            }
+        });
+        ui.add_space(2.0);
+
+        // Die automatische Kontur bleibt ganz oben.
+        let top = auto.unwrap_or(count);
+        ui.horizontal(|ui| {
+            let up = egui::Button::new(tr("Nach oben", "Move up")).min_size(egui::vec2(half, 0.0));
             if ui
-                .add_enabled(
-                    layers.len() < MAX_LAYERS,
-                    egui::Button::new(tr("+ Ebene", "+ Layer")),
-                )
+                .add_enabled(auto != Some(layer) && layer + 1 < top, up)
                 .clicked()
             {
-                // Der Name wird erst in der Änderung gewählt, also nach dem Abgleich mit
-                // der Datei. Der MCP-Server findet Ebenen über ihren Namen.
-                if let Some(i) = self.edit(|s| {
-                    let name = (s.layer_count() + 1..)
-                        .map(|n| trf!("Ebene {n}", "Layer {n}"))
-                        .find(|name| s.layer_index(name).is_none())
-                        .unwrap_or_default();
-                    let i = s.add_layer(name);
-                    // Die automatische Kontur bleibt ganz oben.
-                    match s.outline_layer() {
-                        Some(top) if top + 1 == i => {
-                            s.move_layer(i, top).map_err(|e| e.to_string())?;
-                            Ok(top)
-                        }
-                        _ => Ok(i),
-                    }
-                }) {
-                    self.layer = i;
-                }
+                self.move_layer(layer, layer + 1);
             }
-            if ui.button(tr("Umbenennen", "Rename")).clicked() {
-                if let Some((name, _)) = layers.get(self.layer) {
+            let down =
+                egui::Button::new(tr("Nach unten", "Move down")).min_size(egui::vec2(half, 0.0));
+            if ui
+                .add_enabled(auto != Some(layer) && layer > 0, down)
+                .clicked()
+            {
+                self.move_layer(layer, layer - 1);
+            }
+        });
+        ui.horizontal(|ui| {
+            let rename =
+                egui::Button::new(tr("Umbenennen", "Rename")).min_size(egui::vec2(half, 0.0));
+            if ui.add(rename).clicked() {
+                if let Some(name) = names.get(layer) {
                     self.open_dialog(Dialog::RenameLayer {
-                        layer: self.layer,
+                        layer,
                         name: name.clone(),
                     });
                 }
             }
-            if ui
-                .add_enabled(layers.len() > 1, egui::Button::new(tr("Löschen", "Delete")))
-                .clicked()
-            {
-                let i = self.layer;
-                self.edit(|s| s.remove_layer(i).map_err(|e| e.to_string()));
+            let delete = egui::Button::new(tr("Löschen", "Delete")).min_size(egui::vec2(half, 0.0));
+            if ui.add_enabled(count > 1, delete).clicked() {
+                self.edit(|s| s.remove_layer(layer).map_err(|e| e.to_string()));
             }
         });
-        ui.add_space(4.0);
-        let label = if has_outline {
-            tr("Kontur bearbeiten…", "Edit outline…")
-        } else {
-            tr("Kontur…", "Outline…")
-        };
-        if ui
-            .button(label)
-            .on_hover_text(tr(
-                "Automatische Kontur auf eigener Ebene, die jeder Änderung folgt",
-                "Automatic outline on its own layer that follows every change",
-            ))
-            .clicked()
+        let add = egui::Button::new(tr("+ Ebene", "+ Layer")).min_size(egui::vec2(width, 0.0));
+        if ui.add_enabled(count < MAX_LAYERS, add).clicked() {
+            // Der Name wird erst in der Änderung gewählt, also nach dem Abgleich mit
+            // der Datei. Der MCP-Server findet Ebenen über ihren Namen.
+            if let Some(i) = self.edit(|s| {
+                let name = (s.layer_count() + 1..)
+                    .map(|n| trf!("Ebene {n}", "Layer {n}"))
+                    .find(|name| s.layer_index(name).is_none())
+                    .unwrap_or_default();
+                let i = s.add_layer(name);
+                match s.outline_layer() {
+                    Some(top) if top + 1 == i => {
+                        s.move_layer(i, top).map_err(|e| e.to_string())?;
+                        Ok(top)
+                    }
+                    _ => Ok(i),
+                }
+            }) {
+                self.layer = i;
+            }
+        }
+        ui.add_space(6.0);
+    }
+
+    fn move_layer(&mut self, from: usize, to: usize) {
+        if self
+            .edit(|s| s.move_layer(from, to).map_err(|e| e.to_string()))
+            .is_some()
         {
-            self.outline_dialog();
+            self.layer = to;
         }
     }
 
