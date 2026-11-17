@@ -1,7 +1,54 @@
-# PixelART MCP
+# PixelArt Studio
 
-Ein eigenständiges Pixel-Art-Studio in Rust, das du selbst bedienen kannst und das
-Claude (oder eine andere KI) über MCP steuern kann.
+Ein eigenständiges Pixel-Art-Studio für Windows, geschrieben in Rust. Du zeichnest selbst, und
+Claude (oder eine andere KI) zeichnet über MCP im selben Projekt mit.
+
+**[Download für Windows](https://github.com/Seralex666/PixelART_MCP/releases/latest)** ·
+[Was ist neu](CHANGELOG.md) · [Mit Claude verbinden](docs/MCP-EINRICHTUNG.md)
+
+![Der Editor mit einer Figur, ihren Ebenen und der Palette](docs/images/editor.png)
+
+## Was das Studio kann
+
+### Zeichnen wie in einem richtigen Pixel-Editor
+
+Stift (auf Wunsch pixel-perfekt), Radierer, Füllen, Pipette, Sprühdose, Aufhellen und Abdunkeln entlang
+der Palette, Linie, Rechteck, Ellipse und Formen wie Herz, Stern, Raute oder Pfeil. Was du selbst zeichnest,
+speicherst du als eigene Form und hast es in jedem Projekt. Dazu Auswahl mit Kopieren und Einfügen,
+Spiegeln beim Zeichnen, Ebenen mit Deckkraft und Rückgängig für alles.
+
+![Formen gefüllt und als Umriss](docs/images/formen.png)
+
+### Fotos und Zeichnungen in Pixel-Art umwandeln
+
+Ein Foto, ein Scan oder ein gemaltes Bild wird zu echter Pixel-Art: Zielgröße wählen, Farbanzahl oder die
+Palette des Projekts, auf Wunsch Dithering, Hintergrund entfernen und Umriss. Die Vorschau zeigt vorher und
+nachher nebeneinander. Oder du legst das Bild als halb durchsichtige **Vorlage** unter deine Zeichnung und
+zeichnest es selbst nach; die Vorlage landet nie im Export.
+
+![Ein Foto wird zu Pixel-Art umgewandelt](docs/images/umwandeln.png)
+
+### Figuren und Animationen, die zusammenpassen
+
+Eine Figur hat eine feste Palette und eine Grundpose. Animationen wie Laufen, Springen oder Angriff
+entstehen aus ihr, Frame für Frame mit Zwiebelhaut, und werden gegen die Figur geprüft. Export als PNG,
+Spritesheet mit JSON, animiertes GIF oder WebM.
+
+![Eine Laufanimation in der Timeline](docs/images/animation.png)
+
+### Automatische Kontur
+
+Ein Umriss um Figuren, der jeder Änderung folgt, in allen Frames. Wahlweise in einer festen Farbe oder als
+dunklere Stufe der Farbe daneben, auf Wunsch mit Lichtrichtung.
+
+![Der Kontur-Dialog](docs/images/kontur.png)
+
+### Claude zeichnet mit
+
+Das Studio ist zugleich ein MCP-Server mit 25 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
+die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
+auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor.
 
 ## Ziele
 
@@ -9,7 +56,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 - **Farbtiefe:** 8 Bit (Palette mit bis zu 256 Farben), 16 Bit (RGB565) oder 32 Bit (RGBA).
 - **Konstanz:** Figuren sind feste Assets mit gesperrter Palette. Animationen (Idle, Walk, Run, Jump, Attack, Hurt, Death) werden aus der Figur abgeleitet und gegen sie geprüft.
 - **Export:** PNG (auch mit Palette), JPG, Spritesheets mit JSON-Metadaten, animierte GIFs und WebM-Videos.
-- **Import:** Vorhandene PNG-, JPG- und GIF-Dateien werden zu Bildern, Figuren oder Animationen, auch aus Spritesheets.
+- **Import:** Vorhandene PNG-, JPG- und GIF-Dateien werden zu Bildern, Figuren oder Animationen, auch aus Spritesheets. Fotos und Zeichnungen werden auf Wunsch zu Pixel-Art.
 - **MCP:** Claude zeichnet in denselben Projektdateien, die du im Editor öffnest.
 
 ## Stand
@@ -26,6 +73,7 @@ Claude (oder eine andere KI) über MCP steuern kann.
 | 8 | Einstellungen (Speicherordner, Sprache Deutsch/Englisch), Werkzeug-Symbole | fertig |
 | 9 | Automatische Konturen, Projekte löschen, aufgeräumte Seitenleisten, Programmsymbol | fertig |
 | 10 | Formen und eigene Formen, Sprühdose, Aufhellen/Abdunkeln, Auswahl, Spiegeln, Pixel-perfekt, Farbe ersetzen, Leinwandgröße, Paletten mit 32 und 64 Farben | fertig |
+| 1.0 Beta | Fotos und Zeichnungen in Pixel-Art umwandeln, Vorlage-Ebene zum Nachzeichnen, Feature-Übersicht | fertig |
 
 ## Aufbau
 
@@ -68,7 +116,8 @@ Wichtige Typen in `pixel-core`:
 - Automatische Kontur (Kontur…), siehe unten
 - Projekte löschen: Datei › Projekt löschen… oder Rechtsklick in der Projektliste
 - Neue Figuren, Animationen und Bilder aus Vorlagen; Export als PNG, JPG, Spritesheet, GIF oder WebM
-- Bilder importieren (Strg+I oder Datei ins Fenster ziehen), siehe unten
+- Bilder importieren (Strg+I oder Datei ins Fenster ziehen), Fotos in Pixel-Art umwandeln oder als Vorlage
+  zum Nachzeichnen einfügen, siehe unten
 - Gespeichert wird nach jeder Änderung von selbst, Rückgängig mit Strg+Z
 
 Editor und MCP-Server arbeiten im selben Arbeitsordner. Zeichnet Claude, lädt der Editor das Projekt
@@ -151,6 +200,26 @@ dafür das Werkzeug `import_image`. Gelesen werden PNG, JPG und GIF.
   Grundpose, und auf Wunsch werden alle Frames zusätzlich eine Animation.
 - **Als Animation einer Figur:** Die Frames müssen so groß sein wie die Figur. Farben, die die Figur noch
   nicht hat, kommen in ihre Palette oder werden an die vorhandenen angepasst.
+
+- **Als Vorlage:** Das Bild kommt als halb durchsichtige Ebene ganz unten in das geöffnete Bild, passend
+  auf die Leinwand gebracht. Du zeichnest auf den Ebenen darüber nach. Die Vorlage gehört nicht zum Bild:
+  Export, Palette und Kontur lassen sie aus, und bemalen lässt sie sich nicht. Ist sie fertig nachgezeichnet,
+  löschst du sie wie jede Ebene.
+
+**Foto oder Zeichnung umwandeln:** Ein großes Bild mit vielen Farben erkennt der Dialog als Foto und schlägt
+die Umwandlung vor. Einstellen lassen sich:
+
+| Einstellung | Wirkung |
+|---|---|
+| Größe | Zielgröße in Pixeln, mit oder ohne Seitenverhältnis; Knöpfe für 32 bis 128 Pixel an der längeren Seite. Bei einer Animation die Größe der Figur |
+| Farben | 2 bis 64 Farben aus dem Bild selbst, die Palette des Projekts oder bei einer Animation die Palette der Figur |
+| Dithering | Aus (klare Flächen), Raster (ruhige Verläufe) oder Streuung (am genauesten, körniger) |
+| Hintergrund entfernen | Die häufigste Farbe am Rand wird von außen her durchsichtig, mit einstellbarer Toleranz |
+| Umriss | Ein dunkler Rand von einem Pixel um alles Deckende |
+| Kräftigere Farben | Mehr Sättigung und Kontrast, gut für blasse Fotos |
+
+Claude kann dasselbe: `import_image` mit `pixelate` (Größe, Farben, Palette, Dithering, Hintergrund, Umriss)
+oder mit `"as": "reference"` für eine Vorlage.
 
 Vergrößerte Pixel-Art (jeder Pixel ein Block aus 4×4 oder 8×8 Bildpunkten) wird erkannt und auf ihre
 echte Größe gebracht. Spritesheets teilst du nach Spalten und Zeilen oder nach Framegröße; bei einer

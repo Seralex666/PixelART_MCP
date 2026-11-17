@@ -1,7 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
 use crate::studio::{
-    DrawOp, ImportArgs, OutlineArgs, PerFrame, Reply, Res, Studio, StyleArgs, ViewOptions,
+    DrawOp, ImportArgs, OutlineArgs, PerFrame, PixelateArgs, Reply, Res, Studio, StyleArgs,
+    ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -23,7 +24,7 @@ Typical workflow:
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
 7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
 8. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
-Canvas too small or too big: resize_canvas (keeps a character and its animations the same size). Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation.
+Canvas too small or too big: resize_canvas (keeps a character and its animations the same size). Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation; with `pixelate` it converts photos and drawings into pixel art, and as="reference" adds a tracing layer (not exported) to draw over.
 
 Consistency rules:
 - A character's palette is locked when it is created. Colors drawn on the character or its animations snap to the nearest palette color, so choose the full palette up front (skin, hair, clothes, outline, shadows, highlights). add_character_colors appends colors later without changing existing ones.
@@ -376,7 +377,7 @@ pub struct ImportImage {
     project: String,
     /// Full path of a PNG, JPG or GIF file on the user's computer.
     path: String,
-    /// What to create: "image" (default), "character" (frame 0 becomes the base pose and the file's colors become the locked palette) or "animation" (of an existing character, see `character`).
+    /// What to create: "image" (default), "character" (frame 0 becomes the base pose and the file's colors become the locked palette), "animation" (of an existing character, see `character`) or "reference" (a semi-transparent tracing layer at the bottom of an existing `asset`, fitted to its canvas; not part of the picture, left out of export, palette and outline).
     #[serde(rename = "as")]
     kind: Option<String>,
     /// Name of the new asset. Default: the file name; for animations "<character> <kind>".
@@ -401,6 +402,36 @@ pub struct ImportImage {
     new_colors: Option<String>,
     /// Keep fully transparent frames at the end of a sprite sheet. Default false.
     keep_empty_frames: Option<bool>,
+    /// Turn a photo, painting or drawing into pixel art: scale it down to a target size, reduce the colors, optionally dither, remove the background and add an outline. Without it the file is taken as pixel art (exact pixels). For as="reference" only `background`/`tolerance` apply.
+    pixelate: Option<PixelateOpts>,
+    /// For as="reference": name or id of the character, animation or image that gets the tracing layer.
+    asset: Option<String>,
+    /// For as="reference": opacity of the tracing layer, 0 to 255. Default 128.
+    opacity: Option<u8>,
+}
+
+#[derive(Deserialize, JsonSchema, Default)]
+pub struct PixelateOpts {
+    /// Target width in pixels. Give width and/or height; the missing one keeps the aspect ratio.
+    width: Option<u32>,
+    /// Target height in pixels.
+    height: Option<u32>,
+    /// Without width/height: the longer side in pixels, aspect ratio kept. Default 64. For as="animation" the default is the character's size.
+    size: Option<u32>,
+    /// Number of colors, 2 to 256. Default 16. Ignored when `palette` gives fixed colors.
+    colors: Option<usize>,
+    /// Which colors to use: "image" (default: the best `colors` colors of the picture), "project" (the project style palette) or the name of an asset whose palette to use. For as="animation" the default is the character's palette.
+    palette: Option<String>,
+    /// "none" (default, flat areas), "ordered" (even checker pattern, calm gradients) or "diffusion" (Floyd-Steinberg, most accurate, grainier).
+    dither: Option<String>,
+    /// "keep" (default), "auto" (the most common edge color, flood-filled from the edges, becomes transparent) or a color like "#ffffff".
+    background: Option<String>,
+    /// How similar a color must be to the background to be removed, 0 to 100 percent. Default 12.
+    tolerance: Option<u8>,
+    /// "none" (default), "auto" (darkest palette color, or a very dark shade of it) or a color: a 1-pixel outline around everything opaque.
+    outline: Option<String>,
+    /// Boost saturation and contrast before reducing colors; helps washed-out photos. Default false.
+    vivid: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -795,7 +826,7 @@ impl PixelServer {
     }
 
     #[tool(
-        description = "Import an existing PNG, JPG or GIF file from the user's computer as an image, a character or an animation of a character. Splits sprite sheets into frames, reads the frames and timing of animated GIFs, and brings enlarged pixel art back to its true pixel size. Returns a preview.",
+        description = "Import an existing PNG, JPG or GIF file from the user's computer as an image, a character or an animation of a character. Splits sprite sheets into frames, reads the frames and timing of animated GIFs, and brings enlarged pixel art back to its true pixel size. With `pixelate` it turns a photo or drawing into pixel art (target size, colors or a palette, dithering, background removal, outline). With as=\"reference\" it adds the file as a semi-transparent tracing layer to an existing asset. Returns a preview.",
         annotations(title = "Import image", destructive_hint = false)
     )]
     fn import_image(&self, Parameters(a): Parameters<ImportImage>) -> CallToolResult {
@@ -815,6 +846,20 @@ impl PixelServer {
                 depth_bits: a.color_depth_bits,
                 new_colors: a.new_colors.as_deref(),
                 keep_empty_frames: a.keep_empty_frames.unwrap_or(false),
+                pixelate: a.pixelate.as_ref().map(|x| PixelateArgs {
+                    width: x.width,
+                    height: x.height,
+                    size: x.size,
+                    colors: x.colors,
+                    palette: x.palette.as_deref(),
+                    dither: x.dither.as_deref(),
+                    background: x.background.as_deref(),
+                    tolerance: x.tolerance,
+                    outline: x.outline.as_deref(),
+                    vivid: x.vivid,
+                }),
+                asset: a.asset.as_deref(),
+                opacity: a.opacity,
             })
         })
     }

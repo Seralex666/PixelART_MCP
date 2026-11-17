@@ -9,8 +9,9 @@ use pixel_core::contour::{self, AutoOutline};
 use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
 use pixel_core::expr::Expr;
-use pixel_core::import::{self, Grid, NewColors, Shrink};
+use pixel_core::import::{self, Grid, NewColors, Picture, Shrink};
 use pixel_core::lint::{self, Checks, Finding};
+use pixel_core::pixelate::{self, Background, Dither, Outline, Pixelate};
 use pixel_core::project::{CharacterBundle, Style};
 use pixel_core::quant;
 use pixel_core::shapes::{self, CustomShape, Shape};
@@ -417,6 +418,28 @@ pub struct ImportArgs<'a> {
     pub depth_bits: Option<u8>,
     pub new_colors: Option<&'a str>,
     pub keep_empty_frames: bool,
+    /// Ein Foto oder eine Zeichnung in Pixel-Art umwandeln.
+    pub pixelate: Option<PixelateArgs<'a>>,
+    /// Bei as="reference": das Bild, das die Vorlage bekommt.
+    pub asset: Option<&'a str>,
+    /// Bei as="reference": Deckkraft der Vorlage, 0 bis 255.
+    pub opacity: Option<u8>,
+}
+
+/// Wie [`Studio::import_image`] ein Foto in Pixel-Art umwandelt. Leere Felder
+/// nehmen Voreinstellungen.
+#[derive(Default, Clone, Copy)]
+pub struct PixelateArgs<'a> {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub size: Option<u32>,
+    pub colors: Option<usize>,
+    pub palette: Option<&'a str>,
+    pub dither: Option<&'a str>,
+    pub background: Option<&'a str>,
+    pub tolerance: Option<u8>,
+    pub outline: Option<&'a str>,
+    pub vivid: Option<bool>,
 }
 
 /// Was `set_outline` ändern soll. Leere Felder behalten den bisherigen Wert.
@@ -600,6 +623,12 @@ impl Studio {
             }
             if let Some(o) = s.auto_outline() {
                 v["auto_outline"] = outline_json(o);
+            }
+            let refs: Vec<usize> = (0..s.layer_count())
+                .filter(|&i| s.is_reference(i))
+                .collect();
+            if !refs.is_empty() {
+                v["reference_layers"] = json!(refs);
             }
             v
         };
@@ -1014,6 +1043,146 @@ impl Studio {
         Ok(Reply::json(info))
     }
 
+    /// Die Einstellungen einer Umwandlung aus den Angaben für `import_image`.
+    fn pixelate_options(
+        p: &Project,
+        a: &PixelateArgs,
+        picture: &Picture,
+        hero: Option<&Character>,
+    ) -> Res<Pixelate> {
+        let mut o = Pixelate::for_source(picture.width, picture.height);
+        let ratio = |v: u32, num: u32, den: u32| {
+            ((f64::from(v) * f64::from(num) / f64::from(den.max(1))).round() as u32).max(1)
+        };
+        (o.width, o.height) = match (a.width, a.height, hero) {
+            (Some(w), Some(h), _) => (w, h),
+            (Some(w), None, _) => (w, ratio(w, picture.height, picture.width)),
+            (None, Some(h), _) => (ratio(h, picture.width, picture.height), h),
+            (None, None, Some(c)) => c.size(),
+            (None, None, None) => {
+                pixelate::fit_size(picture.width, picture.height, a.size.unwrap_or(64))
+            }
+        };
+        if o.width > pixel_core::MAX_SIZE || o.height > pixel_core::MAX_SIZE {
+            return Err(format!(
+                "the target size {}×{} is larger than {max}×{max}",
+                o.width,
+                o.height,
+                max = pixel_core::MAX_SIZE
+            ));
+        }
+        if let Some(n) = a.colors {
+            o.colors = n;
+        }
+        o.palette = match a.palette.map(str::trim) {
+            None if hero.is_some() => hero.map(|c| c.palette().colors.clone()),
+            None | Some("") => None,
+            Some(k) if k.eq_ignore_ascii_case("image") || k.eq_ignore_ascii_case("own") => None,
+            Some(k) if k.eq_ignore_ascii_case("project") || k.eq_ignore_ascii_case("style") => {
+                if p.style.palette.is_empty() {
+                    return Err("the project style has no palette; use set_style first or palette \"image\"".into());
+                }
+                Some(p.style.palette.clone())
+            }
+            Some(k) => Some(
+                Self::sprite(p, Self::resolve(p, k)?)?
+                    .palette
+                    .colors
+                    .clone(),
+            ),
+        };
+        if let Some(d) = a.dither {
+            o.dither = Dither::parse(d)
+                .ok_or_else(|| format!("unknown dither '{d}', use none, ordered or diffusion"))?;
+        }
+        if let Some(b) = a.background.map(str::trim) {
+            o.background = match b.to_ascii_lowercase().as_str() {
+                "keep" | "none" | "" => Background::Keep,
+                "auto" | "remove" => Background::Auto,
+                _ => Background::Color(parse_color(b).map_err(|_| {
+                    format!("invalid background '{b}': use keep, auto or a color like #ffffff")
+                })?),
+            };
+        }
+        if let Some(t) = a.tolerance {
+            o.tolerance = t;
+        }
+        if let Some(l) = a.outline.map(str::trim) {
+            o.outline = match l.to_ascii_lowercase().as_str() {
+                "none" | "off" | "" => Outline::None,
+                "auto" => Outline::Auto,
+                _ => Outline::Color(parse_color(l).map_err(|_| {
+                    format!("invalid outline '{l}': use none, auto or a color like #1a1020")
+                })?),
+            };
+        }
+        o.vivid = a.vivid.unwrap_or(false);
+        Ok(o)
+    }
+
+    /// Legt eine Datei als Vorlage-Ebene zum Nachzeichnen in ein vorhandenes Bild.
+    fn import_reference(
+        &self,
+        a: &ImportArgs,
+        mut p: Project,
+        picture: &Picture,
+        file: &str,
+    ) -> Res {
+        let asset = a.asset.ok_or(
+            "as=\"reference\" needs `asset`: the character, animation or image to trace on",
+        )?;
+        let r = Self::resolve(&p, asset)?;
+        let mut frames: Vec<Vec<Rgba>> = picture.frames.iter().map(|f| f.pixels.clone()).collect();
+        if let Some(px) = &a.pixelate {
+            let o = Self::pixelate_options(&p, px, picture, None)?;
+            for f in &mut frames {
+                pixelate::remove_background(
+                    f,
+                    picture.width,
+                    picture.height,
+                    o.background,
+                    o.tolerance,
+                );
+            }
+        }
+        let s = Self::sprite_mut(&mut p, r)?;
+        if s.layer_count() >= MAX_LAYERS {
+            return Err(format!("at most {MAX_LAYERS} layers"));
+        }
+        let (cw, ch) = (s.width(), s.height());
+        // Hat die Datei so viele Frames wie das Bild, bekommt jeder Frame seine Vorlage.
+        if frames.len() != s.frames().len() {
+            frames.truncate(1);
+        }
+        let refs: Vec<Vec<Rgba>> = frames
+            .iter()
+            .map(|f| pixelate::reference(f, picture.width, picture.height, cw, ch))
+            .collect();
+        let name = a
+            .name
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .unwrap_or("Reference")
+            .to_string();
+        if s.layer_index(&name).is_some() {
+            return Err(format!("a layer named '{name}' already exists"));
+        }
+        let opacity = a.opacity.unwrap_or(128);
+        s.add_reference_layer(name.clone(), &refs, opacity)
+            .map_err(e)?;
+        let png = render_plain(s, &[0], Some(0))?;
+        let layers = s.layer_names().join(", ");
+        let target = Self::asset_name(&p, r);
+        self.save(a.project, &mut p)?;
+        Ok(Reply {
+            text: format!(
+                "Added '{file}' as reference layer '{name}' (layer 0, opacity {opacity}/255) to '{target}', fitted into its {cw}×{ch} canvas{}. It is shown in the editor to trace over, but it is not part of the picture: export, palette, outline and render leave it out (render with layer=0 to look at it). All other layers moved up by one: {layers}. Draw on another layer and remove the reference with edit_layers when done.",
+                if refs.len() > 1 { ", one picture per frame" } else { "" }
+            ),
+            image_png: Some(png),
+        })
+    }
+
     /// Holt eine Bilddatei von der Platte als Bild, Figur oder Animation ins Projekt.
     pub fn import_image(&self, a: &ImportArgs) -> Res {
         let (_lock, mut p) = self.load_locked(a.project)?;
@@ -1023,6 +1192,22 @@ impl Studio {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let picture = import::read(path).map_err(|err| format!("cannot import: {err}"))?;
+        let kind = a.kind.unwrap_or("image").trim().to_ascii_lowercase();
+        if kind == "reference" {
+            return self.import_reference(a, p, &picture, &file);
+        }
+        // Bei einer Animation geben Größe und Palette der Figur die Umwandlung vor.
+        let hero = match (&a.pixelate, kind.as_str(), a.character) {
+            (Some(_), "animation", Some(c)) => match Self::resolve(&p, c)? {
+                AssetRef::Character(id) => Some(p.character(id).map_err(e)?),
+                _ => None,
+            },
+            _ => None,
+        };
+        let pixelate = match &a.pixelate {
+            Some(px) => Some(Self::pixelate_options(&p, px, &picture, hero)?),
+            None => None,
+        };
         let grid = match (a.frame_width, a.frame_height, a.columns, a.rows) {
             (None, None, None, None) => Grid::Whole,
             (Some(width), Some(height), None, None) => Grid::Cells { width, height },
@@ -1042,6 +1227,7 @@ impl Studio {
             shrink,
             grid,
             keep_empty: a.keep_empty_frames,
+            pixelate: pixelate.clone(),
         };
         let mut ready = import::prepare(&picture, options).map_err(e)?;
         let default_name = path
@@ -1057,8 +1243,32 @@ impl Studio {
                 picture.width, picture.height, ready.shrunk_by
             ));
         }
+        if let Some(px) = &pixelate {
+            notes.push(format!(
+                "Converted from {}×{} px to {}×{} pixel art ({}, dither {}{}{}).",
+                picture.width,
+                picture.height,
+                px.width,
+                px.height,
+                match &px.palette {
+                    Some(c) => format!("{} given palette colors", c.len()),
+                    None => format!("up to {} colors", px.colors),
+                },
+                px.dither.id(),
+                if ready.background_removed > 0 {
+                    ", background removed"
+                } else {
+                    ""
+                },
+                if px.outline != Outline::None {
+                    ", outlined"
+                } else {
+                    ""
+                },
+            ));
+        }
 
-        let (created, report) = match a.kind.unwrap_or("image").to_ascii_lowercase().as_str() {
+        let (created, report) = match kind.as_str() {
             "image" => {
                 let name = Self::check_new_name(&p, wanted.unwrap_or(&default_name))?;
                 let (id, report) =
@@ -1137,7 +1347,7 @@ impl Studio {
             }
             other => {
                 return Err(format!(
-                    "unknown `as` value '{other}', use image, character or animation"
+                    "unknown `as` value '{other}', use image, character, animation or reference"
                 ))
             }
         };

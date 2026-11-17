@@ -179,7 +179,12 @@ pub fn reduce(sprites: &mut [&mut crate::Sprite], max: usize) -> crate::Result<R
     };
     let mut counts: HashMap<Rgba, u64> = HashMap::new();
     for s in sprites.iter() {
-        for l in s.frames().iter().flat_map(|f| &f.layers) {
+        for l in s
+            .frames()
+            .iter()
+            .flat_map(|f| &f.layers)
+            .filter(|l| !l.reference)
+        {
             for &p in l.pixels() {
                 if !p.is_transparent() {
                     *counts.entry(p).or_insert(0) += 1;
@@ -227,7 +232,7 @@ pub fn reduce(sprites: &mut [&mut crate::Sprite], max: usize) -> crate::Result<R
     let colors: Vec<Rgba> = used.into_iter().map(|(c, _)| c).collect();
     for s in sprites.iter_mut() {
         for i in 0..s.frames().len() {
-            for l in &mut s.frame_mut(i)?.layers {
+            for l in s.frame_mut(i)?.layers.iter_mut().filter(|l| !l.reference) {
                 l.map_pixels(|p| target.get(&p).copied().unwrap_or(p));
             }
         }

@@ -11,6 +11,10 @@ pub struct Layer {
     /// Deckkraft der Ebene, 0 bis 255.
     #[serde(default = "full")]
     pub opacity: u8,
+    /// Eine Vorlage zum Nachzeichnen: sichtbar im Editor, aber nicht Teil des Bildes.
+    /// Sie fehlt beim Export, in der Palette und bei der Kontur.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reference: bool,
     width: u32,
     height: u32,
     /// Pixel zeilenweise von links oben, gespeichert als komprimierte RGBA-Bytes in Base64.
@@ -18,6 +22,9 @@ pub struct Layer {
     pixels: Vec<Rgba>,
 }
 
+fn is_false(v: &bool) -> bool {
+    !*v
+}
 fn yes() -> bool {
     true
 }
@@ -31,6 +38,7 @@ impl Layer {
             name: name.into(),
             visible: true,
             opacity: 255,
+            reference: false,
             width,
             height,
             pixels: vec![Rgba::TRANSPARENT; (width * height) as usize],

@@ -14,9 +14,17 @@ const GRID_MIN_ZOOM: u32 = 6;
 /// Kantenlänge eines Karos im Transparenz-Muster, in Bildschirmpunkten.
 const CHECKER: f32 = 8.0;
 
-/// Ein Frame als Bild für die Grafikkarte.
+/// Ein Frame als Bild für die Grafikkarte, ohne Vorlage-Ebenen.
 pub fn sprite_image(s: &Sprite, frame: usize) -> Option<egui::ColorImage> {
-    let pixels = s.composite(frame).ok()?;
+    to_image(s, s.composite(frame).ok()?)
+}
+
+/// Ein Frame so, wie die Leinwand ihn zeigt: mit Vorlage-Ebenen zum Nachzeichnen.
+fn canvas_image(s: &Sprite, frame: usize) -> Option<egui::ColorImage> {
+    to_image(s, s.composite_with_references(frame).ok()?)
+}
+
+fn to_image(s: &Sprite, pixels: Vec<pixel_core::Rgba>) -> Option<egui::ColorImage> {
     Some(egui::ColorImage::new(
         [s.width() as usize, s.height() as usize],
         pixels.into_iter().map(c32).collect(),
@@ -98,7 +106,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             let key = (rev, id, app.frame);
             if app.textures.main.as_ref().is_none_or(|(k, _)| *k != key) {
-                if let Some(img) = sprite_image(s, app.frame) {
+                if let Some(img) = canvas_image(s, app.frame) {
                     let tex = ui
                         .ctx()
                         .load_texture("canvas", img, egui::TextureOptions::NEAREST);
@@ -323,6 +331,13 @@ fn begin(app: &mut App, at: (i64, i64)) {
         app.error(tr(
             "Diese Ebene ist die automatische Kontur und folgt den anderen Ebenen. Zeichne auf einer anderen Ebene, oder schreibe die Kontur fest (Kontur bearbeiten… › Festschreiben), um sie von Hand zu ändern.",
             "This layer is the automatic outline and follows the other layers. Draw on another layer, or freeze the outline (Edit outline… › Freeze) to change it by hand.",
+        ));
+        return;
+    }
+    if app.sprite().is_some_and(|s| s.is_reference(app.layer)) {
+        app.error(tr(
+            "Diese Ebene ist eine Vorlage zum Nachzeichnen. Zeichne auf einer anderen Ebene darüber.",
+            "This layer is a reference to trace over. Draw on another layer above it.",
         ));
         return;
     }

@@ -202,7 +202,7 @@ fn content(s: &Sprite, frame: usize, skip: usize) -> Result<Content> {
         color: vec![Rgba::TRANSPARENT; n],
     };
     for (i, layer) in s.frame(frame)?.layers.iter().enumerate() {
-        if i == skip || !layer.visible || layer.opacity == 0 {
+        if i == skip || !layer.visible || layer.opacity == 0 || layer.reference {
             continue;
         }
         for (p, &c) in layer.pixels().iter().enumerate() {
