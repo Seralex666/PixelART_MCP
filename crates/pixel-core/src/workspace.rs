@@ -257,7 +257,7 @@ impl Workspace {
                 let name = path.file_stem()?.to_str()?.replace('_', " ");
                 let picture = crate::import::read(&path).ok()?;
                 let frame = picture.frames.into_iter().next()?;
-                (picture.width <= SHAPE_MAX && picture.height <= SHAPE_MAX).then(|| CustomShape {
+                (picture.width <= SHAPE_MAX && picture.height <= SHAPE_MAX).then_some(CustomShape {
                     name,
                     width: picture.width,
                     height: picture.height,

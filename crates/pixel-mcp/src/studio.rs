@@ -1320,6 +1320,7 @@ impl Studio {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &self,
         project: &str,

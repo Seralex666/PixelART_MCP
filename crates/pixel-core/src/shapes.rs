@@ -289,10 +289,7 @@ pub fn draw_mask(
     }
     let mut conformed = std::collections::HashMap::new();
     for &(_, _, color) in &points {
-        if !conformed.contains_key(&color) {
-            let k = s.conform(color);
-            conformed.insert(color, k);
-        }
+        conformed.entry(color).or_insert_with(|| s.conform(color));
     }
     let layer = s.layer_mut(t.frame, t.layer)?;
     let mut n = 0;
