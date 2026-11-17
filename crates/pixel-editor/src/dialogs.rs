@@ -1195,6 +1195,21 @@ fn shortcuts(ui: &mut egui::Ui) -> Outcome {
                     tr("Ausschnitt verschieben", "Pan the view"),
                 ),
                 (
+                    tr("Strg+A, Esc", "Ctrl+A, Esc"),
+                    tr("Alles auswählen, Auswahl aufheben", "Select all, deselect"),
+                ),
+                (
+                    tr("Strg+C, Strg+X, Strg+V", "Ctrl+C, Ctrl+X, Ctrl+V"),
+                    tr(
+                        "Auswahl kopieren, ausschneiden, einfügen",
+                        "Copy, cut, paste the selection",
+                    ),
+                ),
+                (
+                    tr("Entf", "Delete"),
+                    tr("Auswahl leeren", "Clear the selection"),
+                ),
+                (
                     tr("Pfeil links / rechts", "Left / right arrow"),
                     tr("Vorheriger und nächster Frame", "Previous and next frame"),
                 ),
@@ -1518,11 +1533,19 @@ fn resize(app: &mut App, ui: &mut egui::Ui, f: &mut ResizeForm) -> Outcome {
     }
     if f.together > 1 {
         ui.add_space(4.0);
-        ui.weak(trf!(
-            "Gilt für die Figur und ihre {} Animation(en), damit alle gleich groß bleiben. Das lässt sich nicht rückgängig machen.",
-            "Applies to the character and its {} animation(s) so all stay the same size. This cannot be undone.",
-            f.together - 1
-        ));
+        ui.weak(if f.together == 2 {
+            tr(
+                "Gilt für die Figur und ihre Animation, damit beide gleich groß bleiben. Das lässt sich nicht rückgängig machen.",
+                "Applies to the character and its animation so both stay the same size. This cannot be undone.",
+            )
+            .to_string()
+        } else {
+            trf!(
+                "Gilt für die Figur und alle {} Animationen, damit alle gleich groß bleiben. Das lässt sich nicht rückgängig machen.",
+                "Applies to the character and all {} animations so all stay the same size. This cannot be undone.",
+                f.together - 1
+            )
+        });
     }
     let changed = (f.width, f.height) != f.old || f.crop.is_some_and(|c| c != (0, 0));
     let (ok, cancel) = buttons(ui, tr("Übernehmen", "Apply"), changed);

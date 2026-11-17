@@ -99,6 +99,14 @@ pub struct App {
     opacity_edit: Option<u32>,
 }
 
+/// Was über die Zwischenablage des Systems ankam.
+enum Clip {
+    Copy,
+    Cut,
+    Text(String),
+    Image(Arc<egui::ColorImage>),
+}
+
 /// Bildschirmfoto für automatische Prüfungen (`PIXELART_SHOT=<datei.png>`).
 struct Shot {
     path: std::path::PathBuf,
@@ -503,28 +511,42 @@ impl App {
         }
         let pressed = |key: Key| ctx.input(|i| i.key_pressed(key));
         // Kopieren, Ausschneiden und Einfügen kommen je nach System als eigene Ereignisse.
+        // Damit Strg+V auch dann ankommt, steht beim Kopieren ein Kennzeichen als Text in
+        // der Zwischenablage des Systems. Ein Bild dort wird als Pixel eingefügt.
         let clip = ctx.input(|i| {
             i.events.iter().find_map(|e| match e {
-                egui::Event::Copy => Some(0),
-                egui::Event::Cut => Some(1),
-                egui::Event::Paste(_) => Some(2),
+                egui::Event::Copy => Some(Clip::Copy),
+                egui::Event::Cut => Some(Clip::Cut),
+                egui::Event::Paste(text) => Some(Clip::Text(text.clone())),
+                egui::Event::PasteImage(img) => Some(Clip::Image(img.clone())),
                 _ => None,
             })
         });
         match clip {
-            Some(0) => {
-                self.copy_selection();
+            Some(Clip::Copy) => {
+                if self.copy_selection() {
+                    ctx.copy_text(self.clipboard_mark());
+                }
                 return;
             }
-            Some(1) => {
-                self.cut_selection();
+            Some(Clip::Cut) => {
+                if self.copy_selection() {
+                    ctx.copy_text(self.clipboard_mark());
+                    self.delete_selection();
+                }
                 return;
             }
-            Some(2) => {
-                self.paste();
+            Some(Clip::Text(text)) => {
+                if text == self.clipboard_mark() {
+                    self.paste();
+                }
                 return;
             }
-            _ => {}
+            Some(Clip::Image(img)) => {
+                self.paste_image(&img);
+                return;
+            }
+            None => {}
         }
         let (command, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
         if command {
@@ -537,9 +559,14 @@ impl App {
             } else if pressed(Key::I) {
                 self.import_dialog(None);
             } else if pressed(Key::C) {
-                self.copy_selection();
+                if self.copy_selection() {
+                    ctx.copy_text(self.clipboard_mark());
+                }
             } else if pressed(Key::X) {
-                self.cut_selection();
+                if self.copy_selection() {
+                    ctx.copy_text(self.clipboard_mark());
+                    self.delete_selection();
+                }
             } else if pressed(Key::V) {
                 self.paste();
             } else if pressed(Key::A) {
@@ -749,8 +776,9 @@ impl App {
                         egui::Button::new(tr("Kopieren  Strg+C", "Copy  Ctrl+C")),
                     )
                     .clicked()
+                    && self.copy_selection()
                 {
-                    self.copy_selection();
+                    ui.ctx().copy_text(self.clipboard_mark());
                 }
                 if ui
                     .add_enabled(
@@ -758,8 +786,10 @@ impl App {
                         egui::Button::new(tr("Ausschneiden  Strg+X", "Cut  Ctrl+X")),
                     )
                     .clicked()
+                    && self.copy_selection()
                 {
-                    self.cut_selection();
+                    ui.ctx().copy_text(self.clipboard_mark());
+                    self.delete_selection();
                 }
                 if ui
                     .add_enabled(
@@ -1402,6 +1432,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(tr("Deckkraft", "Opacity"));
             let mut percent = self.opacity_edit.unwrap_or(u32::from(opacity) * 100 / 255);
+            ui.spacing_mut().slider_width = (ui.available_width() - 70.0).max(40.0);
             let resp = ui.add(egui::Slider::new(&mut percent, 0..=100).suffix(" %"));
             if resp.dragged() {
                 self.opacity_edit = Some(percent);

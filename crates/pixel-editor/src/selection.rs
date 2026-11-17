@@ -122,12 +122,6 @@ impl App {
         }
     }
 
-    pub fn cut_selection(&mut self) {
-        if self.copy_selection() {
-            self.delete_selection();
-        }
-    }
-
     pub fn delete_selection(&mut self) {
         let Some(area) = self.need_selection() else {
             return;
@@ -148,6 +142,44 @@ impl App {
                 .map_err(|e| e.to_string()),
         });
         self.floating = None;
+    }
+
+    /// Text, der beim Kopieren in die Zwischenablage des Systems kommt. Steht er beim
+    /// Einfügen noch dort, wird das Kopierte eingefügt; sonst hat jemand inzwischen
+    /// etwas anderes kopiert.
+    pub fn clipboard_mark(&self) -> String {
+        let (w, h) = self
+            .clipboard
+            .as_ref()
+            .map_or((0, 0), |p| (p.width, p.height));
+        format!("PixelArt Studio: {w}×{h} Pixel")
+    }
+
+    /// Fügt ein Bild aus der Zwischenablage des Systems ein, etwa einen Bildschirmausschnitt.
+    pub fn paste_image(&mut self, img: &eframe::egui::ColorImage) {
+        let [w, h] = img.size;
+        let max = pixel_core::MAX_SIZE as usize;
+        if w == 0 || h == 0 || w > max || h > max {
+            self.error(trf!(
+                "Das Bild in der Zwischenablage ist zu groß (höchstens {max}×{max} Pixel)",
+                "The image on the clipboard is too large (at most {max}×{max} pixels)"
+            ));
+            return;
+        }
+        let pixels = img
+            .pixels
+            .iter()
+            .map(|c| {
+                let [r, g, b, a] = c.to_srgba_unmultiplied();
+                pixel_core::Rgba::new(r, g, b, a)
+            })
+            .collect();
+        self.clipboard = Some(Patch {
+            width: w as u32,
+            height: h as u32,
+            pixels,
+        });
+        self.paste();
     }
 
     pub fn paste(&mut self) {

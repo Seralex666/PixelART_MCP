@@ -80,11 +80,13 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `create_character` | Figur mit fester Größe und gesperrter Palette |
 | `create_animation` | Animation einer Figur; jeder Frame startet als Kopie der Grundpose |
 | `create_image` | Freies Bild (Tile, Item, Szene) aus Vorlage oder mit eigener Größe, gleich mit Ebenen und Frames |
-| `draw` | Zeichnen auf einem oder mehreren Frames: Pixel, Linie, Rechteck, Ellipse, Füllen, Textraster, Verschieben, Spiegeln, dazu Kontur, Licht und Schatten, Verlauf, Raster, Körnung, Formel je Pixel und Stempel |
+| `draw` | Zeichnen auf einem oder mehreren Frames: Pixel, Linie, Rechteck, Ellipse, Formen (Herz, Stern, Raute …, auch eigene), Füllen, Textraster, Sprühdose, Verschieben, Spiegeln, Ausschnitte verschieben/spiegeln/leeren, dazu Kontur, Licht und Schatten, Aufhellen/Abdunkeln, Verlauf, Raster, Körnung, Formel je Pixel und Stempel; mit `mirror` spiegelsymmetrisch |
 | `undo` | Die letzten Zeichen-Aufrufe zurücknehmen |
 | `view` | Vergrößerte Vorschau, auf Wunsch mit Pixelraster und Koordinaten, als Ausschnitt oder 3×3 gekachelt |
 | `get_pixels` | Pixel exakt als Text lesen |
-| `edit_layers`, `edit_frames` | Ebenen und Frames verwalten, Frame-Dauer setzen |
+| `edit_layers`, `edit_frames` | Ebenen und Frames verwalten (auch Reihenfolge und Deckkraft), Frame-Dauer setzen |
+| `custom_shapes` | Eigene Formen auflisten, aus Gezeichnetem speichern oder löschen; sie gelten in allen Projekten |
+| `resize_canvas` | Leinwand vergrößern, verkleinern oder auf den Inhalt zuschneiden, ohne zu skalieren; Figuren samt Animationen |
 | `set_palette`, `add_character_colors` | Palette eines Bildes tauschen, Palette einer Figur erweitern |
 | `palette_from_image` | Hauptfarben einer Bilddatei oder eines Assets als Palette |
 | `reduce_colors` | Bild oder Figur samt Animationen auf weniger Farben bringen |

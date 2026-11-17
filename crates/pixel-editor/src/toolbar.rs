@@ -261,15 +261,18 @@ impl App {
             .add_enabled(has, egui::Button::new(tr("Kopieren", "Copy")))
             .on_hover_text(tr("Strg+C", "Ctrl+C"))
             .clicked()
+            && self.copy_selection()
         {
-            self.copy_selection();
+            ui.ctx().copy_text(self.clipboard_mark());
         }
         if ui
             .add_enabled(has, egui::Button::new(tr("Ausschneiden", "Cut")))
             .on_hover_text(tr("Strg+X", "Ctrl+X"))
             .clicked()
+            && self.copy_selection()
         {
-            self.cut_selection();
+            ui.ctx().copy_text(self.clipboard_mark());
+            self.delete_selection();
         }
         if ui
             .add_enabled(
