@@ -182,6 +182,7 @@ impl App {
             Ok("light") => app.light_dialog(),
             Ok("normal") => app.normal_dialog(),
             Ok("effects") => app.fx_dialog(),
+            Ok("autotile") => app.tile_dialog(),
             Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
             Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
             Ok("shape") => app.open_dialog(Dialog::SaveShape {
@@ -599,6 +600,14 @@ impl App {
                 self.brush.tool = tool;
             }
         }
+        if pressed(Key::T) {
+            self.brush.wrap = !self.brush.wrap;
+            self.info(if self.brush.wrap {
+                tr("Kachel-Modus an", "Tile mode on")
+            } else {
+                tr("Kachel-Modus aus", "Tile mode off")
+            });
+        }
         if pressed(Key::Plus) || pressed(Key::Equals) {
             self.set_zoom(1);
         }
@@ -847,6 +856,12 @@ impl App {
                     self.fx_dialog();
                 }
                 if ui
+                    .add_enabled(has_sel, egui::Button::new(tr("Autotile…", "Autotile…")))
+                    .clicked()
+                {
+                    self.tile_dialog();
+                }
+                if ui
                     .add_enabled(
                         has_sel,
                         egui::Button::new(tr("Farbe ersetzen…", "Replace color…")),
@@ -900,6 +915,14 @@ impl App {
                         "Onion skin (previous frame)",
                     ),
                 );
+                ui.checkbox(
+                    &mut self.brush.wrap,
+                    tr("Kachel-Modus  T", "Tile mode  T"),
+                )
+                .on_hover_text(tr(
+                    "Das Bild liegt ringsum noch achtmal, und was über einen Rand gemalt wird, kommt am anderen wieder herein. So werden Kacheln nahtlos.",
+                    "The picture repeats all around, and what you paint over one edge comes back in at the other. That makes tiles seamless.",
+                ));
                 ui.separator();
                 if ui.button(tr("Vergrößern  +", "Zoom in  +")).clicked() {
                     self.set_zoom(1);
@@ -1209,6 +1232,11 @@ impl App {
                     self.fx_dialog();
                     ui.close();
                 }
+                if ui.button(tr("Autotile…", "Autotile…")).clicked() {
+                    self.select(a.id);
+                    self.tile_dialog();
+                    ui.close();
+                }
                 if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
                     self.open_dialog(Dialog::Rename {
                         id: a.id,
@@ -1271,6 +1299,13 @@ impl App {
         let Some(id) = self.sel else { return };
         if let Some(form) = LightForm::new(self, id) {
             self.open_dialog(Dialog::Light(Box::new(form)));
+        }
+    }
+
+    pub fn tile_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = crate::tile_dialog::TileForm::new(self, id) {
+            self.open_dialog(Dialog::Autotile(Box::new(form)));
         }
     }
 

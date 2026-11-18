@@ -163,6 +163,7 @@ fn lists_all_tools_with_schemas() {
         "set_light",
         "styles",
         "effects",
+        "autotile",
         "import_image",
         "undo",
         "set_style",
@@ -2198,4 +2199,80 @@ fn effects_loop_over_the_frames_on_their_own_layers() {
         json!({"project": "F", "asset": "Held", "type": "sparks", "frames": 8}),
     );
     assert!(err.contains("base pose has one frame"), "{err}");
+}
+
+#[test]
+fn autotile_builds_a_whole_set_and_exports_it_for_godot_and_tiled() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "T"}));
+    let r = c.ok(
+        "autotile",
+        json!({"project": "T", "action": "template", "name": "Gras", "tile": 8}),
+    );
+    assert!(r.text.contains("16×24"), "{}", r.text);
+    // Block and inner corner tile in one color: enough to build.
+    c.ok(
+        "draw",
+        json!({"project": "T", "asset": "Gras", "layer": "Terrain",
+               "ops": [{"op": "rect", "x": 0, "y": 8, "w": 16, "h": 16, "color": "#40a040", "filled": true},
+                       {"op": "rect", "x": 8, "y": 0, "w": 8, "h": 8, "color": "#60c060", "filled": true}]}),
+    );
+    let r = c.ok("autotile", json!({"project": "T", "asset": "Gras"}));
+    assert!(r.image.is_some());
+    assert!(
+        r.text.starts_with("Built the tile set 'Gras tiles'"),
+        "{}",
+        r.text
+    );
+    assert!(r.text.contains("47 tiles of 8×8"), "{}", r.text);
+    let r = c.ok(
+        "autotile",
+        json!({"project": "T", "asset": "Gras", "kind": "sides16"}),
+    );
+    assert!(r.text.starts_with("Rebuilt"), "{}", r.text);
+    c.ok(
+        "autotile",
+        json!({"project": "T", "asset": "Gras", "kind": "blob47"}),
+    );
+    let err = c.err(
+        "autotile",
+        json!({"project": "T", "action": "preview", "asset": "Gras"}),
+    );
+    assert!(err.contains("not a tile set"), "{err}");
+
+    let v = c.json(
+        "export",
+        json!({"project": "T", "asset": "Gras tiles", "format": "godot", "scale": 2}),
+    );
+    let files: Vec<String> = serde_json::from_value(v["files"].clone()).unwrap();
+    assert!(
+        files[0].ends_with("Gras_tiles@2x.png") || files[0].ends_with("Gras tiles@2x.png"),
+        "{files:?}"
+    );
+    let tres = std::fs::read_to_string(&files[1]).unwrap();
+    assert!(
+        tres.contains("texture_region_size = Vector2i(16, 16)"),
+        "{tres}"
+    );
+    assert_eq!(tres.matches("/0/terrain = 0").count(), 47);
+    let img = image::open(&files[0]).unwrap();
+    assert_eq!((img.width(), img.height()), (8 * 8 * 2, 6 * 8 * 2));
+    let v = c.json(
+        "export",
+        json!({"project": "T", "asset": "Gras tiles", "format": "tiled"}),
+    );
+    let tsx = std::fs::read_to_string(v["files"][1].as_str().unwrap()).unwrap();
+    assert!(tsx.contains("type=\"mixed\""), "{tsx}");
+    let err = c.err(
+        "export",
+        json!({"project": "T", "asset": "Gras", "format": "godot"}),
+    );
+    assert!(err.contains("not an autotile set"), "{err}");
+    // A template of the wrong size says what it needs.
+    c.ok(
+        "create_image",
+        json!({"project": "T", "name": "Quer", "width": 16, "height": 16}),
+    );
+    let err = c.err("autotile", json!({"project": "T", "asset": "Quer"}));
+    assert!(err.contains("2 tiles wide and 3 tall"), "{err}");
 }

@@ -15,6 +15,7 @@
 //!   kopieren, und [`Project::validate`] meldet jede Abweichung.
 
 pub mod animation;
+pub mod autotile;
 pub mod brush;
 pub mod character;
 pub mod color;

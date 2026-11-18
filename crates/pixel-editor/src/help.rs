@@ -160,6 +160,7 @@ So arbeitest du damit:
 8. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner; mit normal_map kommen Normal Maps für Licht im Spiel dazu.
 9. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
 10. Für Leuchten, Blitze, Explosionen, Spiegelungen im Wasser, Funken, Rauch, Magie und Farbzyklen (fließendes Wasser, Feuer, Lava) nimmst du effects, statt sie Frame für Frame zu malen. Jeder Effekt liegt auf einer eigenen Ebene und läuft über alle Frames; mit frames wird aus einem Standbild eine Schleife.
+11. Für Böden, Wasser und Wände in Spielen legst du mit autotile eine Vorlage an, malst den Block aus 2 × 2 Kacheln und die Kachel mit den Innenecken auf die Ebene "Terrain" und baust daraus den ganzen Satz. export mit format godot oder tiled schreibt ihn für die Engine.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             r#"You are connected to my PixelArt Studio through the MCP server "{name}". I see live in the editor what you draw.
@@ -175,6 +176,7 @@ How to work with it:
 8. export writes PNG, JPG, a sprite sheet, an animated GIF or a WebM video into the folder "exports" in the workspace folder; with normal_map it adds normal maps for lighting in games.
 9. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
 10. For glow, lightning, explosions, reflections in water, sparks, smoke, magic and color cycling (flowing water, fire, lava) use effects instead of painting them frame by frame. Each effect sits on its own layer and runs over all frames; frames turns a still image into a loop.
+11. For floors, water and walls in games, create a template with autotile, paint the 2 × 2 block and the inner corner tile on the layer "Terrain" and build the whole set from it. export with format godot or tiled writes it for the engine.
 
 Work in small steps and check every intermediate result with view before you continue drawing."#
         )

@@ -79,12 +79,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         )
     });
     let tiles = size / (2.0 * CHECKER);
-    painter.image(
-        checker.id(),
-        image_rect,
-        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(tiles.x, tiles.y)),
-        Color32::WHITE,
-    );
+    // Im Kachel-Modus liegt das Bild ringsum noch achtmal, etwas blasser.
+    let wrap = app.brush.wrap;
+    let neighbours: Vec<Rect> = if wrap {
+        let mut v = Vec::with_capacity(8);
+        for dy in [-1.0f32, 0.0, 1.0] {
+            for dx in [-1.0f32, 0.0, 1.0] {
+                if dx != 0.0 || dy != 0.0 {
+                    v.push(image_rect.translate(egui::vec2(dx * size.x, dy * size.y)));
+                }
+            }
+        }
+        v
+    } else {
+        Vec::new()
+    };
+    for r in std::iter::once(&image_rect).chain(&neighbours) {
+        painter.image(
+            checker.id(),
+            *r,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(tiles.x, tiles.y)),
+            Color32::WHITE,
+        );
+    }
 
     if let (Some(doc), Some(id)) = (&app.doc, app.sel) {
         let rev = doc.revision();
@@ -115,6 +132,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             if let Some((_, tex)) = &app.textures.main {
                 painter.image(tex.id(), image_rect, UV, Color32::WHITE);
+                for r in &neighbours {
+                    painter.image(tex.id(), *r, UV, Color32::from_white_alpha(200));
+                }
             }
         }
     }
@@ -160,8 +180,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let (pressed, down, secondary, pos, space, scroll) = input;
     let over = resp.contains_pointer() && matches!(app.dialog, Dialog::None);
     let hover = pos.filter(|_| over).map(cell_at);
-    app.hover_cell =
-        hover.filter(|&(x, y)| x >= 0 && y >= 0 && x < i64::from(w) && y < i64::from(h));
+
+    app.hover_cell = hover
+        .map(|(x, y)| {
+            if wrap {
+                (x.rem_euclid(i64::from(w)), y.rem_euclid(i64::from(h)))
+            } else {
+                (x, y)
+            }
+        })
+        .filter(|&(x, y)| x >= 0 && y >= 0 && x < i64::from(w) && y < i64::from(h));
 
     // Auswahl: gestrichelter Rahmen.
     if let Some(a) = app.selection {
@@ -305,6 +333,14 @@ fn welcome(app: &mut App, ui: &mut egui::Ui, area: Rect) {
 /// Nimmt die Farbe des sichtbaren Bildes an einer Zelle auf.
 fn pick(app: &mut App, (x, y): (i64, i64)) {
     let Some(s) = app.sprite() else { return };
+    let (x, y) = if app.brush.wrap {
+        (
+            x.rem_euclid(i64::from(s.width())),
+            y.rem_euclid(i64::from(s.height())),
+        )
+    } else {
+        (x, y)
+    };
     if x < 0 || y < 0 || x >= i64::from(s.width()) || y >= i64::from(s.height()) {
         return;
     }

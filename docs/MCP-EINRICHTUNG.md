@@ -77,6 +77,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `get_studio_info` | Arbeitsordner, Projekte, Vorlagen, Paletten, Animationsarten |
 | `create_project`, `get_project` | Projekt anlegen, Überblick samt Konstanz-Prüfung und Hinweisen auf Versehen (verirrte Pixel, Lücken im Umriss, Einzelfarben, Kachelränder) |
 | `set_style` | Stil des Projekts: Palette, Lichtrichtung, Umrissfarbe, Notizen; mit `style` ein ganzer Stil aus der Bibliothek |
+| `autotile` | Kachelsätze: `template` legt eine Vorlage an (2 × 3 Kacheln mit Hilfsebene), `build` baut daraus 47 (`blob47`) oder 16 (`sides16`) Kacheln mit Vorschau und Beispielkarte, `preview` zeigt einen Satz; mehrere Frames ergeben animierte Kacheln |
 | `effects` | Effekte auf eigenen Ebenen, die über die Frames laufen: Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie und Farbzyklen (`preset` water, fire, lava); `frames` macht aus einem Standbild eine Schleife; `list`, `remove`, `freeze` |
 | `styles` | Stil-Bibliothek: feste Stile (8 Bit, 16 Bit, HQ Pixel-Art, Comic, Manga, Burgen) und eigene auflisten, lesen, speichern und löschen |
 | `create_character` | Figur mit fester Größe und gesperrter Palette |
@@ -96,7 +97,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `set_light` | Licht und Schatten auf eigenen Ebenen, die jeder Änderung folgen; die Lichtquelle kann über die Frames wandern (`from`/`to` oder `path`), dazu auf Wunsch ein Schlagschatten am Boden |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
 | `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen; mit `pixelate` Fotos und Zeichnungen in Pixel-Art umwandeln, mit `as: "reference"` als Vorlage-Ebene zum Nachzeichnen |
-| `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video; mit `normal_map` auch Normal Maps für Licht im Spiel |
+| `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video; mit `normal_map` auch Normal Maps für Licht im Spiel; für einen Autotile-Satz `godot` (TileSet `.tres` mit Terrain) oder `tiled` (`.tsx` mit Wang-Set) |
 | `delete_asset` | Figur, Animation oder Bild löschen |
 | `delete_project` | Ganzes Projekt löschen, auf Wunsch samt Exporten; der Name muss zur Sicherheit wiederholt werden |
 

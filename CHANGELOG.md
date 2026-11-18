@@ -1,5 +1,15 @@
 # Was ist neu
 
+## 1.4.0
+
+- Kachel-Modus (Taste T): die Leinwand zeigt die Nachbarkacheln, und Striche über den Rand kommen auf der
+  anderen Seite wieder herein
+- Autotile: aus einer Vorlage mit fünf gemalten Kacheln entsteht ein ganzer Satz mit 47 oder 16 Kacheln,
+  mit Beispielkarte in der Vorschau und animierten Kacheln aus mehreren Frames
+- Export als TileSet für Godot 4 (mit Terrain) und für Tiled (mit Wang-Set)
+- Neuer Dialog **Autotile…**
+- Für Claude: neues Werkzeug `autotile`, und `export` kennt die Formate `godot` und `tiled`
+
 ## 1.3.0
 
 - Effekte auf eigenen Ebenen, die über die Frames laufen und jeder Änderung folgen: Leuchten, Blitz, Explosion,

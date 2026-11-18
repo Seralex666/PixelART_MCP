@@ -1,8 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
 use crate::studio::{
-    DrawOp, EffectsParams, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs, PerFrame,
-    PixelateArgs, Reply, Res, Studio, StyleArgs, StylesParams, ViewOptions,
+    AutotileParams, DrawOp, EffectsParams, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs,
+    PerFrame, PixelateArgs, Reply, Res, Studio, StyleArgs, StylesParams, ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -32,6 +32,7 @@ Consistency rules:
 - To reuse a character in another project use copy_character; it stays pixel-identical.
 
 Styles: when the user names a style ("in manga style", "8 bit"), look it up with styles(action: "get") or pass it as `style` to set_style, create_image or create_character, and follow its rules, palette, shades and outline exactly. Own styles can be saved with styles(action: "save").
+Tiles: for terrain that joins up by itself (grass, water, walls) use autotile: create a template, draw the few source tiles on it, build the set and export it for Godot or Tiled. view with tile=true checks a single seamless tile.
 Effects: for glow, lightning, an explosion, a reflection in water, sparks, smoke, magic sparkles or color cycling (flowing water, flickering fire, lava) use the effects tool rather than drawing them frame by frame. Each effect sits on its own layer, loops over the frames and follows every change; `frames` turns a still image into a loop first. For color_cycle paint the flowing area with the ramp colors (a `preset` like "water" names them) and the colors move.
 
 Pixel art craft: keep outlines 1 pixel wide, use few colors (3 to 5 shades per material), avoid single stray pixels, light from one direction, and keep the silhouette readable at 1× size."##;
@@ -481,7 +482,7 @@ pub struct Export {
     project: String,
     /// Name or id of a character, animation or image.
     asset: String,
-    /// "png", "png8" (indexed PNG with a color table, at most 256 colors, same pixels, smaller file), "jpg", "sheet" (sprite sheet PNG plus JSON metadata with frame positions and durations), "gif" (animated, exact colors up to 255 plus transparency, uses the frame durations and the animation's loop setting) or "webm" (video with transparency, needs ffmpeg on the computer and an even scale).
+    /// "png", "png8" (indexed PNG with a color table, at most 256 colors, same pixels, smaller file), "jpg", "sheet" (sprite sheet PNG plus JSON metadata with frame positions and durations), "gif" (animated, exact colors up to 255 plus transparency, uses the frame durations and the animation's loop setting) or "webm" (video with transparency, needs ffmpeg on the computer and an even scale). For a tile set made by autotile also "godot" (PNG plus a Godot 4 TileSet .tres with terrain) or "tiled" (PNG plus a Tiled .tsx with a Wang set); without `frame` all frames become animated tiles.
     format: String,
     /// Frame index for png/png8/jpg. Omit to export every frame as its own file.
     frame: Option<usize>,
@@ -875,6 +876,14 @@ impl PixelServer {
     )]
     fn effects(&self, Parameters(a): Parameters<EffectsParams>) -> CallToolResult {
         self.run(|s| s.effects(&a))
+    }
+
+    #[tool(
+        description = "Autotile: draw only a few tiles and get the whole terrain tile set. action \"template\" creates an empty template image (2 tiles wide, 3 tall, with a guide layer): a 2×2 block of terrain with outer corners, edges and fill, plus one tile with the four inner corners. action \"build\" turns the drawn template into all 47 tiles (blob47: corners and sides, with inner corners) or 16 tiles (sides16) as a new image, every tile assembled from quarters of the template, in every frame (animated tiles work). action \"preview\" shows a set on a sample map. Export the set with export format \"godot\" or \"tiled\" for terrain painting in the engine. Returns a preview with the set and a sample map.",
+        annotations(title = "Autotile tile sets", destructive_hint = false)
+    )]
+    fn autotile(&self, Parameters(a): Parameters<AutotileParams>) -> CallToolResult {
+        self.run(|s| s.autotile(&a))
     }
 
     #[tool(

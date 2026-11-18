@@ -129,6 +129,8 @@ pub struct Brush {
     pub shape: ShapeChoice,
     /// Eigene Formen in ihren eigenen Farben zeichnen.
     pub keep_colors: bool,
+    /// Kachel-Modus: Was über einen Rand hinausgeht, kommt am anderen wieder herein.
+    pub wrap: bool,
 }
 
 impl Default for Brush {
@@ -145,6 +147,7 @@ impl Default for Brush {
             mirror_y: false,
             shape: ShapeChoice::Builtin(Shape::Heart),
             keep_colors: false,
+            wrap: false,
         }
     }
 }
@@ -327,12 +330,34 @@ impl Stroke {
         )
     }
 
+    /// Im Kachel-Modus wird alles neunmal gezeichnet: an Ort und Stelle und um
+    /// eine Bildbreite oder -höhe versetzt. So kommt, was über einen Rand ragt,
+    /// am gegenüberliegenden wieder herein.
+    fn shifts(&self) -> Vec<Cell> {
+        if !self.brush.wrap {
+            return vec![(0, 0)];
+        }
+        let (w, h) = self.size;
+        let mut out = Vec::with_capacity(9);
+        for dy in [-h, 0, h] {
+            for dx in [-w, 0, w] {
+                out.push((dx, dy));
+            }
+        }
+        out
+    }
+
     fn mirrored(&self, c: Cell) -> Vec<Cell> {
-        let mut out: Vec<Cell> = self
-            .flips()
-            .into_iter()
-            .map(|f| self.flip_cell(c, f))
-            .collect();
+        let mut out: Vec<Cell> = Vec::new();
+        for f in self.flips() {
+            for (dx, dy) in self.shifts() {
+                let cell = self.flip_cell((c.0 + dx, c.1 + dy), f);
+                if !self.brush.wrap || self.inside(cell) {
+                    out.push(cell);
+                }
+            }
+        }
+        out.sort_unstable();
         out.dedup();
         out
     }
@@ -349,8 +374,11 @@ impl Stroke {
             Tool::Line => {
                 self.restore(s)?;
                 for f in self.flips() {
-                    let (a, z) = (self.flip_cell(self.start, f), self.flip_cell(at, f));
-                    dabs(s, t, a, z, b.size, b.color)?;
+                    for (dx, dy) in self.shifts() {
+                        let a = self.flip_cell((self.start.0 + dx, self.start.1 + dy), f);
+                        let z = self.flip_cell((at.0 + dx, at.1 + dy), f);
+                        dabs(s, t, a, z, b.size, b.color)?;
+                    }
                 }
             }
             Tool::Rect | Tool::Ellipse | Tool::Shape => {
@@ -359,8 +387,12 @@ impl Stroke {
                 let y = self.start.1.min(at.1);
                 let w = (self.start.0 - at.0).unsigned_abs() as u32 + 1;
                 let h = (self.start.1 - at.1).unsigned_abs() as u32 + 1;
-                for f in self.flips() {
-                    let (fx, fy) = self.flip_box((x, y, w, h), f);
+                for (f, (dx, dy)) in self
+                    .flips()
+                    .into_iter()
+                    .flat_map(|f| self.shifts().into_iter().map(move |d| (f, d)))
+                {
+                    let (fx, fy) = self.flip_box((x + dx, y + dy, w, h), f);
                     match b.tool {
                         Tool::Rect => {
                             draw::rect(s, t, fx, fy, w, h, b.color, b.filled).map_err(err)?
@@ -433,8 +465,11 @@ impl Stroke {
             }
             Tool::Pencil | Tool::Eraser => {
                 for f in self.flips() {
-                    let (a, z) = (self.flip_cell(from, f), self.flip_cell(to, f));
-                    dabs(s, t, a, z, b.size, color)?;
+                    for (dx, dy) in self.shifts() {
+                        let a = self.flip_cell((from.0 + dx, from.1 + dy), f);
+                        let z = self.flip_cell((to.0 + dx, to.1 + dy), f);
+                        dabs(s, t, a, z, b.size, color)?;
+                    }
                 }
             }
             Tool::Spray => {
@@ -806,5 +841,28 @@ mod tests {
         assert_eq!(count(&s, RED), 1);
         let floating = st.finish().unwrap();
         assert_eq!((floating.area.x, floating.area.y), (4, 3));
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+    use pixel_core::{ColorDepth, Palette};
+
+    #[test]
+    fn tile_mode_brings_strokes_back_in_at_the_other_edge() {
+        let mut s = Sprite::new(8, 8, ColorDepth::Rgba32, Palette::default_16()).unwrap();
+        let brush = Brush {
+            wrap: true,
+            color: Rgba::rgb(255, 0, 0),
+            ..Brush::default()
+        };
+        let mut st = Stroke::begin(&mut s, Target::new(0, 0), brush, (6, 3), None, None).unwrap();
+        st.drag(&mut s, (9, 3)).unwrap();
+        let px = |x: i64, y: i64| s.layer(0, 0).unwrap().get(x, y).unwrap();
+        assert_eq!(px(7, 3), Rgba::rgb(255, 0, 0));
+        assert_eq!(px(0, 3), Rgba::rgb(255, 0, 0), "comes back in on the left");
+        assert_eq!(px(1, 3), Rgba::rgb(255, 0, 0));
+        assert_eq!(px(2, 3), Rgba::TRANSPARENT);
     }
 }
