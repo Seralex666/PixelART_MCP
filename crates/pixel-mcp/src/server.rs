@@ -1,8 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
 use crate::studio::{
-    DrawOp, ImportArgs, OutlineArgs, PerFrame, PixelateArgs, Reply, Res, Studio, StyleArgs,
-    ViewOptions,
+    DrawOp, ImportArgs, LightArgs, OutlineArgs, PerFrame, PixelateArgs, Reply, Res, Studio,
+    StyleArgs, ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -19,7 +19,7 @@ Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
 2. create_project, optionally set_style (shared palette, light direction, outline color), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
 3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. The `shape` op draws hearts, stars, diamonds and other shapes at any size, also custom shapes saved with custom_shapes; `mirror` makes symmetric drawing easy. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
-4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `lighten`/`darken` to push pixels one step along the palette's color ramps, `spray` for soft scattered texture, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
+4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). For light that changes over an animation (a torch passing, the sun moving, a flash) use set_light: lit and shaded edges plus an optional ground shadow, following a light path across the frames. Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `lighten`/`darken` to push pixels one step along the palette's color ramps, `spray` for soft scattered texture, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
 5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
 7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
@@ -369,6 +369,38 @@ pub struct SetOutline {
     layer: Option<String>,
     /// For a character: also give all its animations the same outline. Default true.
     with_animations: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct SetLight {
+    /// Project name.
+    project: String,
+    /// Name or id of an image, a character (its base pose; new animations inherit the light) or an animation.
+    asset: String,
+    /// "set" (default) creates or changes the light, "remove" deletes it with its layers, "freeze" stops the automatic and keeps the layers as normal layers you can edit by hand.
+    action: Option<String>,
+    /// Where the light source is: a direction like "top-left" (far outside, nearly parallel light) or a point [x, y] in canvas pixels (may be outside, e.g. a torch at [-4, 10]). With `to` the light moves from here to there over the frames.
+    from: Option<Value>,
+    /// Where the light source ends up in the last frame: a direction or [x, y]. Without `from` the current start is kept.
+    to: Option<Value>,
+    /// Light path through several points [[x, y], ...] (1 to 32), spread evenly over the frames from first to last. Alternative to from/to.
+    path: Option<Vec<[f32; 2]>>,
+    /// Width of the lit and shaded edges in pixels, 1 to 4. Default 1.
+    width: Option<u32>,
+    /// 1 (one palette step lighter/darker) or 2 (the outermost edge pixels two steps). Default 1.
+    strength: Option<u32>,
+    /// "palette" (default: lighter along the palette's color ramps) or a light color like "#ffb347" for a torch; lit edges blend towards it.
+    color: Option<String>,
+    /// Darken the edges facing away from the light. Default true.
+    shadows: Option<bool>,
+    /// Add a flat ground shadow below the shape that falls away from the light, on its own bottom layer. Default false (or keep the current setting).
+    cast_shadow: Option<bool>,
+    /// Ground shadow length relative to the shape's height, 10 to 300 percent. Default 100.
+    cast_length: Option<u32>,
+    /// Ground shadow layer opacity, 0 to 255. Default 110.
+    cast_opacity: Option<u8>,
+    /// Ground shadow color, "auto" (darkest palette color, default) or a color.
+    cast_color: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -786,6 +818,31 @@ impl PixelServer {
                 light_dir: a.light_dir.as_deref(),
                 layer: a.layer.as_deref(),
                 with_animations: a.with_animations,
+            })
+        })
+    }
+
+    #[tool(
+        description = "Give an image, a character's base pose or an animation automatic light and shadow from a light source that can move over the frames (a torch passing by, the sun crossing the sky, a flash). Edges facing the light become one palette step lighter (or blend towards a light color), edges facing away one step darker, each on its own layer, plus an optional ground shadow that falls away from the light. Everything is redrawn from the other visible layers after every change in every frame, like the automatic outline. Calling it again changes only the options given. Returns a preview of the frames.",
+        annotations(title = "Automatic light and shadow", destructive_hint = false)
+    )]
+    fn set_light(&self, Parameters(a): Parameters<SetLight>) -> CallToolResult {
+        self.run(|s| {
+            s.set_light(&LightArgs {
+                project: &a.project,
+                asset: &a.asset,
+                action: a.action.as_deref(),
+                from: a.from.as_ref(),
+                to: a.to.as_ref(),
+                path: a.path.as_deref(),
+                width: a.width,
+                strength: a.strength,
+                color: a.color.as_deref(),
+                shadows: a.shadows,
+                cast_shadow: a.cast_shadow,
+                cast_length: a.cast_length,
+                cast_opacity: a.cast_opacity,
+                cast_color: a.cast_color.as_deref(),
             })
         })
     }

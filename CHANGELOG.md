@@ -1,5 +1,13 @@
 # Was ist neu
 
+## 1.1.0
+
+- Licht und Schatten auf eigenen Ebenen, die jeder Änderung folgen, für Bilder, Animationen und Figuren
+- Die Lichtquelle kann über die Frames wandern, etwa eine vorbeiziehende Fackel
+- Schlagschatten am Boden, der vom Licht weg fällt
+- Neuer Dialog **Licht…** mit Vorschau je Frame und Lichtpfad
+- Für Claude: neues Werkzeug `set_light`
+
 ## 1.0.0 Beta
 
 - Fotos und Zeichnungen beim Import in Pixel-Art umwandeln: Zielgröße, Farben oder Projektpalette,

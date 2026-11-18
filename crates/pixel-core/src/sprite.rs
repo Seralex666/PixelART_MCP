@@ -23,6 +23,9 @@ pub struct Sprite {
     /// Automatische Kontur, die bei jeder Änderung neu entsteht (siehe [`crate::contour`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) outline: Option<crate::contour::AutoOutline>,
+    /// Licht und Schatten, die einer Lichtquelle folgen (siehe [`crate::light`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) light: Option<Box<crate::light::AutoLight>>,
 }
 
 impl Sprite {
@@ -40,6 +43,7 @@ impl Sprite {
                 layers: vec![Layer::new("Ebene 1", width, height)],
             }],
             outline: None,
+            light: None,
         })
     }
 

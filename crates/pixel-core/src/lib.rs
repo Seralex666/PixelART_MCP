@@ -27,6 +27,7 @@ pub mod expr;
 pub mod import;
 pub mod lang;
 pub mod layer;
+pub mod light;
 pub mod lint;
 pub mod palette;
 pub mod pixelate;

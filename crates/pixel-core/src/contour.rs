@@ -133,7 +133,7 @@ impl Sprite {
             }
         }
         self.outline = Some(spec);
-        self.refresh_outline()?;
+        self.refresh_contour()?;
         let l = self.outline_layer().ok_or(Error::NoSuchLayer(0))?;
         Ok(self
             .layer(0, l)?
@@ -160,9 +160,15 @@ impl Sprite {
         Ok(())
     }
 
-    /// Zeichnet die automatische Kontur in allen Frames neu. `true`, wenn sich
-    /// dabei etwas geändert hat. Ohne eingerichtete Kontur passiert nichts.
+    /// Zeichnet die automatischen Ebenen in allen Frames neu: erst Licht und
+    /// Schatten ([`crate::light`]), dann die Kontur. `true`, wenn sich dabei etwas
+    /// geändert hat. Ohne Licht und Kontur passiert nichts.
     pub fn refresh_outline(&mut self) -> Result<bool> {
+        let lit = self.refresh_light()?;
+        Ok(self.refresh_contour()? || lit)
+    }
+
+    fn refresh_contour(&mut self) -> Result<bool> {
         let Some(spec) = self.outline.clone() else {
             return Ok(false);
         };
@@ -202,7 +208,13 @@ fn content(s: &Sprite, frame: usize, skip: usize) -> Result<Content> {
         color: vec![Rgba::TRANSPARENT; n],
     };
     for (i, layer) in s.frame(frame)?.layers.iter().enumerate() {
-        if i == skip || !layer.visible || layer.opacity == 0 || layer.reference {
+        // Der Schlagschatten liegt am Boden und bekommt keine Kontur.
+        if i == skip
+            || !layer.visible
+            || layer.opacity == 0
+            || layer.reference
+            || Some(i) == s.cast_shadow_layer()
+        {
             continue;
         }
         for (p, &c) in layer.pixels().iter().enumerate() {

@@ -5,6 +5,7 @@ use crate::app::{section, App, MAX_FRAMES};
 use crate::doc::{AssetId, AssetKind, Res};
 use crate::help::{self, ConnectInfo};
 use crate::import_dialog::{self, ImportForm};
+use crate::light_dialog::LightForm;
 use crate::outline_dialog::OutlineForm;
 use crate::tools::Tool;
 use eframe::egui::{self, RichText};
@@ -31,6 +32,7 @@ pub enum Dialog {
     About,
     Settings(SettingsForm),
     Outline(Box<OutlineForm>),
+    Light(Box<LightForm>),
     DeleteProject { name: String, exports: bool },
     ReplaceColor(ReplaceForm),
     Resize(ResizeForm),
@@ -245,6 +247,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::About => about(app, ui),
             Dialog::Settings(form) => settings(app, ui, form),
             Dialog::Outline(form) => crate::outline_dialog::show(app, ui, form),
+            Dialog::Light(form) => crate::light_dialog::show(app, ui, form),
             Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
             Dialog::ReplaceColor(form) => replace_color(app, ui, form),
             Dialog::Resize(form) => resize(app, ui, form),

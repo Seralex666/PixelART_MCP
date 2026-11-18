@@ -299,3 +299,67 @@ fn photos_become_pixel_art_and_references_stay_out_of_the_picture() {
     let back: Sprite = serde_json::from_str(&json).unwrap();
     assert!(back.is_reference(0));
 }
+
+#[test]
+fn light_and_outline_work_together_and_the_ground_shadow_gets_no_outline() {
+    use pixel_core::contour::AutoOutline;
+    use pixel_core::light::{AutoLight, CastShadow};
+    use pixel_core::quant::luminance;
+    let body = Rgba::rgb(60, 110, 200);
+    let mut s = sprite(20, 16);
+    for y in 4..12 {
+        for x in 8..12 {
+            s.set_pixel(0, 0, x, y, body).unwrap();
+        }
+    }
+    s.duplicate_frame(0).unwrap();
+    s.set_auto_outline(AutoOutline::new("outline")).unwrap();
+    let outline = |s: &Sprite| {
+        let i = s.layer_index("outline").unwrap();
+        s.layer(0, i)
+            .unwrap()
+            .pixels()
+            .iter()
+            .filter(|p| !p.is_transparent())
+            .count()
+    };
+    let before = outline(&s);
+
+    let mut spec = AutoLight::new((-20.0, -10.0));
+    spec.light_layer = "light".into();
+    spec.shadow_layer = "shade".into();
+    spec.path.push((40.0, -10.0));
+    spec.cast = Some(CastShadow::new("ground"));
+    s.set_auto_light(spec).unwrap();
+    s.refresh_outline().unwrap();
+
+    // Order from the bottom: ground shadow, the figure, shade, light, outline on top.
+    let names = s.layer_names();
+    assert_eq!(names.len(), 5);
+    assert_eq!(
+        [&names[0], &names[2], &names[3], &names[4]],
+        ["ground", "shade", "light", "outline"]
+    );
+    // The outline goes around the figure only, not around light or ground shadow.
+    assert_eq!(outline(&s), before);
+    // Frame 0: light from the left, the ground shadow falls to the right.
+    let picture = s.composite(0).unwrap();
+    let px = |x: usize, y: usize| picture[y * 20 + x];
+    assert!(luminance(px(8, 8)) > luminance(body));
+    assert!(luminance(px(11, 8)) < luminance(body));
+    let ground = s.cast_shadow_layer().unwrap();
+    let row = |f: usize, x: i64| {
+        !s.layer(f, ground)
+            .unwrap()
+            .get(x, 11)
+            .unwrap()
+            .is_transparent()
+    };
+    assert!(row(0, 13) && !row(0, 6));
+    // Frame 1: the light is on the right, so everything flips.
+    assert!(row(1, 6) && !row(1, 13));
+    // Saved and loaded, the light stays.
+    let json = serde_json::to_string(&s).unwrap();
+    let back: Sprite = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.auto_light(), s.auto_light());
+}

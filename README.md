@@ -43,9 +43,17 @@ dunklere Stufe der Farbe daneben, auf Wunsch mit Lichtrichtung.
 
 ![Der Kontur-Dialog](docs/images/kontur.png)
 
+### Licht und Schatten, auch in Animationen
+
+Eine Lichtquelle macht die Kanten zu ihr heller und die abgewandten dunkler, jeweils auf einer eigenen
+Ebene. Sie kann über die Frames wandern, etwa eine Fackel, die vorbeizieht, und wirft auf Wunsch einen
+Schatten auf den Boden, der vom Licht wegfällt. Wie die Kontur folgt alles jeder Änderung.
+
+![Der Dialog Licht und Schatten mit Lichtpfad und Schlagschatten](docs/images/licht.png)
+
 ### Claude zeichnet mit
 
-Das Studio ist zugleich ein MCP-Server mit 25 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Das Studio ist zugleich ein MCP-Server mit 26 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
 Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
 die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
 auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor.
@@ -64,7 +72,7 @@ auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 25 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 26 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -74,6 +82,7 @@ auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor
 | 9 | Automatische Konturen, Projekte löschen, aufgeräumte Seitenleisten, Programmsymbol | fertig |
 | 10 | Formen und eigene Formen, Sprühdose, Aufhellen/Abdunkeln, Auswahl, Spiegeln, Pixel-perfekt, Farbe ersetzen, Leinwandgröße, Paletten mit 32 und 64 Farben | fertig |
 | 1.0 Beta | Fotos und Zeichnungen in Pixel-Art umwandeln, Vorlage-Ebene zum Nachzeichnen, Feature-Übersicht | fertig |
+| 1.1 | Licht und Schatten, die über die Frames wandern, Schlagschatten am Boden | fertig |
 
 ## Aufbau
 
@@ -176,6 +185,23 @@ zeichnest oder Claude. Claude benutzt dafür `set_outline`. Die Kontur ist freiw
 - **Über Eck** schließt diagonale Lücken, **Innenlinien** trennen Ebenen, etwa einen Arm vor dem Körper.
 - **Festschreiben** macht aus der Kontur eine normale Ebene zum Nachbessern, **Entfernen** löscht sie.
   Neue Animationen einer Figur übernehmen ihre Kontur.
+
+## Licht und Schatten
+
+Über **Licht…** (Werkzeugleiste, Menü Bearbeiten oder Rechtsklick auf ein Asset) bekommt ein Bild, eine
+Animation oder eine Figur automatisches Licht. Claude benutzt dafür `set_light`. Es entsteht aus den sichtbaren
+Ebenen und wird nach jeder Änderung in allen Frames neu gezeichnet.
+
+- **Lichtquelle:** eine Richtung (die Pfeile setzen sie weit außerhalb des Bildes) oder ein Punkt mit x und y,
+  auch mitten im Bild. **Wandert über die Frames** verteilt sie gleichmäßig von einer Position im ersten Frame
+  zu einer im letzten; Claude kann auch einen Pfad mit mehreren Punkten angeben.
+- **Licht:** Breite 1 bis 4 Pixel, Stärke 1 oder 2, heller entlang der Palette oder farbiges Licht.
+  Dunkle Umrisspixel bleiben unangetastet.
+- **Schattenseite abdunkeln** legt die abgewandten Kanten auf eine eigene Schatten-Ebene.
+- **Schlagschatten:** ein flacher Schatten am Boden, der vom Licht weg fällt, mit Länge und Deckkraft. Er liegt
+  ganz unten und bekommt keine Kontur.
+- **Festschreiben** macht aus den Ebenen normale Ebenen, **Entfernen** löscht sie. Licht und Kontur
+  vertragen sich: Die Kontur liegt immer ganz oben.
 
 ## Stil, Paletten und Prüf-Hinweise
 

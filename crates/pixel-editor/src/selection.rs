@@ -66,6 +66,13 @@ impl App {
             ));
             return false;
         }
+        if self.sprite().is_some_and(|s| s.is_light_layer(self.layer)) {
+            self.error(tr(
+                "Diese Ebene gehört zum automatischen Licht. Wähle eine andere Ebene.",
+                "This layer belongs to the automatic light. Pick another layer.",
+            ));
+            return false;
+        }
         if self.sprite().is_some_and(|s| s.is_reference(self.layer)) {
             self.error(tr(
                 "Diese Ebene ist eine Vorlage zum Nachzeichnen. Wähle eine andere Ebene.",
