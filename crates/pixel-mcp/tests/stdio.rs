@@ -154,6 +154,7 @@ fn lists_all_tools_with_schemas() {
         "set_palette",
         "add_character_colors",
         "export",
+        "set_light",
         "import_image",
         "undo",
         "set_style",
@@ -1887,4 +1888,76 @@ fn photos_turn_into_pixel_art_and_references_help_tracing() {
     );
     assert!(err.contains("needs `asset`"), "{err}");
     std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn light_follows_a_path_over_the_frames() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "L"}));
+    c.ok(
+        "create_image",
+        json!({"project": "L", "name": "Ball", "width": 16, "height": 16, "frames": 2,
+               "palette": ["#101018", "#3050a0", "#6080d0", "#90b0f0"]}),
+    );
+    for frame in [0, 1] {
+        c.ok(
+            "draw",
+            json!({"project": "L", "asset": "Ball", "frame": frame,
+                   "ops": [{"op": "rect", "x": 3, "y": 3, "w": 10, "h": 10, "color": "#6080d0", "filled": true}]}),
+        );
+    }
+    let r = c.ok(
+        "set_light",
+        json!({"project": "L", "asset": "Ball", "from": [-20, 8], "to": [36, 8], "cast_shadow": true}),
+    );
+    assert!(
+        r.text.contains("moving [-20, 8] → [36, 8] over 2 frame(s)"),
+        "{}",
+        r.text
+    );
+    assert!(
+        r.text.contains("ground shadow, Ebene 1, shadow, light"),
+        "{}",
+        r.text
+    );
+    let light = |c: &mut Client, frame: usize| colors_in(c, "L", "Ball", frame, 3);
+    assert_eq!(
+        light(&mut c, 0)[8][3],
+        "#90b0f0",
+        "frame 0: lit from the left"
+    );
+    assert_eq!(light(&mut c, 0)[8][12], ".");
+    assert_eq!(
+        light(&mut c, 1)[8][12],
+        "#90b0f0",
+        "frame 1: lit from the right"
+    );
+    let shadow = colors_in(&mut c, "L", "Ball", 0, 2);
+    assert_eq!(shadow[8][12], "#3050a0");
+
+    // Die Figur ändert sich: Das Licht folgt.
+    c.ok(
+        "draw",
+        json!({"project": "L", "asset": "Ball", "layer": 1,
+               "ops": [{"op": "pixels", "color": "#6080d0", "points": [[2, 8]]}]}),
+    );
+    assert_eq!(light(&mut c, 0)[8][2], "#90b0f0");
+    let project: Value =
+        serde_json::from_str(&c.ok("get_project", json!({"project": "L"})).text).unwrap();
+    assert_eq!(
+        project["images"][0]["auto_light"]["path"],
+        json!([[-20.0, 8.0], [36.0, 8.0]])
+    );
+
+    let err = c.err(
+        "set_light",
+        json!({"project": "L", "asset": "Ball", "width": 9}),
+    );
+    assert!(err.contains("width"), "{err}");
+    c.ok(
+        "set_light",
+        json!({"project": "L", "asset": "Ball", "action": "remove"}),
+    );
+    let r = c.ok("view", json!({"project": "L", "asset": "Ball"}));
+    assert!(r.text.contains("layers: Ebene 1."), "{}", r.text);
 }

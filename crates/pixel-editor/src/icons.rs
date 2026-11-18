@@ -16,6 +16,8 @@ pub enum Icon {
     Brush,
     /// Knopf „Kontur…“.
     Outline,
+    /// Knopf „Licht…“.
+    Light,
     /// Spiegeln links und rechts.
     MirrorX,
     /// Spiegeln oben und unten.
@@ -25,7 +27,13 @@ pub enum Icon {
 impl Icon {
     pub fn all() -> Vec<Icon> {
         let mut all: Vec<Icon> = Tool::ALL.iter().map(|&t| Icon::Tool(t)).collect();
-        all.extend([Icon::Brush, Icon::Outline, Icon::MirrorX, Icon::MirrorY]);
+        all.extend([
+            Icon::Brush,
+            Icon::Outline,
+            Icon::Light,
+            Icon::MirrorX,
+            Icon::MirrorY,
+        ]);
         all
     }
 }
@@ -49,6 +57,24 @@ fn rows(icon: Icon) -> Vec<String> {
             "..###...........",
             "................",
             "................",
+            "................",
+        ]),
+        Icon::Light => lines(&[
+            "................",
+            ".......yy.......",
+            "..y....yy....y..",
+            "...y........y...",
+            "......####......",
+            ".....#yyyy#.....",
+            "....#yywwyy#....",
+            "yy..#ywwwwy#..yy",
+            "yy..#ywwwwy#..yy",
+            "....#yywwyy#....",
+            ".....#yyyy#.....",
+            "......####......",
+            "...y........y...",
+            "..y....yy....y..",
+            ".......yy.......",
             "................",
         ]),
         Icon::Outline => lines(&[

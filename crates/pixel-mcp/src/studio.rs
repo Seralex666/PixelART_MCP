@@ -10,6 +10,7 @@ use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
 use pixel_core::expr::Expr;
 use pixel_core::import::{self, Grid, NewColors, Picture, Shrink};
+use pixel_core::light;
 use pixel_core::lint::{self, Checks, Finding};
 use pixel_core::pixelate::{self, Background, Dither, Outline, Pixelate};
 use pixel_core::project::{CharacterBundle, Style};
@@ -442,6 +443,25 @@ pub struct PixelateArgs<'a> {
     pub vivid: Option<bool>,
 }
 
+/// Was `set_light` ändern soll. Leere Felder behalten den bisherigen Wert.
+#[derive(Default)]
+pub struct LightArgs<'a> {
+    pub project: &'a str,
+    pub asset: &'a str,
+    pub action: Option<&'a str>,
+    pub from: Option<&'a Value>,
+    pub to: Option<&'a Value>,
+    pub path: Option<&'a [[f32; 2]]>,
+    pub width: Option<u32>,
+    pub strength: Option<u32>,
+    pub color: Option<&'a str>,
+    pub shadows: Option<bool>,
+    pub cast_shadow: Option<bool>,
+    pub cast_length: Option<u32>,
+    pub cast_opacity: Option<u8>,
+    pub cast_color: Option<&'a str>,
+}
+
 /// Was `set_outline` ändern soll. Leere Felder behalten den bisherigen Wert.
 #[derive(Default)]
 pub struct OutlineArgs<'a> {
@@ -623,6 +643,9 @@ impl Studio {
             }
             if let Some(o) = s.auto_outline() {
                 v["auto_outline"] = outline_json(o);
+            }
+            if let Some(l) = s.auto_light() {
+                v["auto_light"] = light_json(l);
             }
             let refs: Vec<usize> = (0..s.layer_count())
                 .filter(|&i| s.is_reference(i))
@@ -2611,6 +2634,143 @@ impl Studio {
         })
     }
 
+    /// Licht und Schatten einrichten, ändern, festschreiben oder entfernen.
+    pub fn set_light(&self, a: &LightArgs) -> Res {
+        let action = a.action.unwrap_or("set").trim().to_ascii_lowercase();
+        if !matches!(action.as_str(), "set" | "remove" | "freeze") {
+            return Err(format!(
+                "unknown action '{action}', use \"set\", \"remove\" or \"freeze\""
+            ));
+        }
+        let (_lock, mut p) = self.load_locked(a.project)?;
+        let r = Self::resolve(&p, a.asset)?;
+        let name = Self::asset_name(&p, r);
+        let before = Self::sprite(&p, r)?.clone();
+        let (w, h) = (before.width(), before.height());
+        // Ein Punkt ist eine Richtung wie "top-left" (weit außerhalb) oder [x, y] in Pixeln.
+        let point = |v: &Value, what: &str| -> Res<(f32, f32)> {
+            match v {
+                Value::String(d) => {
+                    let (x, y) = parse_direction(d, what)?;
+                    if (x, y) == (0, 0) {
+                        return Err(format!("`{what}` needs a direction like top-left"));
+                    }
+                    light::position_for(direction_name((x, y)), w, h)
+                        .ok_or_else(|| format!("unknown {what} '{d}'"))
+                }
+                Value::Array(xy) if xy.len() == 2 => {
+                    let n = |v: &Value| v.as_f64().map(|f| f as f32);
+                    match (n(&xy[0]), n(&xy[1])) {
+                        (Some(x), Some(y)) => Ok((x, y)),
+                        _ => Err(format!("`{what}` must be a direction or [x, y]")),
+                    }
+                }
+                _ => Err(format!(
+                    "`{what}` must be a direction like \"top-left\" or a point [x, y]"
+                )),
+            }
+        };
+        let spec = if action == "set" {
+            let old = before.auto_light().cloned();
+            let mut spec = old.clone().unwrap_or_else(|| {
+                let dir = p.style.light_dir.as_deref().unwrap_or("top-left");
+                let at = light::position_for(dir, w, h).unwrap_or((-(w as f32), -(h as f32)));
+                light::AutoLight {
+                    light_layer: "light".into(),
+                    shadow_layer: "shadow".into(),
+                    ..light::AutoLight::new(at)
+                }
+            });
+            match (a.path, a.from, a.to) {
+                (Some(path), None, None) => {
+                    spec.path = path.iter().map(|[x, y]| (*x, *y)).collect();
+                }
+                (Some(_), _, _) => return Err("give either `path` or `from`/`to`, not both".into()),
+                (None, Some(from), to) => {
+                    spec.path = vec![point(from, "from")?];
+                    if let Some(to) = to {
+                        spec.path.push(point(to, "to")?);
+                    }
+                }
+                (None, None, Some(to)) => {
+                    let start = spec.path[0];
+                    spec.path = vec![start, point(to, "to")?];
+                }
+                (None, None, None) => {}
+            }
+            spec.width = a.width.unwrap_or(spec.width);
+            spec.strength = a.strength.unwrap_or(spec.strength);
+            spec.shadows = a.shadows.unwrap_or(spec.shadows);
+            if let Some(c) = a.color {
+                spec.color = match c.trim().to_ascii_lowercase().as_str() {
+                    "palette" | "none" | "" => None,
+                    _ => Some(parse_color(c)?),
+                };
+            }
+            let wants_cast = a.cast_shadow.unwrap_or(
+                spec.cast.is_some()
+                    || a.cast_length.is_some()
+                    || a.cast_opacity.is_some()
+                    || a.cast_color.is_some(),
+            );
+            spec.cast = if wants_cast {
+                let mut c = spec
+                    .cast
+                    .clone()
+                    .unwrap_or_else(|| light::CastShadow::new("ground shadow"));
+                c.length = a.cast_length.unwrap_or(c.length);
+                c.opacity = a.cast_opacity.unwrap_or(c.opacity);
+                if let Some(k) = a.cast_color {
+                    c.color = match k.trim().to_ascii_lowercase().as_str() {
+                        "auto" | "darkest" | "" => None,
+                        _ => Some(parse_color(k)?),
+                    };
+                }
+                Some(c)
+            } else {
+                None
+            };
+            Some(spec)
+        } else {
+            if before.auto_light().is_none() {
+                return Err(format!("'{name}' has no automatic light"));
+            }
+            None
+        };
+        let keep = action == "freeze";
+        let s = Self::sprite_mut(&mut p, r)?;
+        match spec.clone() {
+            Some(spec) => s.set_auto_light(spec).map_err(e)?,
+            None => s.stop_light(keep).map_err(e)?,
+        }
+        s.refresh_outline().map_err(e)?;
+        let frames: Vec<usize> = (0..s.frames().len().min(16)).collect();
+        let png = render_plain(s, &frames, None)?;
+        let layers = s.layer_names().join(", ");
+        let after = s.clone();
+        self.save(a.project, &mut p)?;
+        self.remember(a.project, r, before, after)?;
+        let text = match spec {
+            Some(spec) => format!(
+                "'{name}' now has automatic light and shadow: {}. Layers '{}' (lit edges, one palette step lighter) and '{}' (edges facing away, one step darker){} are redrawn from the other visible layers after every change, in every frame; keep drawing on the other layers. Layers bottom to top: {layers}. `undo` takes this back.",
+                describe_light(&spec, after_frames(&p, r)),
+                spec.light_layer,
+                spec.shadow_layer,
+                spec.cast
+                    .as_ref()
+                    .map_or(String::new(), |c| format!(", plus '{}' at the bottom with the ground shadow", c.layer)),
+            ),
+            None if keep => format!(
+                "The light of '{name}' is now made of normal layers: they stay as they are and can be edited by hand, but no longer follow changes."
+            ),
+            None => format!("Removed the automatic light and its layers from '{name}'."),
+        };
+        Ok(Reply {
+            text,
+            image_png: Some(png),
+        })
+    }
+
     // ---------------------------------------------------------------- Export
 
     #[allow(clippy::too_many_arguments)]
@@ -2729,6 +2889,54 @@ fn style_json(style: &Style) -> Value {
 }
 
 /// Der Name einer Richtung, wie ihn der Stil speichert.
+fn after_frames(p: &Project, r: AssetRef) -> usize {
+    Studio::sprite(p, r).map_or(1, |s| s.frames().len())
+}
+
+fn describe_light(l: &light::AutoLight, frames: usize) -> String {
+    let at = |(x, y): (f32, f32)| format!("[{x:.0}, {y:.0}]");
+    let mut parts = vec![if l.path.len() == 1 {
+        format!("light source at {}", at(l.path[0]))
+    } else {
+        format!(
+            "light source moving {} over {frames} frame(s)",
+            l.path
+                .iter()
+                .map(|p| at(*p))
+                .collect::<Vec<_>>()
+                .join(" → ")
+        )
+    }];
+    parts.push(format!(
+        "edges {} px wide, strength {}",
+        l.width, l.strength
+    ));
+    parts.push(match l.color {
+        Some(c) => format!("light color {c}"),
+        None => "lighter along the palette".into(),
+    });
+    if !l.shadows {
+        parts.push("no shadow side".into());
+    }
+    if let Some(c) = &l.cast {
+        parts.push(format!("ground shadow {}% long", c.length));
+    }
+    parts.join(", ")
+}
+
+fn light_json(l: &light::AutoLight) -> Value {
+    json!({
+        "light_layer": l.light_layer,
+        "shadow_layer": l.shadow_layer,
+        "path": l.path.iter().map(|(x, y)| [x, y]).collect::<Vec<_>>(),
+        "width": l.width,
+        "strength": l.strength,
+        "color": l.color.map_or("palette".to_string(), |c| c.to_string()),
+        "shadows": l.shadows,
+        "cast_shadow": l.cast.as_ref().map(|c| json!({"layer": c.layer, "length": c.length, "opacity": c.opacity})),
+    })
+}
+
 fn describe_outline(o: &AutoOutline) -> String {
     let mut parts = vec![
         match o.color {

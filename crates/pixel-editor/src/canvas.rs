@@ -334,6 +334,13 @@ fn begin(app: &mut App, at: (i64, i64)) {
         ));
         return;
     }
+    if app.sprite().is_some_and(|s| s.is_light_layer(app.layer)) {
+        app.error(tr(
+            "Diese Ebene gehört zum automatischen Licht und folgt den anderen Ebenen. Zeichne auf einer anderen Ebene, oder schreibe das Licht fest (Licht und Schatten… › Festschreiben).",
+            "This layer belongs to the automatic light and follows the other layers. Draw on another layer, or freeze the light (Light and shadow… › Freeze).",
+        ));
+        return;
+    }
     if app.sprite().is_some_and(|s| s.is_reference(app.layer)) {
         app.error(tr(
             "Diese Ebene ist eine Vorlage zum Nachzeichnen. Zeichne auf einer anderen Ebene darüber.",

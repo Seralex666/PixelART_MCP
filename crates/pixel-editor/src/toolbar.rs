@@ -81,15 +81,14 @@ impl App {
             // Kontur mit eigenem Symbol, etwas abgesetzt.
             let has_outline = self.sprite().is_some_and(|s| s.auto_outline().is_some());
             let tex = self.icons.icon(ui.ctx(), Icon::Outline);
-            let label = if has_outline {
-                tr("Kontur bearbeiten…", "Edit outline…")
-            } else {
-                tr("Kontur…", "Outline…")
-            };
+            // Same short label either way, so the toolbar keeps its width;
+            // a highlighted button shows that the automatic layer is on.
+            let label = tr("Kontur…", "Outline…");
             if ui
                 .add_enabled(
                     self.sel.is_some(),
-                    egui::Button::image_and_text((tex, egui::vec2(ICON, ICON)), label),
+                    egui::Button::image_and_text((tex, egui::vec2(ICON, ICON)), label)
+                        .selected(has_outline),
                 )
                 .on_hover_text(tr(
                     "Automatische Kontur auf eigener Ebene, die jeder Änderung folgt",
@@ -98,6 +97,25 @@ impl App {
                 .clicked()
             {
                 self.outline_dialog();
+            }
+            let has_light = self.sprite().is_some_and(|s| s.auto_light().is_some());
+            let tex = self.icons.icon(ui.ctx(), Icon::Light);
+            // Same short label either way, so the toolbar keeps its width;
+            // a highlighted button shows that the automatic layer is on.
+            let label = tr("Licht…", "Light…");
+            if ui
+                .add_enabled(
+                    self.sel.is_some(),
+                    egui::Button::image_and_text((tex, egui::vec2(ICON, ICON)), label)
+                        .selected(has_light),
+                )
+                .on_hover_text(tr(
+                    "Licht und Schatten von einer Lichtquelle, die über die Frames wandern kann",
+                    "Light and shadow from a light source that can move over the frames",
+                ))
+                .clicked()
+            {
+                self.light_dialog();
             }
             ui.separator();
 

@@ -6,6 +6,7 @@ use crate::doc::{AssetEntry, AssetId, AssetKind, Doc, Res};
 use crate::help;
 use crate::icons::Icons;
 use crate::import_dialog::ImportForm;
+use crate::light_dialog::LightForm;
 use crate::outline_dialog::OutlineForm;
 use crate::selection::FloatKey;
 use crate::settings::Settings;
@@ -168,6 +169,7 @@ impl App {
             Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
             Ok("settings") => app.dialog = Dialog::Settings(SettingsForm::new(&app)),
             Ok("outline") => app.outline_dialog(),
+            Ok("light") => app.light_dialog(),
             Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
             Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
             Ok("shape") => app.open_dialog(Dialog::SaveShape {
@@ -810,6 +812,15 @@ impl App {
                 if ui
                     .add_enabled(
                         has_sel,
+                        egui::Button::new(tr("Licht und Schatten…", "Light and shadow…")),
+                    )
+                    .clicked()
+                {
+                    self.light_dialog();
+                }
+                if ui
+                    .add_enabled(
+                        has_sel,
                         egui::Button::new(tr("Farbe ersetzen…", "Replace color…")),
                     )
                     .clicked()
@@ -1147,6 +1158,14 @@ impl App {
                     self.outline_dialog();
                     ui.close();
                 }
+                if ui
+                    .button(tr("Licht und Schatten…", "Light and shadow…"))
+                    .clicked()
+                {
+                    self.select(a.id);
+                    self.light_dialog();
+                    ui.close();
+                }
                 if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
                     self.open_dialog(Dialog::Rename {
                         id: a.id,
@@ -1197,6 +1216,13 @@ impl App {
                 self.info(trf!("Form „{name}“ gelöscht", "Shape \"{name}\" deleted"));
             }
             Err(err) => self.error(err.to_string()),
+        }
+    }
+
+    pub fn light_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = LightForm::new(self, id) {
+            self.open_dialog(Dialog::Light(Box::new(form)));
         }
     }
 
@@ -1313,6 +1339,7 @@ impl App {
         let Some(s) = self.sprite() else { return };
         let auto = s.outline_layer();
         let refs: Vec<bool> = (0..s.layer_count()).map(|i| s.is_reference(i)).collect();
+        let lights: Vec<bool> = (0..s.layer_count()).map(|i| s.is_light_layer(i)).collect();
         let layers: Vec<(String, bool)> = s
             .frame(self.frame)
             .map(|f| {
@@ -1385,6 +1412,8 @@ impl App {
             let is_auto = auto == Some(i);
             let note = if is_auto {
                 Some(tr("automatische Kontur", "automatic outline"))
+            } else if lights.get(i).copied().unwrap_or(false) {
+                Some(tr("automatisches Licht", "automatic light"))
             } else if refs.get(i).copied().unwrap_or(false) {
                 Some(tr(
                     "Vorlage, nicht im Bild",
