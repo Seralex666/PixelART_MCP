@@ -23,9 +23,11 @@ mod help;
 mod icons;
 mod import_dialog;
 mod light_dialog;
+mod normal_dialog;
 mod outline_dialog;
 mod selection;
 mod settings;
+mod settings_dialog;
 mod toolbar;
 mod tools;
 

@@ -1,8 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
 use crate::studio::{
-    DrawOp, ImportArgs, LightArgs, OutlineArgs, PerFrame, PixelateArgs, Reply, Res, Studio,
-    StyleArgs, ViewOptions,
+    DrawOp, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs, PerFrame, PixelateArgs, Reply, Res,
+    Studio, StyleArgs, StylesParams, ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -17,19 +17,21 @@ const INSTRUCTIONS: &str = r##"PixelArt Studio creates REAL pixel art: every ima
 
 Typical workflow:
 1. get_studio_info to see projects, canvas templates, palette presets and animation presets.
-2. create_project, optionally set_style (shared palette, light direction, outline color), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
+2. create_project, optionally set_style (shared palette, light direction, outline color; `style` takes a whole style from the style library such as "Manga", "Comic", "8 Bit", "16 Bit", "HQ Pixel Art" or "Castles"), then create_character (for anything that will be animated or reused) or create_image (tiles, items, scenes).
 3. draw on it. For exact shapes prefer the `grid` op: text rows plus a legend give control over every pixel. The `shape` op draws hearts, stars, diamonds and other shapes at any size, also custom shapes saved with custom_shapes; `mirror` makes symmetric drawing easy. Use layers (e.g. legs, body, head, weapon) so parts can move independently in animations; create_image and create_character take `layers`, create_image also `frames`.
 4. Add depth with the technique ops instead of placing every pixel by hand. For characters and animations prefer set_outline: an automatic outline on its own layer that follows every change in every frame (selective or one color, inside or outside, inner lines between layers). For light that changes over an animation (a torch passing, the sun moving, a flash) use set_light: lit and shaded edges plus an optional ground shadow, following a light path across the frames. Ops: `outline` around a shape on one layer, `shade` for light and shadow from one direction, `gradient` (hard bands) and `dither` for transitions, `noise` for grain, `lighten`/`darken` to push pixels one step along the palette's color ramps, `spray` for soft scattered texture, `stamp` to repeat a piece, and `shader` (a per-pixel math formula with x, y, frame, dist(), noise(), rand()) for glow, light and anything procedural. Most take an area (x, y, w, h) and a `mask` ("opaque", "transparent" or a color) so they only touch the part you mean.
 5. Every draw call returns a preview image. Look at it and correct mistakes before continuing; `undo` takes back the last draw calls. view has `grid` (coordinates), `zoom_region` and `tile` (seam check); get_pixels reads exact pixels back as text.
 6. Animation: create_animation (idle, walk, run, jump, attack, hurt, death or a custom name). All frames start as exact copies of the character's base pose; change only what moves. One draw call can cover several frames: `frame: "all"` applies the ops to every frame, and `per_frame` gives each frame its own color substitutions or extra ops (e.g. a shift, or a brighter glow color). In `shader` use `frame` or `t` to animate.
 7. Before finishing, get_project lists `hints` on likely slips (stray pixels, outline gaps, single-use colors, tile seams); view shows them too. palette_from_image takes the colors from reference art, reduce_colors brings an asset down to fewer colors.
-8. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated).
+8. export as png, jpg, sheet (sprite sheet with JSON metadata), gif or webm (animated). With `normal_map` export also writes normal maps (suffix _n) for dynamic lighting in Godot or Unity.
 Canvas too small or too big: resize_canvas (keeps a character and its animations the same size). Existing art: import_image brings a PNG, JPG or GIF file (also sprite sheets) into the project as an image, a character or an animation; with `pixelate` it converts photos and drawings into pixel art, and as="reference" adds a tracing layer (not exported) to draw over.
 
 Consistency rules:
 - A character's palette is locked when it is created. Colors drawn on the character or its animations snap to the nearest palette color, so choose the full palette up front (skin, hair, clothes, outline, shadows, highlights). add_character_colors appends colors later without changing existing ones.
 - Animations always have the size, color depth and palette of their character. get_project lists any consistency issues.
 - To reuse a character in another project use copy_character; it stays pixel-identical.
+
+Styles: when the user names a style ("in manga style", "8 bit"), look it up with styles(action: "get") or pass it as `style` to set_style, create_image or create_character, and follow its rules, palette, shades and outline exactly. Own styles can be saved with styles(action: "save").
 
 Pixel art craft: keep outlines 1 pixel wide, use few colors (3 to 5 shades per material), avoid single stray pixels, light from one direction, and keep the silhouette readable at 1× size."##;
 
@@ -94,6 +96,8 @@ pub struct CreateImage {
     palette_preset: Option<String>,
     /// Custom palette as a list of colors. Alternative to palette_preset.
     palette: Option<Vec<String>>,
+    /// Style from the style library, e.g. "Manga", "8 Bit", "16 Bit", "HQ Pixel Art", "Comic", "Castles" or an own style (see styles). Brings its palette, color depth and usual size unless you give them, and the reply lists the style's rules to follow. Without it the project's style applies.
+    style: Option<String>,
     /// Layer names from bottom to top, e.g. ["stone", "glow"]. Default: one layer.
     layers: Option<Vec<String>>,
     /// Number of frames, 1 to 256. Default 1. All start empty.
@@ -120,6 +124,8 @@ pub struct CreateCharacter {
     palette_preset: Option<String>,
     /// The character's full palette as a list of colors. It is locked after creation.
     palette: Option<Vec<String>>,
+    /// Style from the style library, e.g. "Manga", "8 Bit", "16 Bit", "HQ Pixel Art", "Comic", "Castles" or an own style (see styles). Brings its palette, color depth and usual size unless you give them, and the reply lists the style's rules to follow. Without it the project's style applies.
+    style: Option<String>,
     /// Layer names from bottom to top, e.g. ["legs", "body", "head"]. Default: one layer.
     layers: Option<Vec<String>>,
 }
@@ -297,6 +303,8 @@ pub struct AddCharacterColors {
 pub struct SetStyle {
     /// Project name.
     project: String,
+    /// A style from the style library (see styles), e.g. "Manga" or "8 Bit": sets its palette, light direction and outline color for the project and remembers the style, so get_project and new assets show its rules. Other fields given in the same call override it.
+    style: Option<String>,
     /// The project's colors. New images and characters start with them unless they name a palette.
     palette: Option<Vec<String>>,
     /// Palette preset name from get_studio_info, instead of `palette`.
@@ -484,6 +492,8 @@ pub struct Export {
     background: Option<String>,
     /// JPG only: quality 1 to 100. Default 95.
     quality: Option<u8>,
+    /// Also export a normal map for dynamic 2D lighting in game engines (Godot, Unity), as files with the suffix _n in the same format (png or sheet). Give {} for the defaults.
+    normal_map: Option<NormalMapOpts>,
 }
 
 // ------------------------------------------------------------------ Werkzeuge
@@ -566,6 +576,7 @@ impl PixelServer {
                 a.color_depth_bits,
                 a.palette_preset.as_deref(),
                 a.palette.as_deref(),
+                a.style.as_deref(),
                 a.layers.as_deref(),
                 a.frames,
             )
@@ -588,6 +599,7 @@ impl PixelServer {
                 a.color_depth_bits,
                 a.palette_preset.as_deref(),
                 a.palette.as_deref(),
+                a.style.as_deref(),
                 a.layers.as_deref(),
             )
         })
@@ -766,6 +778,7 @@ impl PixelServer {
             s.set_style(
                 &a.project,
                 &StyleArgs {
+                    style: a.style.as_deref(),
                     palette_preset: a.palette_preset.as_deref(),
                     palette: a.palette.as_deref(),
                     light_dir: a.light_dir.as_deref(),
@@ -820,6 +833,14 @@ impl PixelServer {
                 with_animations: a.with_animations,
             })
         })
+    }
+
+    #[tool(
+        description = "The style library. Built-in styles: 8 Bit, 16 Bit, HQ Pixel Art, Comic, Manga and Castles; the user can add own ones. action \"list\" (default) names all styles with a description; \"get\" returns one style completely: palette, color depth, usual sizes, colors per sprite, outline, shades, dithering, hue shifting, anti-aliasing, light direction and rules in words. Follow these exactly when drawing in that style. \"save\" creates or changes an own style (based_on copies another style first, from_project takes over a project's style), \"delete\" removes an own one. Use a style with set_style(style) for a whole project, or with create_image/create_character(style).",
+        annotations(title = "Style library", destructive_hint = false)
+    )]
+    fn styles(&self, Parameters(a): Parameters<StylesParams>) -> CallToolResult {
+        self.run(|s| s.styles(&a))
     }
 
     #[tool(
@@ -936,6 +957,7 @@ impl PixelServer {
                 a.columns,
                 a.background.as_deref(),
                 a.quality,
+                a.normal_map.as_ref(),
             )
         })
     }

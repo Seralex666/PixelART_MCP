@@ -4,6 +4,7 @@
 use crate::export::{self, GifInfo, SheetMeta};
 use crate::project::PROJECT_EXT;
 use crate::shapes::CustomShape;
+use crate::stylebook::{self, StylePreset};
 use crate::{video, Error, Project, Result, Rgba, Sprite};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -314,6 +315,139 @@ impl Workspace {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// Ordner mit den eigenen Stilen. Sie gelten für alle Projekte.
+    pub fn styles_dir(&self) -> PathBuf {
+        self.home.join("styles")
+    }
+
+    /// Alle Stile: zuerst die festen, dann die eigenen alphabetisch.
+    /// Unlesbare Dateien werden übersprungen.
+    pub fn styles(&self) -> Vec<StylePreset> {
+        let mut own: Vec<StylePreset> = std::fs::read_dir(self.styles_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.extension()?.to_str()?.eq_ignore_ascii_case("json") {
+                    return None;
+                }
+                let text = std::fs::read_to_string(&path).ok()?;
+                let style: StylePreset = serde_json::from_str(&text).ok()?;
+                style.check().is_ok().then_some(style)
+            })
+            .collect();
+        own.sort_by_key(|s| s.name.to_lowercase());
+        let mut all = stylebook::builtin();
+        for s in own {
+            if stylebook::find(&all, &s.name).is_none() {
+                all.push(s);
+            }
+        }
+        all
+    }
+
+    /// Ein Stil nach Namen (auch Kurz- oder Zweitname wie „8bit“ oder „Burgen“).
+    pub fn style(&self, name: &str) -> Option<StylePreset> {
+        stylebook::find(&self.styles(), name).cloned()
+    }
+
+    /// Speichert einen eigenen Stil. Ein gleichnamiger eigener wird ersetzt,
+    /// die festen Stile lassen sich nicht überschreiben.
+    pub fn save_style(&self, style: &StylePreset) -> Result<PathBuf> {
+        style.check()?;
+        if stylebook::find(&stylebook::builtin(), &style.name).is_some() {
+            return Err(Error::InvalidName(crate::trf!(
+                "„{}“ ist ein fester Stil; bitte einen anderen Namen wählen",
+                "'{}' is a built-in style; please choose another name",
+                style.name
+            )));
+        }
+        let dir = self.styles_dir();
+        std::fs::create_dir_all(&dir)?;
+        // Eine alte Datei mit anderer Schreibweise des Namens ersetzen.
+        self.delete_style(&style.name)?;
+        let path = dir.join(format!("{}.json", file_safe(&style.name)));
+        let mut own = style.clone();
+        own.builtin = false;
+        std::fs::write(&path, serde_json::to_string_pretty(&own)?)?;
+        Ok(path)
+    }
+
+    /// Löscht einen eigenen Stil. Gibt zurück, ob es ihn gab.
+    pub fn delete_style(&self, name: &str) -> Result<bool> {
+        let k = stylebook::key(name);
+        let mut found = false;
+        for entry in std::fs::read_dir(self.styles_dir())
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            let named = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| serde_json::from_str::<StylePreset>(&t).ok())
+                .is_some_and(|s| stylebook::key(&s.name) == k);
+            if named {
+                std::fs::remove_file(path)?;
+                found = true;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Exportiert die Normal Maps eines Sprites (PNG oder Spritesheet) neben die
+    /// Farbbilder: gleicher Dateiname, nur mit `_n` vor der Endung, wie Godot es
+    /// erwartet. Gibt das Sprite mit den Normal Maps und die Dateien zurück.
+    #[allow(clippy::too_many_arguments)]
+    pub fn export_normals(
+        &self,
+        project: &str,
+        asset_name: &str,
+        sprite: &Sprite,
+        options: &crate::normalmap::NormalOptions,
+        format: ExportFormat,
+        frame: Option<usize>,
+        scale: u32,
+    ) -> Result<(Sprite, Vec<PathBuf>)> {
+        if !matches!(format, ExportFormat::Png | ExportFormat::Sheet { .. }) {
+            return Err(Error::Effect(
+                crate::lang::tr(
+                    "Normal Maps gibt es als PNG oder Spritesheet",
+                    "Normal maps are exported as PNG or sprite sheet",
+                )
+                .into(),
+            ));
+        }
+        let normals = crate::normalmap::sprite_normals(sprite, options)?;
+        let base = file_safe(asset_name);
+        let tmp = format!("{base}_n");
+        let out = self.export(project, &tmp, &normals, format, frame, scale)?;
+        let mut files = Vec::new();
+        for f in out.files {
+            if f.extension().is_some_and(|x| x == "json") {
+                std::fs::remove_file(&f).ok();
+                continue;
+            }
+            let name = f
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let name = name
+                .strip_prefix(&tmp)
+                .map(|rest| format!("{base}{rest}"))
+                .unwrap_or(name);
+            let renamed = match name.rsplit_once('.') {
+                Some((head, ext)) => f.with_file_name(format!("{head}_n.{ext}")),
+                None => f.with_file_name(format!("{name}_n")),
+            };
+            std::fs::rename(&f, &renamed)?;
+            files.push(renamed);
+        }
+        Ok((normals, files))
     }
 
     /// Exportiert ein Sprite in den Export-Ordner des Projekts.

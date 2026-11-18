@@ -231,6 +231,7 @@ fn the_style_survives_saving_and_old_files_load_without_one() {
         light_dir: Some("top-left".into()),
         outline: Some(c("#1a1c2c")),
         notes: "2 px Umriss".into(),
+        preset: Some("Manga".into()),
     };
     let back = Project::from_json(&p.to_json().unwrap()).unwrap();
     assert_eq!(back.style, p.style);

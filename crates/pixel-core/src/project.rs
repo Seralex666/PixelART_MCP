@@ -67,6 +67,9 @@ pub struct Style {
     /// Freie Notizen zum Stil, etwa "2 Pixel Umriss, keine reinen Schwarztöne".
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// Der Stil aus der Bibliothek, auf dem dieser Stil beruht (siehe [`crate::stylebook`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
 }
 
 impl Style {

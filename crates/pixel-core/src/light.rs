@@ -403,7 +403,7 @@ fn content(s: &Sprite, frame: usize, skip: &[usize]) -> Result<Vec<Rgba>> {
 }
 
 /// Abstand jedes deckenden Pixels zum Rand (1 = Randpixel), höchstens `max + 1`.
-fn edge_distance(solid: &[bool], w: usize, h: usize, max: u32) -> Vec<u32> {
+pub(crate) fn edge_distance(solid: &[bool], w: usize, h: usize, max: u32) -> Vec<u32> {
     let mut d: Vec<u32> = solid.iter().map(|&s| if s { max + 1 } else { 0 }).collect();
     let at = |x: i64, y: i64| -> Option<usize> {
         (x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < h)
