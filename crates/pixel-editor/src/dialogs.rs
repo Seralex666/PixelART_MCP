@@ -129,6 +129,28 @@ impl NewSprite {
             image_max: 32,
         }
     }
+
+    /// Wie [`NewSprite::new`], aber mit dem Stil des Projekts: dessen Palette und,
+    /// wenn er aus der Bibliothek stammt, Farbtiefe und übliche Größe.
+    pub fn for_project(character: bool, app: &App) -> Self {
+        let mut form = Self::new(character);
+        let Some(doc) = &app.doc else {
+            return form;
+        };
+        let style = &doc.project().style;
+        if !style.palette.is_empty() {
+            form.palette = PalettePreset::Style;
+        }
+        if let Some(preset) = style.preset.as_deref().and_then(|n| app.ws.style(n)) {
+            form.bits = preset.color_depth;
+            if let Some([w, h]) = preset.sizes.first().copied() {
+                form.template = None;
+                form.width = w;
+                form.height = h;
+            }
+        }
+        form
+    }
 }
 
 pub struct NewAnimation {

@@ -852,7 +852,6 @@ impl Doc {
         let name = self.asset_name(id).unwrap_or("unnamed");
         self.ws
             .export_normals(&self.name, name, sprite, options, format, None, scale)
-            .map(|(_, files)| files)
             .map_err(e)
     }
 }

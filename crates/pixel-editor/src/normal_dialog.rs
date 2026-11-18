@@ -20,6 +20,8 @@ const PREVIEW: f32 = 230.0;
 struct Cache {
     options: NormalOptions,
     frame: usize,
+    /// Stand des Projekts; ändert Claude das Bild, wird neu berechnet.
+    revision: u64,
     color: Vec<Rgba>,
     normals: Vec<Rgba>,
     map: egui::TextureHandle,
@@ -184,18 +186,27 @@ fn export(app: &mut App, f: &mut NormalForm) {
 }
 
 fn previews(app: &App, ui: &mut egui::Ui, f: &mut NormalForm) {
-    let frame = f.frame.min(f.frames.saturating_sub(1));
+    // Größe und Frames immer vom aktuellen Stand nehmen: Claude kann das Bild
+    // ändern, während der Dialog offen ist.
+    let Some((sprite, revision)) = app
+        .doc
+        .as_ref()
+        .and_then(|d| d.sprite(f.id).map(|s| (s, d.revision())))
+    else {
+        f.cache = None;
+        return;
+    };
+    f.size = (sprite.width() as usize, sprite.height() as usize);
+    f.frames = sprite.frames().len();
+    f.frame = f.frame.min(f.frames.saturating_sub(1));
+    let frame = f.frame;
     let (w, h) = f.size;
     let fresh = f
         .cache
         .as_ref()
-        .is_some_and(|c| c.options == f.options && c.frame == frame);
+        .is_some_and(|c| c.options == f.options && c.frame == frame && c.revision == revision);
     if !fresh {
-        let color = app
-            .doc
-            .as_ref()
-            .and_then(|d| d.sprite(f.id))
-            .and_then(|s| s.composite(frame).ok());
+        let color = sprite.composite(frame).ok();
         f.cache = color.map(|color| {
             let normals = normalmap::normal_map(&color, w, h, &f.options);
             let img = egui::ColorImage::new([w, h], normals.iter().copied().map(c32).collect());
@@ -205,6 +216,7 @@ fn previews(app: &App, ui: &mut egui::Ui, f: &mut NormalForm) {
             Cache {
                 options: f.options,
                 frame,
+                revision,
                 color,
                 normals,
                 map,

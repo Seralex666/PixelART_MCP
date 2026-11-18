@@ -3111,6 +3111,16 @@ impl Studio {
         {
             return Err("normal maps are exported as png or sheet only".into());
         }
+        // Erst alles prüfen, dann schreiben: Falsche Angaben sollen keine halben Exporte hinterlassen.
+        let normal_options = normal_map.map(|nm| NormalOptions {
+            bevel: nm.bevel.unwrap_or(3),
+            strength: nm.strength.unwrap_or(1.0),
+            detail: nm.detail.unwrap_or(0.3),
+            flip_green: nm.directx.unwrap_or(false),
+        });
+        if let Some(o) = &normal_options {
+            o.check().map_err(e)?;
+        }
         let name = Self::asset_name(&p, r);
         let out = self
             .ws
@@ -3139,16 +3149,10 @@ impl Studio {
         if matches!(format, ExportFormat::WebM) {
             reply["note"] = json!("Video compression can shift colors by one or two steps. Use sheet, png or gif for exact pixels.");
         }
-        let Some(nm) = normal_map else {
+        let Some(o) = normal_options else {
             return Ok(Reply::json(reply));
         };
-        let o = NormalOptions {
-            bevel: nm.bevel.unwrap_or(3),
-            strength: nm.strength.unwrap_or(1.0),
-            detail: nm.detail.unwrap_or(0.3),
-            flip_green: nm.directx.unwrap_or(false),
-        };
-        let (normals, files) = self
+        let files = self
             .ws
             .export_normals(project, &name, s, &o, format, frame, scale)
             .map_err(e)?;
@@ -3157,7 +3161,7 @@ impl Studio {
             "Normal maps ({} convention) next to the color files, with the suffix _n. Godot: put them into the normal_map of a CanvasTexture; Unity: add them as secondary texture _NormalMap of the sprite. Preview: left lit from the top left, right the normal map.",
             if o.flip_green { "DirectX" } else { "OpenGL" }
         ));
-        let png = normal_preview(s, &normals, frame.unwrap_or(0), &o).map_err(e)?;
+        let png = normal_preview(s, frame.unwrap_or(0), &o).map_err(e)?;
         Ok(Reply {
             text: serde_json::to_string_pretty(&reply).unwrap_or_default(),
             image_png: Some(png),
@@ -3166,18 +3170,19 @@ impl Studio {
 }
 
 /// Vorschau einer Normal Map: links das Bild mit Licht von oben links, rechts die Normal Map.
-fn normal_preview(
-    s: &Sprite,
-    normals: &Sprite,
-    frame: usize,
-    o: &NormalOptions,
-) -> pixel_core::Result<Vec<u8>> {
+/// Ist das Bild für beide nebeneinander zu breit, zeigt sie nur das beleuchtete Bild.
+fn normal_preview(s: &Sprite, frame: usize, o: &NormalOptions) -> pixel_core::Result<Vec<u8>> {
     let (w, h) = (s.width() as usize, s.height() as usize);
     let color = s.composite(frame)?;
-    let map = normals.composite(frame)?;
+    let map = normalmap::normal_map(&color, w, h, o);
     let lamp = (-(w as f32) * 0.3, -(h as f32) * 0.3, w.max(h) as f32 * 0.8);
     let shaded = normalmap::lit(&color, &map, w, lamp, 0.35, o.flip_green);
     let gap = 2;
+    if w * 2 + gap > pixel_core::MAX_SIZE as usize {
+        let mut out = Sprite::new(w as u32, h as u32, ColorDepth::Rgba32, Palette::default())?;
+        out.layer_mut(0, 0)?.replace_pixels(shaded)?;
+        return export::frame_png(&out, 0, 1);
+    }
     let width = w * 2 + gap;
     let mut both = vec![Rgba::TRANSPARENT; width * h];
     for y in 0..h {

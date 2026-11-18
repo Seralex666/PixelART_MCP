@@ -176,7 +176,7 @@ impl App {
             }
             Ok("about") => app.dialog = Dialog::About,
             Ok("export") => app.dialog = Dialog::Export(ExportForm::default()),
-            Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
+            Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::for_project(true, &app)),
             Ok("settings") => app.dialog = Dialog::Settings(Box::new(SettingsForm::new(&app))),
             Ok("outline") => app.outline_dialog(),
             Ok("light") => app.light_dialog(),
@@ -683,7 +683,7 @@ impl App {
                     )
                     .clicked()
                 {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(true, self)));
                 }
                 if ui
                     .add_enabled(
@@ -698,7 +698,7 @@ impl App {
                     .add_enabled(has_doc, egui::Button::new(tr("Neues Bild…", "New image…")))
                     .clicked()
                 {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(false, self)));
                 }
                 ui.separator();
                 if ui
@@ -1070,7 +1070,7 @@ impl App {
                 let width = ui.available_width();
                 let wide = |text: &str| egui::Button::new(text).min_size(egui::vec2(width, 0.0));
                 if ui.add(wide(tr("+ Figur", "+ Character"))).clicked() {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(true, self)));
                 }
                 if has_character
                     && ui
@@ -1084,7 +1084,7 @@ impl App {
                     self.new_animation_dialog(None);
                 }
                 if ui.add(wide(tr("+ Bild", "+ Image"))).clicked() {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(false, self)));
                 }
                 if ui
                     .add(wide(tr("Bild importieren…", "Import image…")))

@@ -2066,4 +2066,28 @@ fn normal_maps_are_exported_next_to_the_colors() {
         json!({"project": "N", "asset": "Stein", "format": "gif", "normal_map": {}}),
     );
     assert!(err.contains("png or sheet"), "{err}");
+
+    // Wrong options write nothing at all.
+    let dir = std::path::Path::new(file).parent().unwrap().to_path_buf();
+    let err = c.err(
+        "export",
+        json!({"project": "N", "asset": "Stein", "format": "png", "normal_map": {"bevel": 0}}),
+    );
+    assert!(err.contains("bevel"), "{err}");
+    assert!(!dir.join("Stein-00.png").exists());
+    // One frame gives one normal map, named like its color file.
+    let one: Value = serde_json::from_str(
+        &c.ok(
+            "export",
+            json!({"project": "N", "asset": "Stein", "format": "png", "frame": 1, "normal_map": {}}),
+        )
+        .text,
+    )
+    .unwrap();
+    assert_eq!(one["normal_map_files"].as_array().unwrap().len(), 1);
+    assert!(one["normal_map_files"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("Stein-01_n.png"));
+    assert!(dir.join("Stein-01.png").exists());
 }

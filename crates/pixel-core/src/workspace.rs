@@ -367,12 +367,32 @@ impl Workspace {
         }
         let dir = self.styles_dir();
         std::fs::create_dir_all(&dir)?;
-        // Eine alte Datei mit anderer Schreibweise des Namens ersetzen.
-        self.delete_style(&style.name)?;
         let path = dir.join(format!("{}.json", file_safe(&style.name)));
         let mut own = style.clone();
         own.builtin = false;
-        std::fs::write(&path, serde_json::to_string_pretty(&own)?)?;
+        // Erst vollständig in eine Zwischendatei schreiben und dann umbenennen:
+        // Geht dabei etwas schief, bleibt der alte Stil erhalten.
+        let tmp = dir.join(format!(".{}.json.tmp", file_safe(&style.name)));
+        std::fs::write(&tmp, serde_json::to_string_pretty(&own)?)?;
+        if let Err(err) = std::fs::rename(&tmp, &path) {
+            std::fs::remove_file(&tmp).ok();
+            return Err(err.into());
+        }
+        // Erst jetzt alte Dateien mit anderer Schreibweise des Namens entfernen.
+        let k = stylebook::key(&style.name);
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let other = entry.path();
+            if other == path || !other.extension().is_some_and(|x| x == "json") {
+                continue;
+            }
+            let same = std::fs::read_to_string(&other)
+                .ok()
+                .and_then(|t| serde_json::from_str::<StylePreset>(&t).ok())
+                .is_some_and(|s| stylebook::key(&s.name) == k);
+            if same {
+                std::fs::remove_file(other).ok();
+            }
+        }
         Ok(path)
     }
 
@@ -400,7 +420,7 @@ impl Workspace {
 
     /// Exportiert die Normal Maps eines Sprites (PNG oder Spritesheet) neben die
     /// Farbbilder: gleicher Dateiname, nur mit `_n` vor der Endung, wie Godot es
-    /// erwartet. Gibt das Sprite mit den Normal Maps und die Dateien zurück.
+    /// erwartet. Bei einem einzelnen Frame entsteht nur dessen Normal Map.
     #[allow(clippy::too_many_arguments)]
     pub fn export_normals(
         &self,
@@ -411,7 +431,8 @@ impl Workspace {
         format: ExportFormat,
         frame: Option<usize>,
         scale: u32,
-    ) -> Result<(Sprite, Vec<PathBuf>)> {
+    ) -> Result<Vec<PathBuf>> {
+        options.check()?;
         if !matches!(format, ExportFormat::Png | ExportFormat::Sheet { .. }) {
             return Err(Error::Effect(
                 crate::lang::tr(
@@ -421,33 +442,61 @@ impl Workspace {
                 .into(),
             ));
         }
-        let normals = crate::normalmap::sprite_normals(sprite, options)?;
-        let base = file_safe(asset_name);
-        let tmp = format!("{base}_n");
-        let out = self.export(project, &tmp, &normals, format, frame, scale)?;
-        let mut files = Vec::new();
-        for f in out.files {
-            if f.extension().is_some_and(|x| x == "json") {
-                std::fs::remove_file(&f).ok();
-                continue;
-            }
-            let name = f
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or_default()
-                .to_string();
-            let name = name
-                .strip_prefix(&tmp)
-                .map(|rest| format!("{base}{rest}"))
-                .unwrap_or(name);
-            let renamed = match name.rsplit_once('.') {
-                Some((head, ext)) => f.with_file_name(format!("{head}_n.{ext}")),
-                None => f.with_file_name(format!("{name}_n")),
-            };
-            std::fs::rename(&f, &renamed)?;
-            files.push(renamed);
+        self.project_path(project)?;
+        if !(1..=export::MAX_SCALE).contains(&scale) {
+            return Err(Error::InvalidName(crate::trf!(
+                "Vergrößerung muss zwischen 1 und {} liegen",
+                "The scale must be between 1 and {}",
+                export::MAX_SCALE
+            )));
         }
-        Ok((normals, files))
+        if let Some(f) = frame {
+            sprite.frame(f)?;
+        }
+        let dir = self.exports_dir(project);
+        std::fs::create_dir_all(&dir)?;
+        let base = file_safe(asset_name);
+        let suffix = if scale > 1 {
+            format!("@{scale}x")
+        } else {
+            String::new()
+        };
+        let mut files = Vec::new();
+        match format {
+            ExportFormat::Sheet { columns } => {
+                let normals = crate::normalmap::sprite_normals(sprite, options)?;
+                let (png, _) = export::sheet_png(&normals, columns, scale)?;
+                let path = dir.join(format!("{base}-sheet{suffix}_n.png"));
+                std::fs::write(&path, png)?;
+                files.push(path);
+            }
+            _ => {
+                let (w, h) = (sprite.width() as usize, sprite.height() as usize);
+                let numbered = sprite.frames().len() > 1;
+                let frames: Vec<usize> = match frame {
+                    Some(f) => vec![f],
+                    None => (0..sprite.frames().len()).collect(),
+                };
+                for f in frames {
+                    let map = crate::normalmap::normal_map(&sprite.composite(f)?, w, h, options);
+                    let mut one = Sprite::new(
+                        sprite.width(),
+                        sprite.height(),
+                        crate::ColorDepth::Rgba32,
+                        crate::Palette::default(),
+                    )?;
+                    one.layer_mut(0, 0)?.replace_pixels(map)?;
+                    let path = if numbered {
+                        dir.join(format!("{base}-{f:02}{suffix}_n.png"))
+                    } else {
+                        dir.join(format!("{base}{suffix}_n.png"))
+                    };
+                    std::fs::write(&path, export::frame_png(&one, 0, scale)?)?;
+                    files.push(path);
+                }
+            }
+        }
+        Ok(files)
     }
 
     /// Exportiert ein Sprite in den Export-Ordner des Projekts.
