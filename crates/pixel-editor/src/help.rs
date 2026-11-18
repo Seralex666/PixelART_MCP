@@ -159,6 +159,7 @@ So arbeitest du damit:
 7. Nenne ich einen Stil wie Manga, Comic, 8 Bit, 16 Bit, HQ Pixel-Art oder Burgen (oder einen eigenen), hol ihn mit styles und halte dich genau an Palette, Umriss, Schattierung und Regeln; create_image, create_character und set_style nehmen ihn mit `style`.
 8. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner; mit normal_map kommen Normal Maps für Licht im Spiel dazu.
 9. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
+10. Für Leuchten, Blitze, Explosionen, Spiegelungen im Wasser, Funken, Rauch, Magie und Farbzyklen (fließendes Wasser, Feuer, Lava) nimmst du effects, statt sie Frame für Frame zu malen. Jeder Effekt liegt auf einer eigenen Ebene und läuft über alle Frames; mit frames wird aus einem Standbild eine Schleife.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             r#"You are connected to my PixelArt Studio through the MCP server "{name}". I see live in the editor what you draw.
@@ -173,6 +174,7 @@ How to work with it:
 7. When I name a style such as manga, comic, 8 bit, 16 bit, HQ pixel art or castles (or an own one), get it with styles and follow its palette, outline, shading and rules exactly; create_image, create_character and set_style take it as `style`.
 8. export writes PNG, JPG, a sprite sheet, an animated GIF or a WebM video into the folder "exports" in the workspace folder; with normal_map it adds normal maps for lighting in games.
 9. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
+10. For glow, lightning, explosions, reflections in water, sparks, smoke, magic and color cycling (flowing water, fire, lava) use effects instead of painting them frame by frame. Each effect sits on its own layer and runs over all frames; frames turns a still image into a loop.
 
 Work in small steps and check every intermediate result with view before you continue drawing."#
         )

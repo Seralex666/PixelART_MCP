@@ -133,6 +133,7 @@ impl Sprite {
             }
         }
         self.outline = Some(spec);
+        self.order_effect_layers()?;
         self.refresh_contour()?;
         let l = self.outline_layer().ok_or(Error::NoSuchLayer(0))?;
         Ok(self
@@ -161,11 +162,13 @@ impl Sprite {
     }
 
     /// Zeichnet die automatischen Ebenen in allen Frames neu: erst Licht und
-    /// Schatten ([`crate::light`]), dann die Kontur. `true`, wenn sich dabei etwas
-    /// geändert hat. Ohne Licht und Kontur passiert nichts.
+    /// Schatten ([`crate::light`]), dann die Kontur, zuletzt die Effekte
+    /// ([`crate::fx`]). `true`, wenn sich dabei etwas geändert hat. Ohne Licht,
+    /// Kontur und Effekte passiert nichts.
     pub fn refresh_outline(&mut self) -> Result<bool> {
         let lit = self.refresh_light()?;
-        Ok(self.refresh_contour()? || lit)
+        let outlined = self.refresh_contour()?;
+        Ok(self.refresh_effects()? || outlined || lit)
     }
 
     fn refresh_contour(&mut self) -> Result<bool> {
@@ -214,6 +217,7 @@ fn content(s: &Sprite, frame: usize, skip: usize) -> Result<Content> {
             || layer.opacity == 0
             || layer.reference
             || Some(i) == s.cast_shadow_layer()
+            || s.is_effect_layer(i)
         {
             continue;
         }

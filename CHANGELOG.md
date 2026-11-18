@@ -1,5 +1,13 @@
 # Was ist neu
 
+## 1.3.0
+
+- Effekte auf eigenen Ebenen, die über die Frames laufen und jeder Änderung folgen: Leuchten, Blitz, Explosion,
+  Spiegelung im Wasser, Funken, Rauch und Magie
+- Farbzyklen (Palettenanimation) mit den Vorlagen Wasser, Feuer und Lava
+- Neuer Dialog **Effekte…** mit abspielender Vorschau; aus einem Standbild wird auf Wunsch eine Schleife
+- Für Claude: neues Werkzeug `effects`
+
 ## 1.2.0
 
 - Stil-Bibliothek: Comic, Manga, Burgen, 8 Bit, 16 Bit und HQ Pixel-Art mit Palette, Größen, Umriss,

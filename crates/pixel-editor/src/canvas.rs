@@ -341,6 +341,13 @@ fn begin(app: &mut App, at: (i64, i64)) {
         ));
         return;
     }
+    if app.sprite().is_some_and(|s| s.is_effect_layer(app.layer)) {
+        app.error(tr(
+            "Diese Ebene gehört zu einem Effekt und wird nach jeder Änderung neu gezeichnet. Zeichne auf einer anderen Ebene, oder schreibe den Effekt fest (Effekte… › Festschreiben).",
+            "This layer belongs to an effect and is redrawn after every change. Draw on another layer, or freeze the effect (Effects… › Freeze).",
+        ));
+        return;
+    }
     if app.sprite().is_some_and(|s| s.is_reference(app.layer)) {
         app.error(tr(
             "Diese Ebene ist eine Vorlage zum Nachzeichnen. Zeichne auf einer anderen Ebene darüber.",

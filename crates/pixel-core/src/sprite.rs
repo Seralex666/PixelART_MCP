@@ -26,6 +26,9 @@ pub struct Sprite {
     /// Licht und Schatten, die einer Lichtquelle folgen (siehe [`crate::light`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) light: Option<Box<crate::light::AutoLight>>,
+    /// Effekte auf eigenen Ebenen, die über die Frames laufen (siehe [`crate::fx`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) effects: Vec<crate::fx::AutoEffect>,
 }
 
 impl Sprite {
@@ -44,6 +47,7 @@ impl Sprite {
             }],
             outline: None,
             light: None,
+            effects: Vec::new(),
         })
     }
 
@@ -214,6 +218,12 @@ impl Sprite {
                 .is_some_and(|f| f.layers[layer].name == spec.layer)
             {
                 spec.layer = name.clone();
+            }
+        }
+        // Ebenso ein Effekt.
+        if let Some(old) = self.frames.first().map(|f| f.layers[layer].name.clone()) {
+            for e in self.effects.iter_mut().filter(|e| e.layer == old) {
+                e.layer = name.clone();
             }
         }
         for f in &mut self.frames {

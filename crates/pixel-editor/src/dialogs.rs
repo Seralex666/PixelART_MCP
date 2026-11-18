@@ -35,6 +35,7 @@ pub enum Dialog {
     Outline(Box<OutlineForm>),
     Light(Box<LightForm>),
     Normal(Box<NormalForm>),
+    Effects(Box<crate::fx_dialog::FxForm>),
     DeleteProject { name: String, exports: bool },
     ReplaceColor(ReplaceForm),
     Resize(ResizeForm),
@@ -257,6 +258,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Outline(form) => crate::outline_dialog::show(app, ui, form),
             Dialog::Light(form) => crate::light_dialog::show(app, ui, form),
             Dialog::Normal(form) => crate::normal_dialog::show(app, ui, form),
+            Dialog::Effects(form) => crate::fx_dialog::show(app, ui, form),
             Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
             Dialog::ReplaceColor(form) => replace_color(app, ui, form),
             Dialog::Resize(form) => resize(app, ui, form),
@@ -1360,9 +1362,10 @@ fn replace_color(app: &mut App, ui: &mut egui::Ui, f: &mut ReplaceForm) -> Outco
             } else {
                 vec![frame]
             };
-            let auto = s.outline_layer();
             let layers: Vec<usize> = if all_layers {
-                (0..s.layer_count()).filter(|&l| Some(l) != auto).collect()
+                (0..s.layer_count())
+                    .filter(|&l| !s.is_auto_layer(l))
+                    .collect()
             } else {
                 vec![layer]
             };

@@ -963,6 +963,9 @@ fn merge(base: &Sprite, mine: &Sprite, theirs: &Sprite) -> (Sprite, Option<Strin
     if mine.auto_light() != base.auto_light() {
         out.restore_light_spec(mine.auto_light().cloned());
     }
+    if mine.effects() != base.effects() {
+        out.restore_effects(mine.effects().to_vec());
+    }
     for (f, (base_frame, my_frame)) in base.frames().iter().zip(mine.frames()).enumerate() {
         let Ok(out_frame) = out.frame_mut(f) else {
             continue;

@@ -536,7 +536,7 @@ pub fn unit(h: u64) -> f64 {
 
 /// Weiches Rauschen zwischen 0 und 1: Zufallswerte auf einem Gitter, dazwischen
 /// geglättet. Gut für Glut, Wolken und fleckigen Stein.
-fn value_noise(seed: u64, x: f64, y: f64, k: u64) -> f64 {
+pub(crate) fn value_noise(seed: u64, x: f64, y: f64, k: u64) -> f64 {
     if !x.is_finite() || !y.is_finite() {
         return 0.0;
     }

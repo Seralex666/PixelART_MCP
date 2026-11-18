@@ -66,9 +66,17 @@ Pixel-Art live beleuchten. In der Vorschau folgt eine Lampe der Maus.
 
 ![Normal Map mit Lampe, die der Maus folgt](docs/images/normalmap.png)
 
+### Effekte und Farbzyklen
+
+Leuchten, Blitz, Explosion, Spiegelung im Wasser, Funken, Rauch, Magie und Farbzyklen für fließendes Wasser,
+Feuer und Lava. Jeder Effekt liegt auf einer eigenen Ebene, läuft als Schleife über die Frames und folgt jeder
+Änderung an der Figur. Aus einem Standbild wird dabei auf Wunsch gleich eine Animation.
+
+![Alle Effekte am Ritter: Leuchten, Blitz, Funken, Magie, Rauch, Explosion, Spiegelung und Farbzyklus](docs/images/effekte.gif)
+
 ### Claude zeichnet mit
 
-Das Studio ist zugleich ein MCP-Server mit 27 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Das Studio ist zugleich ein MCP-Server mit 28 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
 Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
 die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
 auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden** im Editor.
@@ -87,7 +95,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 27 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 28 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -99,6 +107,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | 1.0 Beta | Fotos und Zeichnungen in Pixel-Art umwandeln, Vorlage-Ebene zum Nachzeichnen, Feature-Übersicht | fertig |
 | 1.1 | Licht und Schatten, die über die Frames wandern, Schlagschatten am Boden | fertig |
 | 1.2 | Stil-Bibliothek (Comic, Manga, Burgen, 8 Bit, 16 Bit, HQ) und eigene Stile, Einstellungen mit Tabs, Normal Maps | fertig |
+| 1.3 | Effekte (Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie) und Farbzyklen | fertig |
 
 ## Aufbau
 
@@ -209,6 +218,26 @@ kommt aus dem Rand der Figur (Wölbung und Stärke einstellbar), auf Wunsch trag
 Die Vorschau beleuchtet das Bild mit einer Lampe, die der Maus folgt. Exportiert wird als PNG je Frame oder als
 Spritesheet, mit demselben Namen wie das Farbbild und `_n` vor der Endung, in OpenGL-Art (wie Godot und Unity sie
 erwarten; DirectX-Art auf Wunsch). Claude benutzt dafür `export` mit `normal_map`.
+
+## Effekte
+
+Über **Effekte…** (Werkzeugleiste, Menü Bearbeiten oder Rechtsklick auf ein Asset) bekommt ein Bild, eine
+Animation oder eine Figur Effekte, bis zu acht Stück. Claude benutzt dafür `effects`. Jeder Effekt liegt auf einer
+eigenen Ebene und wird nach jeder Änderung in allen Frames neu gezeichnet; die Vorschau im Dialog spielt ihn ab.
+Wiederkehrende Effekte laufen nahtlos im Kreis. **Frames mindestens** macht aus einem Standbild eine Schleife,
+indem die vorhandenen Frames kopiert werden.
+
+- **Leuchten:** ein pulsierender Schein hinter der Figur, oder nur um ausgewählte Farben (Augen, Klinge, Laterne).
+- **Blitz:** gezackt, mit Ästen und Schein, in jedem Frame neu geformt und auf Wunsch flackernd. Klick in die
+  Vorschau setzt den Anfang, Rechtsklick das Ende.
+- **Explosion:** Blitz, Feuerball, Trümmer und Rauch, einmal ablaufend ab einem Frame.
+- **Spiegelung:** das Spiegelbild im Wasser unter der Figur, getönt, nach unten schwächer und mit Wellen. Bei
+  einem Bild wächst die Leinwand auf Wunsch nach unten, bis alles passt.
+- **Funken, Rauch und Magie:** Partikel aus einer Quelle, die man in die Vorschau klickt.
+- **Farbzyklus:** Pixel einer Farbreihe wandern Schritt für Schritt zur nächsten Farbe. Mit den Vorlagen Wasser,
+  Feuer und Lava malen, dann fließt die Fläche.
+- **Festschreiben** macht aus dem Effekt eine normale Ebene, **Entfernen** löscht ihn. Bei 8 und 16 Bit und
+  bei festen Paletten wird gerastert statt durchscheinend gezeichnet.
 
 ## Licht und Schatten
 

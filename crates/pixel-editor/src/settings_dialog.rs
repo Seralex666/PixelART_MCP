@@ -657,6 +657,7 @@ fn tips(ui: &mut egui::Ui) {
                 ("„Pixel-perfekt“ beim Stift verhindert doppelte Pixel in Ecken, für saubere 1-Pixel-Linien.", "\"Pixel-perfect\" on the pen avoids doubled pixels in corners, for clean 1-pixel lines."),
                 ("Aufhellen und Abdunkeln gehen entlang der Farbtreppen deiner Palette, so bleibt die Schattierung stimmig.", "Lighten and darken walk along your palette's ramps, so the shading stays consistent."),
                 ("Kontur… und Licht… zeichnen Umriss, Licht und Schatten auf eigenen Ebenen und folgen jeder Änderung.", "Outline… and Light… draw outline, light and shadow on their own layers and follow every change."),
+                ("Effekte… legt Leuchten, Blitz, Funken, Rauch, Spiegelung oder Farbzyklen als Schleife über die Frames; aus einem Standbild wird dabei eine Animation.", "Effects… adds glow, lightning, sparks, smoke, reflections or color cycling as a loop over the frames; a still image becomes an animation."),
                 ("Spiegeln beim Zeichnen spart bei Figuren und Symbolen die halbe Arbeit.", "Mirror drawing saves half the work on characters and icons."),
                 ("Zwiebelhaut zeigt den vorigen Frame durchscheinend, das hilft bei flüssigen Animationen.", "Onion skin shows the previous frame faintly, which helps with smooth animations."),
                 ("Ein Foto als Vorlage importieren und selbst nachzeichnen ergibt oft schönere Pixel-Art als das automatische Umwandeln.", "Importing a photo as a reference and tracing it yourself often gives nicer pixel art than converting it automatically."),
@@ -673,6 +674,8 @@ fn tips(ui: &mut egui::Ui) {
                 ("„Speichere den Stil dieses Projekts als eigenen Stil ‚Sumpf‘.“", "\"Save this project's style as an own style 'Swamp'.\""),
                 ("„Lass an der Laufanimation eine Fackel von links nach rechts vorbeiziehen, mit Schatten am Boden.“", "\"Let a torch pass the walk animation from left to right, with a ground shadow.\""),
                 ("„Mach aus diesem Foto Pixel-Art mit 64 Pixeln und der Palette des Projekts.“", "\"Turn this photo into 64 pixel pixel art with the project's palette.\""),
+                ("„Lass das Schwert des Ritters bläulich leuchten und Funken sprühen, als Schleife mit 8 Frames.“", "\"Make the knight's sword glow blue and throw sparks, as a loop with 8 frames.\""),
+                ("„Mal unter das Bild einen See und lass das Wasser mit einem Farbzyklus fließen.“", "\"Paint a lake below the picture and let the water flow with a color cycle.\""),
             ]);
             section(ui, tr("Gut zu wissen", "Good to know"));
             list(ui, &[

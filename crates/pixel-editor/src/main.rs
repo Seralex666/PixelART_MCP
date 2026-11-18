@@ -19,6 +19,7 @@ mod app;
 mod canvas;
 mod dialogs;
 mod doc;
+mod fx_dialog;
 mod help;
 mod icons;
 mod import_dialog;

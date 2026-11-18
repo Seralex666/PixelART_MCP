@@ -73,6 +73,13 @@ impl App {
             ));
             return false;
         }
+        if self.sprite().is_some_and(|s| s.is_effect_layer(self.layer)) {
+            self.error(tr(
+                "Diese Ebene gehört zu einem Effekt. Wähle eine andere Ebene.",
+                "This layer belongs to an effect. Pick another layer.",
+            ));
+            return false;
+        }
         if self.sprite().is_some_and(|s| s.is_reference(self.layer)) {
             self.error(tr(
                 "Diese Ebene ist eine Vorlage zum Nachzeichnen. Wähle eine andere Ebene.",
