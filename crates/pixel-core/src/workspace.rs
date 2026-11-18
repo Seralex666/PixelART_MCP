@@ -31,6 +31,15 @@ pub struct Workspace {
     home: PathBuf,
 }
 
+/// Für welche Spiel-Engine ein Autotile-Satz exportiert wird.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileEngine {
+    /// Godot 4: TileSet (`.tres`) mit Terrain.
+    Godot,
+    /// Tiled: Tileset (`.tsx`) mit Wang-Set.
+    Tiled,
+}
+
 /// Was exportiert werden soll.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ExportFormat {
@@ -416,6 +425,59 @@ impl Workspace {
             }
         }
         Ok(found)
+    }
+
+    /// Exportiert einen Autotile-Satz für eine Spiel-Engine: das Bild als PNG und
+    /// daneben die Beschreibung (`.tres` für Godot 4, `.tsx` für Tiled). Ohne
+    /// `frame` werden alle Frames zu animierten Kacheln.
+    pub fn export_tileset(
+        &self,
+        project: &str,
+        asset_name: &str,
+        sprite: &Sprite,
+        engine: TileEngine,
+        frame: Option<usize>,
+        scale: u32,
+    ) -> Result<Vec<PathBuf>> {
+        self.project_path(project)?;
+        let Some(info) = sprite.tileset() else {
+            return Err(Error::Effect(crate::trf!(
+                "„{asset_name}“ ist kein Autotile-Satz; erzeuge ihn zuerst aus einer Vorlage",
+                "'{asset_name}' is not an autotile set; build it from a template first"
+            )));
+        };
+        if !(1..=export::MAX_SCALE).contains(&scale) {
+            return Err(Error::InvalidName(crate::trf!(
+                "Vergrößerung muss zwischen 1 und {} liegen",
+                "The scale must be between 1 and {}",
+                export::MAX_SCALE
+            )));
+        }
+        let atlas = crate::autotile::atlas(sprite, info, frame)?;
+        let img = export::to_image(&atlas.pixels, atlas.width, atlas.height, scale)?;
+        let dir = self.exports_dir(project);
+        std::fs::create_dir_all(&dir)?;
+        let suffix = if scale > 1 {
+            format!("@{scale}x")
+        } else {
+            String::new()
+        };
+        let base = format!("{}{suffix}", file_safe(asset_name));
+        let png = dir.join(format!("{base}.png"));
+        let png_name = format!("{base}.png");
+        let (meta, text) = match engine {
+            TileEngine::Godot => (
+                dir.join(format!("{base}.tres")),
+                crate::autotile::godot_tres(info, &atlas, &png_name, asset_name, scale),
+            ),
+            TileEngine::Tiled => (
+                dir.join(format!("{base}.tsx")),
+                crate::autotile::tiled_tsx(info, &atlas, &png_name, asset_name, scale),
+            ),
+        };
+        std::fs::write(&png, export::encode_png(&img)?)?;
+        std::fs::write(&meta, text)?;
+        Ok(vec![png, meta])
     }
 
     /// Exportiert die Normal Maps eines Sprites (PNG oder Spritesheet) neben die

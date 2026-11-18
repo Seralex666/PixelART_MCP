@@ -29,6 +29,7 @@ mod outline_dialog;
 mod selection;
 mod settings;
 mod settings_dialog;
+mod tile_dialog;
 mod toolbar;
 mod tools;
 

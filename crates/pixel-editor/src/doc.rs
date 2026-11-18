@@ -656,6 +656,25 @@ impl Doc {
         Ok(id)
     }
 
+    /// Legt ein fertiges Bild als neues Asset an (etwa eine Autotile-Vorlage).
+    pub fn create_image_from(&mut self, name: &str, sprite: Sprite) -> Res<AssetId> {
+        self.poll(None);
+        let name = self.check_name(name, None)?;
+        let id = AssetId::new(AssetKind::Image, self.project.add_image(name, sprite));
+        self.commit(Change::Create(id))?;
+        Ok(id)
+    }
+
+    /// Ein Bild suchen, dessen Name gleich ist (ohne Groß- und Kleinschreibung).
+    pub fn image_named(&self, name: &str) -> Option<AssetId> {
+        let key = pixel_core::workspace::name_key(name);
+        self.project
+            .images
+            .iter()
+            .find(|i| pixel_core::workspace::name_key(&i.name) == key)
+            .map(|i| AssetId::new(AssetKind::Image, i.id))
+    }
+
     pub fn create_character(
         &mut self,
         name: &str,
@@ -837,6 +856,23 @@ impl Doc {
             .map_err(e)
     }
 
+    /// Exportiert einen Autotile-Satz für Godot oder Tiled.
+    pub fn export_tileset(
+        &self,
+        id: AssetId,
+        engine: pixel_core::workspace::TileEngine,
+        scale: u32,
+    ) -> Res<Vec<std::path::PathBuf>> {
+        let sprite = self.sprite(id).ok_or(tr(
+            "Das Asset gibt es nicht mehr",
+            "The asset no longer exists",
+        ))?;
+        let name = self.asset_name(id).unwrap_or("unnamed");
+        self.ws
+            .export_tileset(&self.name, name, sprite, engine, None, scale)
+            .map_err(e)
+    }
+
     /// Exportiert die Normal Maps eines Assets neben seine Farbbilder.
     pub fn export_normals(
         &self,
@@ -965,6 +1001,9 @@ fn merge(base: &Sprite, mine: &Sprite, theirs: &Sprite) -> (Sprite, Option<Strin
     }
     if mine.effects() != base.effects() {
         out.restore_effects(mine.effects().to_vec());
+    }
+    if mine.tileset() != base.tileset() {
+        out.set_tileset(mine.tileset().cloned());
     }
     for (f, (base_frame, my_frame)) in base.frames().iter().zip(mine.frames()).enumerate() {
         let Ok(out_frame) = out.frame_mut(f) else {

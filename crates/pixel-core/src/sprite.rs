@@ -29,6 +29,10 @@ pub struct Sprite {
     /// Effekte auf eigenen Ebenen, die über die Frames laufen (siehe [`crate::fx`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) effects: Vec<crate::fx::AutoEffect>,
+    /// Ist das Bild ein Autotile-Satz, steht hier, welche Kachel wo liegt
+    /// (siehe [`crate::autotile`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tileset: Option<Box<crate::autotile::TileSet>>,
 }
 
 impl Sprite {
@@ -48,6 +52,7 @@ impl Sprite {
             outline: None,
             light: None,
             effects: Vec::new(),
+            tileset: None,
         })
     }
 

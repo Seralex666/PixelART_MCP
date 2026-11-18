@@ -4,6 +4,7 @@
 //! speichert es sofort wieder. So sieht ein geöffneter Editor jede Änderung,
 //! und nach einem Absturz geht nichts verloren.
 
+use pixel_core::autotile::{self, TileSetKind};
 use pixel_core::brush;
 use pixel_core::contour::{self, AutoOutline};
 use pixel_core::draw::{self, Target};
@@ -20,7 +21,7 @@ use pixel_core::quant;
 use pixel_core::shapes::{self, CustomShape, Shape};
 use pixel_core::stylebook::{self, OutlineRule, StylePreset};
 use pixel_core::workspace::{
-    self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
+    self, ExportFormat, NameClash, ProjectLock, ProjectNameError, TileEngine, Workspace,
 };
 use pixel_core::{
     export, template, Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba,
@@ -504,6 +505,29 @@ pub struct NormalMapOpts {
     pub detail: Option<f32>,
     /// true: green flipped (DirectX convention). Default false: OpenGL convention as Godot and Unity expect.
     pub directx: Option<bool>,
+}
+
+/// Parameters of the `autotile` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AutotileParams {
+    /// Project name.
+    pub project: String,
+    /// "template" creates an empty template image to draw the few source tiles on, "build" (default) makes the whole tile set from a drawn template, "preview" shows a set on a small sample map.
+    pub action: Option<String>,
+    /// build: the template image (2 tiles wide, 3 tall). preview: the tile set image.
+    pub asset: Option<String>,
+    /// template: name of the new template image (default "Terrain"). build: name of the tile set image (default "<template> tiles"); an existing set of that name is rebuilt.
+    pub name: Option<String>,
+    /// template: tile size in pixels, even, 4 to 256 (default 16). The template is 2×tile wide and 3×tile high.
+    pub tile: Option<u32>,
+    /// build: "blob47" (default: 47 tiles, corners and sides, with inner corners; Godot "Match Corners and Sides", Tiled "mixed") or "sides16" (16 tiles, sides only; Godot "Match Sides", Tiled "edge").
+    pub kind: Option<String>,
+    /// template: color depth 8, 16 or 32 (default 32).
+    pub color_depth_bits: Option<u8>,
+    /// template: palette preset (see get_studio_info). Default: the project style's palette, else default16.
+    pub palette_preset: Option<String>,
+    /// preview: another number gives another sample map. Default 1.
+    pub seed: Option<u64>,
 }
 
 /// Parameters of the `effects` tool.
@@ -3129,6 +3153,134 @@ impl Studio {
         })
     }
 
+    // ---------------------------------------------------------------- Autotile
+
+    /// Autotile: Vorlage anlegen, Satz bauen, Satz auf einer Beispielkarte zeigen.
+    pub fn autotile(&self, a: &AutotileParams) -> Res {
+        let action = a
+            .action
+            .as_deref()
+            .unwrap_or("build")
+            .trim()
+            .to_ascii_lowercase();
+        let (_lock, mut p) = self.load_locked(&a.project)?;
+        match action.as_str() {
+            "template" => {
+                let tile = a.tile.unwrap_or(16);
+                let name = Self::check_new_name(&p, a.name.as_deref().unwrap_or("Terrain"))?;
+                let depth = Self::depth(a.color_depth_bits)?;
+                let (pal, _) = Self::palette_for_new_styled(
+                    &p,
+                    a.palette_preset.as_deref(),
+                    None,
+                    depth,
+                    None,
+                )?;
+                let s = autotile::template(tile, depth, pal).map_err(e)?;
+                let (w, h) = (s.width(), s.height());
+                let png = render_plain(&s, &[0], None)?;
+                p.add_image(name.clone(), s);
+                self.save(&a.project, &mut p)?;
+                let q = tile / 2;
+                Ok(Reply {
+                    text: format!(
+                        "Created the autotile template '{name}' ({w}×{h}: 2 tiles of {tile} px wide, 3 tall). Draw on layer 'Terrain' (the bottom layer is only a guide and is not exported):\n\
+                         - Bottom 2×2 tiles (x 0-{w1}, y {tile}-{h1}): one block of terrain as an island, with its outer corners at the four corners, its edges along the four sides and plain terrain inside. Keep the edge within the outer {q} px of the block; the middle {tile}×{tile} is the fill and must tile seamlessly.\n\
+                         - Top right tile (x {tile}-{w1}, y 0-{t1}): terrain everywhere except the four inner corners: in each corner the edge turns inwards, so it continues the left/right edge coming from above or below and the top/bottom edge coming from the side.\n\
+                         - Top left tile: free, e.g. a preview of the terrain; it is not used.\n\
+                         Every tile is built from {q}×{q} quarters of these. Then call autotile with action \"build\" and asset '{name}'. Several frames give animated tiles (e.g. water with a color cycle).",
+                        w1 = w - 1,
+                        h1 = h - 1,
+                        t1 = tile - 1,
+                    ),
+                    image_png: Some(png),
+                })
+            }
+            "build" => {
+                let src_name = a
+                    .asset
+                    .as_deref()
+                    .ok_or("`build` needs `asset`: the template image")?;
+                let r = Self::resolve(&p, src_name)?;
+                let template_name = Self::asset_name(&p, r);
+                let src = Self::sprite(&p, r)?.clone();
+                let kind = match &a.kind {
+                    Some(k) => TileSetKind::parse(k)
+                        .ok_or_else(|| format!("unknown kind '{k}', use blob47 or sides16"))?,
+                    None => TileSetKind::Blob47,
+                };
+                let (mut set, mut info) = autotile::build(&src, kind).map_err(e)?;
+                info.source = Some(template_name.clone());
+                set.set_tileset(Some(info.clone()));
+                let set_name = a
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("{template_name} tiles"));
+                let existing = p
+                    .images
+                    .iter()
+                    .find(|i| workspace::name_key(&i.name) == workspace::name_key(&set_name))
+                    .map(|i| (i.id, i.sprite.tileset().is_some()));
+                let verb = match existing {
+                    Some((_, false)) => {
+                        return Err(format!(
+                            "there is already an image '{set_name}' that is not a tile set; give another `name`"
+                        ))
+                    }
+                    Some((id, true)) => {
+                        let r = AssetRef::Image(id);
+                        let before = Self::sprite(&p, r)?.clone();
+                        *Self::sprite_mut(&mut p, r)? = set.clone();
+                        self.save(&a.project, &mut p)?;
+                        self.remember(&a.project, r, before, set.clone())?;
+                        "Rebuilt"
+                    }
+                    None => {
+                        let name = Self::check_new_name(&p, &set_name)?;
+                        p.add_image(name, set.clone());
+                        self.save(&a.project, &mut p)?;
+                        "Built"
+                    }
+                };
+                let png = tileset_preview(&set, &info, 0, a.seed.unwrap_or(1)).map_err(e)?;
+                Ok(Reply {
+                    text: format!(
+                        "{verb} the tile set '{set_name}' from '{template_name}': {} tiles of {t}×{t} ({}), {} columns, {} frame(s). Preview: the set, and a sample map built with it. Rebuild after changing the template; export it with export format \"godot\" (TileSet .tres with terrain, ready for painting terrains in a TileMapLayer) or \"tiled\" (.tsx with a Wang set).",
+                        info.masks.len(),
+                        kind.id(),
+                        info.columns,
+                        set.frames().len(),
+                        t = info.tile,
+                    ),
+                    image_png: Some(png),
+                })
+            }
+            "preview" => {
+                let name = a
+                    .asset
+                    .as_deref()
+                    .ok_or("`preview` needs `asset`: the tile set image")?;
+                let r = Self::resolve(&p, name)?;
+                let s = Self::sprite(&p, r)?;
+                let info = s.tileset().ok_or_else(|| {
+                    format!("'{name}' is not a tile set; build one with action \"build\"")
+                })?;
+                let png = tileset_preview(s, info, 0, a.seed.unwrap_or(1)).map_err(e)?;
+                Ok(Reply {
+                    text: format!(
+                        "Tile set '{name}' ({} tiles, {}) and a sample map. Another `seed` gives another map.",
+                        info.masks.len(),
+                        info.kind.id()
+                    ),
+                    image_png: Some(png),
+                })
+            }
+            other => Err(format!(
+                "unknown action '{other}', use \"template\", \"build\" or \"preview\""
+            )),
+        }
+    }
+
     // ---------------------------------------------------------------- Effekte
 
     /// Effekte über die Frames: einrichten, ändern, auflisten, entfernen.
@@ -3531,6 +3683,35 @@ impl Studio {
             Some(_) => Some(Self::frame_index(s, frame)?),
             None => None,
         };
+        let engine = match format.to_ascii_lowercase().as_str() {
+            "godot" => Some(TileEngine::Godot),
+            "tiled" => Some(TileEngine::Tiled),
+            _ => None,
+        };
+        if let Some(engine) = engine {
+            if normal_map.is_some() {
+                return Err("normal maps are exported as png or sheet only".into());
+            }
+            let name = Self::asset_name(&p, r);
+            let files = self
+                .ws
+                .export_tileset(project, &name, s, engine, frame, scale)
+                .map_err(e)?;
+            let animated = frame.is_none() && s.frames().len() > 1;
+            let note = match engine {
+                TileEngine::Godot => "Copy both files into your Godot 4 project (same folder). Load the .tres as the tile_set of a TileMapLayer; the terrain is ready in terrain set 0, so paint with the Terrains tab and the right tiles join up by themselves.",
+                TileEngine::Tiled => "Keep both files in the same folder. In Tiled, add the .tsx to the map and paint with the Terrain Brush of its Wang set.",
+            };
+            return Ok(Reply::json(json!({
+                "files": files,
+                "animated": animated,
+                "note": if animated {
+                    format!("{note} The tiles are animated: each tile's frames lie side by side.")
+                } else {
+                    note.to_string()
+                },
+            })));
+        }
         let format = match format.to_ascii_lowercase().as_str() {
             "png" => ExportFormat::Png,
             "jpg" | "jpeg" => ExportFormat::Jpg {
@@ -3554,7 +3735,7 @@ impl Studio {
             "webm" => ExportFormat::WebM,
             other => {
                 return Err(format!(
-                    "unknown format '{other}', use png, png8, jpg, sheet, gif or webm"
+                    "unknown format '{other}', use png, png8, jpg, sheet, gif or webm (godot or tiled for an autotile set)"
                 ))
             }
         };
@@ -3621,6 +3802,40 @@ impl Studio {
             image_png: Some(png),
         })
     }
+}
+
+/// Vorschau eines Autotile-Satzes: links der Satz, rechts eine Beispielkarte.
+fn tileset_preview(
+    set: &Sprite,
+    info: &autotile::TileSet,
+    frame: usize,
+    seed: u64,
+) -> pixel_core::Result<Vec<u8>> {
+    let (map, mw, mh) = autotile::demo_map(set, info, frame, 12, 9, seed)?;
+    let (sw, sh) = (set.width(), set.height());
+    let gap = info.tile / 2;
+    let (w, h) = (sw + gap + mw, sh.max(mh));
+    let (w, h) = (w.min(pixel_core::MAX_SIZE), h.min(pixel_core::MAX_SIZE));
+    let mut out = Sprite::new(w, h, ColorDepth::Rgba32, Palette::default())?;
+    let px = set.composite(frame)?;
+    let water = Rgba::rgb(52, 92, 160);
+    let mut all = vec![Rgba::TRANSPARENT; (w * h) as usize];
+    for y in 0..sh.min(h) {
+        for x in 0..sw.min(w) {
+            all[(y * w + x) as usize] = px[(y * sw + x) as usize];
+        }
+    }
+    for y in 0..mh.min(h) {
+        for x in 0..mw {
+            let tx = sw + gap + x;
+            if tx < w {
+                all[(y * w + tx) as usize] = map[(y * mw + x) as usize].over(water);
+            }
+        }
+    }
+    out.layer_mut(0, 0)?.replace_pixels(all)?;
+    let scale = (512 / w.max(h)).clamp(1, 4);
+    export::frame_png(&out, 0, scale)
 }
 
 /// Vorschau einer Normal Map: links das Bild mit Licht von oben links, rechts die Normal Map.

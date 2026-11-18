@@ -74,9 +74,17 @@ Feuer und Lava. Jeder Effekt liegt auf einer eigenen Ebene, läuft als Schleife 
 
 ![Alle Effekte am Ritter: Leuchten, Blitz, Funken, Magie, Rauch, Explosion, Spiegelung und Farbzyklus](docs/images/effekte.gif)
 
+### Kacheln und Autotile
+
+Du malst fünf Kacheln, das Studio baut daraus den ganzen Satz mit allen Ecken, Rändern und Innenecken,
+47 Stück, die sich auf einer Karte von selbst zusammensetzen. Der Kachel-Modus zeigt beim Malen die
+Nachbarn, damit die Übergänge nahtlos werden. Export direkt als TileSet für Godot 4 oder Tiled.
+
+![Links die gemalte Vorlage, in der Mitte der gebaute Kachelsatz, rechts eine Insel daraus](docs/images/autotile.png)
+
 ### Claude zeichnet mit
 
-Das Studio ist zugleich ein MCP-Server mit 28 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Das Studio ist zugleich ein MCP-Server mit 29 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
 Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
 die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
 auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden** im Editor.
@@ -95,7 +103,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 28 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 29 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -108,6 +116,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | 1.1 | Licht und Schatten, die über die Frames wandern, Schlagschatten am Boden | fertig |
 | 1.2 | Stil-Bibliothek (Comic, Manga, Burgen, 8 Bit, 16 Bit, HQ) und eigene Stile, Einstellungen mit Tabs, Normal Maps | fertig |
 | 1.3 | Effekte (Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie) und Farbzyklen | fertig |
+| 1.4 | Kachel-Modus, Autotile-Sätze aus wenigen Kacheln, Export für Godot und Tiled | fertig |
 
 ## Aufbau
 
@@ -239,6 +248,29 @@ indem die vorhandenen Frames kopiert werden.
 - **Festschreiben** macht aus dem Effekt eine normale Ebene, **Entfernen** löscht ihn. Bei 8 und 16 Bit und
   bei festen Paletten wird gerastert statt durchscheinend gezeichnet.
 
+## Tiles und Autotile
+
+**Kachel-Modus** (Menü Ansicht oder Taste **T**): Die Leinwand zeigt das Bild 3 × 3 Mal nebeneinander, und
+was du über den Rand malst, kommt auf der anderen Seite wieder herein. So werden Boden, Wasser und Wände nahtlos.
+
+**Autotile…** (Menü Bearbeiten oder Rechtsklick auf ein Bild) baut aus einer kleinen Vorlage einen ganzen
+Kachelsatz. Claude benutzt dafür `autotile`.
+
+1. Ist kein passendes Bild ausgewählt, legt der Dialog eine **Vorlage** an: 2 Kacheln breit und 3 hoch, in
+   8 bis 64 Pixeln je Kachel. Eine Hilfsebene zeigt, was wohin gehört, und wird nicht exportiert.
+2. Auf der Ebene „Gelände“ malst du unten einen Block aus 2 × 2 Kacheln, also ein kleines Stück Boden mit
+   Außenecken, Rändern und Mitte, und oben rechts eine Kachel mit den vier **Innenecken**. Die Kachel oben
+   links ist frei, etwa für eine Vorschau.
+3. **Satz anlegen** baut daraus alle Kacheln. **47 Kacheln** kennen Ecken und Seiten, also auch schmale Stege
+   und einzelne Löcher; **16 Kacheln** kennen nur Seiten und reichen für einfache Böden. Die Vorschau zeigt den
+   Satz und eine Beispielinsel, **Andere Beispielkarte** würfelt eine neue.
+4. Ändert sich die Vorlage, baut **Satz neu bauen** alles nach. Hat die Vorlage mehrere Frames, werden die
+   Kacheln animiert, etwa für Wasser.
+5. **Für Godot 4 exportieren** schreibt ein PNG und eine `.tres` mit Terrain: beide in dasselbe Godot-Projekt
+   legen, die `.tres` als TileSet einer TileMapLayer laden und im Reiter Terrains malen. **Für Tiled
+   exportieren** schreibt PNG und `.tsx` mit Wang-Set für den Terrain-Pinsel. Animierte Kacheln laufen in
+   beiden mit.
+
 ## Licht und Schatten
 
 Über **Licht…** (Werkzeugleiste, Menü Bearbeiten oder Rechtsklick auf ein Asset) bekommt ein Bild, eine
@@ -320,6 +352,9 @@ Frames und deren Dauer mit. Hat eine Datei mehr Farben, als Farbtiefe oder Palet
 | Spritesheet | Alle Frames in einem PNG, dazu JSON mit Positionen und Frame-Dauern | ja |
 | GIF | Animation mit den Frame-Dauern der Timeline, Schleife wie eingestellt | ja, bis 255 Farben |
 | WebM | Video (VP9) mit Transparenz | fast, Farben können um ein bis zwei Stufen abweichen |
+
+Ein Autotile-Satz lässt sich zusätzlich als TileSet für Godot 4 (`.tres`) oder Tiled (`.tsx`) exportieren,
+siehe [Tiles und Autotile](#tiles-und-autotile).
 
 GIF kennt Transparenz nur als an oder aus: Pixel unter halber Deckkraft werden durchsichtig, alle anderen
 deckend. Hat eine Animation mehr als 255 Farben, werden sie auf ähnliche Farben reduziert, und der Export

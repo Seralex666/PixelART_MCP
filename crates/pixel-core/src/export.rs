@@ -14,7 +14,7 @@ pub const MAX_SCALE: u32 = 64;
 /// Größte Kantenlänge einer Exportdatei in Pixeln.
 pub const MAX_EXPORT_SIZE: u32 = 16384;
 
-fn to_image(px: &[Rgba], width: u32, height: u32, scale: u32) -> Result<RgbaImage> {
+pub(crate) fn to_image(px: &[Rgba], width: u32, height: u32, scale: u32) -> Result<RgbaImage> {
     let scale = scale.clamp(1, MAX_SCALE);
     let (ow, oh) = (width * scale, height * scale);
     if ow > MAX_EXPORT_SIZE || oh > MAX_EXPORT_SIZE {
@@ -63,7 +63,7 @@ pub fn frame_jpeg(
     Ok(out)
 }
 
-fn encode_png(img: &RgbaImage) -> Result<Vec<u8>> {
+pub(crate) fn encode_png(img: &RgbaImage) -> Result<Vec<u8>> {
     let mut out = Cursor::new(Vec::new());
     img.write_to(&mut out, ImageFormat::Png)?;
     Ok(out.into_inner())
