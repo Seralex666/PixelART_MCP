@@ -36,10 +36,12 @@ pub mod palette;
 pub mod pixelate;
 pub mod project;
 pub mod quant;
+pub mod rotate;
 pub mod shapes;
 pub mod sprite;
 pub mod stylebook;
 pub mod template;
+pub mod variants;
 pub mod video;
 pub mod workspace;
 

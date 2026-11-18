@@ -183,6 +183,8 @@ impl App {
             Ok("normal") => app.normal_dialog(),
             Ok("effects") => app.fx_dialog(),
             Ok("autotile") => app.tile_dialog(),
+            Ok("rotate") => app.rotate_dialog(),
+            Ok("variants") => app.variant_dialog(),
             Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
             Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
             Ok("shape") => app.open_dialog(Dialog::SaveShape {
@@ -862,6 +864,21 @@ impl App {
                     self.tile_dialog();
                 }
                 if ui
+                    .add_enabled(has_sel, egui::Button::new(tr("Drehen…", "Rotate…")))
+                    .clicked()
+                {
+                    self.rotate_dialog();
+                }
+                let has_char = self
+                    .sel
+                    .is_some_and(|id| self.doc.as_ref().and_then(|d| d.character_of(id)).is_some());
+                if ui
+                    .add_enabled(has_char, egui::Button::new(tr("Farbvarianten…", "Color variants…")))
+                    .clicked()
+                {
+                    self.variant_dialog();
+                }
+                if ui
                     .add_enabled(
                         has_sel,
                         egui::Button::new(tr("Farbe ersetzen…", "Replace color…")),
@@ -1237,6 +1254,18 @@ impl App {
                     self.tile_dialog();
                     ui.close();
                 }
+                if ui.button(tr("Drehen…", "Rotate…")).clicked() {
+                    self.select(a.id);
+                    self.rotate_dialog();
+                    ui.close();
+                }
+                if a.id.kind != AssetKind::Image
+                    && ui.button(tr("Farbvarianten…", "Color variants…")).clicked()
+                {
+                    self.select(a.id);
+                    self.variant_dialog();
+                    ui.close();
+                }
                 if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
                     self.open_dialog(Dialog::Rename {
                         id: a.id,
@@ -1299,6 +1328,24 @@ impl App {
         let Some(id) = self.sel else { return };
         if let Some(form) = LightForm::new(self, id) {
             self.open_dialog(Dialog::Light(Box::new(form)));
+        }
+    }
+
+    pub fn rotate_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = crate::rotate_dialog::RotateForm::new(self, id) {
+            self.open_dialog(Dialog::Rotate(Box::new(form)));
+        }
+    }
+
+    pub fn variant_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        match crate::variant_dialog::VariantForm::new(self, id) {
+            Some(form) => self.open_dialog(Dialog::Variants(Box::new(form))),
+            None => self.info(tr(
+                "Farbvarianten gibt es für Figuren und ihre Animationen.",
+                "Color variants are for characters and their animations.",
+            )),
         }
     }
 

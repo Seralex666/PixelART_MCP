@@ -2,7 +2,8 @@
 
 use crate::studio::{
     AutotileParams, DrawOp, EffectsParams, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs,
-    PerFrame, PixelateArgs, Reply, Res, Studio, StyleArgs, StylesParams, ViewOptions,
+    PerFrame, PixelateArgs, Reply, Res, RotateParams, Studio, StyleArgs, StylesParams,
+    VariantsParams, ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -33,6 +34,7 @@ Consistency rules:
 
 Styles: when the user names a style ("in manga style", "8 bit"), look it up with styles(action: "get") or pass it as `style` to set_style, create_image or create_character, and follow its rules, palette, shades and outline exactly. Own styles can be saved with styles(action: "save").
 Tiles: for terrain that joins up by itself (grass, water, walls) use autotile: create a template, draw the few source tiles on it, build the set and export it for Godot or Tiled. view with tile=true checks a single seamless tile.
+Rotating: use rotate for any angle (RotSprite keeps pixels crisp and the palette), and spin with angle 360 for a spinning object. Color variants: for skins or team colors use variants on the character instead of copying it; export them with `variant`.
 Effects: for glow, lightning, an explosion, a reflection in water, sparks, smoke, magic sparkles or color cycling (flowing water, flickering fire, lava) use the effects tool rather than drawing them frame by frame. Each effect sits on its own layer, loops over the frames and follows every change; `frames` turns a still image into a loop first. For color_cycle paint the flowing area with the ramp colors (a `preset` like "water" names them) and the colors move.
 
 Pixel art craft: keep outlines 1 pixel wide, use few colors (3 to 5 shades per material), avoid single stray pixels, light from one direction, and keep the silhouette readable at 1× size."##;
@@ -496,6 +498,8 @@ pub struct Export {
     quality: Option<u8>,
     /// Also export a normal map for dynamic 2D lighting in game engines (Godot, Unity), as files with the suffix _n in the same format (png or sheet). Give {} for the defaults.
     normal_map: Option<NormalMapOpts>,
+    /// Character or animation only: export a color variant (made with the tool variants) instead of the original colors, or "all" for every variant. The files get the variant's name.
+    variant: Option<String>,
 }
 
 // ------------------------------------------------------------------ Werkzeuge
@@ -887,6 +891,22 @@ impl PixelServer {
     }
 
     #[tool(
+        description = "Rotate by any angle without pixel mush (RotSprite: no blur, no new colors, lines stay closed, locked palettes keep working). Turns all drawn layers or one layer, in all frames or one frame, around the canvas center or a pivot pixel. Images can grow the canvas (`expand`) so nothing is cut off. `spin` spreads the turn over the frames (angle 360 = one seamless full turn, e.g. a spinning axe or coin); `frames` adds frames for that. Outline, light and effects redraw themselves. Multiples of 90° are exact. Returns a preview.",
+        annotations(title = "Rotate", destructive_hint = false)
+    )]
+    fn rotate(&self, Parameters(a): Parameters<RotateParams>) -> CallToolResult {
+        self.run(|s| s.rotate(&a))
+    }
+
+    #[tool(
+        description = "Color variants of a character (skins, teams, elemental versions): each variant is a list of replacement colors that applies to the character and all its animations when previewing and exporting, so the drawing is kept once and every variant stays up to date. action \"list\" shows the character's colors and variants, \"set\" creates or changes one with `colors` ({\"#from\": \"#to\"}) and/or a hue turn (`hue`, `hue_colors`), \"remove\" deletes one, \"preview\" shows the original and every variant side by side. Export a variant with export `variant` (a name or \"all\").",
+        annotations(title = "Color variants", destructive_hint = false)
+    )]
+    fn variants(&self, Parameters(a): Parameters<VariantsParams>) -> CallToolResult {
+        self.run(|s| s.variants(&a))
+    }
+
+    #[tool(
         description = "Custom shapes the user or you drew and saved: list them, save a new one from a drawing (one layer of a frame, optionally an area; trimmed to what is drawn) or delete one. Saved shapes live in the workspace, work in every project and can be drawn at any size with the draw op `shape`, in one color or in their own colors (`keep_colors`).",
         annotations(title = "Custom shapes", destructive_hint = true)
     )]
@@ -976,6 +996,7 @@ impl PixelServer {
                 a.background.as_deref(),
                 a.quality,
                 a.normal_map.as_ref(),
+                a.variant.as_deref(),
             )
         })
     }

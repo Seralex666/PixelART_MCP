@@ -26,12 +26,15 @@ mod import_dialog;
 mod light_dialog;
 mod normal_dialog;
 mod outline_dialog;
+mod player;
+mod rotate_dialog;
 mod selection;
 mod settings;
 mod settings_dialog;
 mod tile_dialog;
 mod toolbar;
 mod tools;
+mod variant_dialog;
 
 use eframe::egui;
 use pixel_core::Workspace;

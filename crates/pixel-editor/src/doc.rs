@@ -5,6 +5,7 @@ use pixel_core::contour::AutoOutline;
 use pixel_core::import::{self, NewColors, Picture, Report};
 use pixel_core::lang::tr;
 use pixel_core::trf;
+use pixel_core::variants::ColorVariant;
 use pixel_core::workspace::{check_asset_name, ExportFormat, Exported, NameClash, Workspace};
 use pixel_core::{Animation, AnimationKind, Character, ColorDepth, Palette, Project, Rgba, Sprite};
 use std::time::SystemTime;
@@ -114,6 +115,11 @@ enum Change {
         color: Rgba,
     },
     Remove(AssetId),
+    /// Die Farbvarianten einer Figur wurden ersetzt.
+    Variants {
+        character: Uuid,
+        variants: Vec<ColorVariant>,
+    },
     /// Der Stil des Projekts wurde ersetzt.
     Style(Box<pixel_core::Style>),
     /// Mehrere Änderungen, die zusammengehören, in dieser Reihenfolge.
@@ -736,6 +742,23 @@ impl Doc {
         self.commit(Change::Looping { animation, looping })
     }
 
+    /// Die Farbvarianten einer Figur.
+    pub fn variants(&self, character: Uuid) -> &[ColorVariant] {
+        self.project
+            .character(character)
+            .map_or(&[], |c| c.variants.as_slice())
+    }
+
+    /// Ersetzt die Farbvarianten einer Figur.
+    pub fn set_variants(&mut self, character: Uuid, variants: Vec<ColorVariant>) -> Res {
+        self.poll(None);
+        self.project.character_mut(character).map_err(e)?.variants = variants.clone();
+        self.commit(Change::Variants {
+            character,
+            variants,
+        })
+    }
+
     /// Ersetzt den Stil des Projekts (Palette für neue Bilder, Licht, Umriss, Stil der Bibliothek).
     pub fn set_style(&mut self, style: pixel_core::Style) -> Res {
         self.poll(None);
@@ -856,6 +879,37 @@ impl Doc {
             .map_err(e)
     }
 
+    /// Exportiert ein Asset in einer Farbvariante seiner Figur. Die Dateien
+    /// tragen den Namen der Variante.
+    pub fn export_variant(
+        &self,
+        id: AssetId,
+        variant: &ColorVariant,
+        format: ExportFormat,
+        frame: Option<usize>,
+        scale: u32,
+    ) -> Res<Exported> {
+        let sprite = self.sprite(id).ok_or(tr(
+            "Das Asset gibt es nicht mehr",
+            "The asset no longer exists",
+        ))?;
+        let name = format!(
+            "{} {}",
+            self.asset_name(id).unwrap_or("unnamed"),
+            variant.name
+        );
+        self.ws
+            .export(
+                &self.name,
+                &name,
+                &variant.apply(sprite),
+                format,
+                frame,
+                scale,
+            )
+            .map_err(e)
+    }
+
     /// Exportiert einen Autotile-Satz für Godot oder Tiled.
     pub fn export_tileset(
         &self,
@@ -940,6 +994,14 @@ fn replay(change: &Change, disk: &mut Project, ours: &Project) -> Option<String>
             drop(disk.add_character_colors(*character, &[*color]));
         }
         Change::Remove(id) => remove(disk, *id),
+        Change::Variants {
+            character,
+            variants,
+        } => {
+            if let Ok(c) = disk.character_mut(*character) {
+                c.variants = variants.clone();
+            }
+        }
         Change::Style(style) => disk.style = (**style).clone(),
         Change::Batch(changes) => {
             let notices: Vec<String> = changes

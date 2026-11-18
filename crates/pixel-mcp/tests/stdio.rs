@@ -164,6 +164,8 @@ fn lists_all_tools_with_schemas() {
         "styles",
         "effects",
         "autotile",
+        "rotate",
+        "variants",
         "import_image",
         "undo",
         "set_style",
@@ -2275,4 +2277,133 @@ fn autotile_builds_a_whole_set_and_exports_it_for_godot_and_tiled() {
     );
     let err = c.err("autotile", json!({"project": "T", "asset": "Quer"}));
     assert!(err.contains("2 tiles wide and 3 tall"), "{err}");
+}
+
+#[test]
+fn rotate_turns_without_new_colors_and_spins_over_frames() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "R"}));
+    c.ok(
+        "create_image",
+        json!({"project": "R", "name": "Axt", "width": 16, "height": 16}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "R", "asset": "Axt",
+               "ops": [{"op": "rect", "x": 2, "y": 7, "w": 12, "h": 2, "color": "#7a5a34", "filled": true},
+                       {"op": "rect", "x": 10, "y": 4, "w": 4, "h": 8, "color": "#94b0c2", "filled": true}]}),
+    );
+    let r = c.ok(
+        "rotate",
+        json!({"project": "R", "asset": "Axt", "angle": 30, "expand": true}),
+    );
+    assert!(r.image.is_some());
+    assert!(r.text.contains("canvas grew"), "{}", r.text);
+    assert!(r.text.contains("from 16×16 to 22×22"), "{}", r.text);
+    let r = c.ok(
+        "rotate",
+        json!({"project": "R", "asset": "Axt", "angle": 360, "spin": true, "frames": 8}),
+    );
+    assert!(
+        r.text.contains("over 8 frames (45° per frame)"),
+        "{}",
+        r.text
+    );
+    // Back: undo takes the spin back.
+    c.ok("undo", json!({"project": "R"}));
+    assert!(c
+        .err(
+            "rotate",
+            json!({"project": "R", "asset": "Axt", "angle": 10, "frames": 4})
+        )
+        .contains("`frames` goes with `spin`"));
+    c.ok(
+        "create_character",
+        json!({"project": "R", "name": "Held", "width": 8, "height": 8, "color_depth_bits": 8,
+               "palette": ["#1a1c2c", "#3b5dc9", "#b13e53"]}),
+    );
+    assert!(c
+        .err(
+            "rotate",
+            json!({"project": "R", "asset": "Held", "angle": 45, "expand": true})
+        )
+        .contains("keep their size"));
+}
+
+#[test]
+fn variants_recolor_a_character_with_all_animations_and_export() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "V"}));
+    c.ok(
+        "create_character",
+        json!({"project": "V", "name": "Held", "width": 8, "height": 8, "color_depth_bits": 8,
+               "palette": ["#1a1c2c", "#3b5dc9", "#b13e53"]}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "V", "asset": "Held",
+               "ops": [{"op": "rect", "x": 2, "y": 1, "w": 4, "h": 6, "color": "#3b5dc9", "filled": true},
+                       {"op": "rect", "x": 2, "y": 0, "w": 4, "h": 1, "color": "#1a1c2c", "filled": true}]}),
+    );
+    c.ok(
+        "create_animation",
+        json!({"project": "V", "character": "Held", "kind": "walk", "frames": 2}),
+    );
+    let r = c.ok(
+        "variants",
+        json!({"project": "V", "character": "Held", "action": "set", "name": "Rot",
+               "colors": {"#3b5dc9": "#b13e53", "#00ff00": "#000000"}}),
+    );
+    assert!(r.image.is_some());
+    assert!(r.text.contains("#00ff00 not used"), "{}", r.text);
+    c.ok(
+        "variants",
+        json!({"project": "V", "character": "Held walk", "action": "set", "name": "Grün", "hue": -120}),
+    );
+    let v = c.json("variants", json!({"project": "V", "character": "Held"}));
+    assert_eq!(v["variants"].as_array().unwrap().len(), 2, "{v}");
+    assert_eq!(v["variants"][0]["colors"]["#3b5dc9"], "#b13e53");
+    let r = c.ok(
+        "variants",
+        json!({"project": "V", "character": "Held", "action": "preview"}),
+    );
+    assert!(r.image.is_some());
+
+    let v = c.json(
+        "export",
+        json!({"project": "V", "asset": "Held walk", "format": "sheet", "variant": "Rot"}),
+    );
+    let files: Vec<String> = serde_json::from_value(v["files"].clone()).unwrap();
+    assert!(
+        files
+            .iter()
+            .any(|f| f.contains("Rot") && f.ends_with(".png")),
+        "{files:?}"
+    );
+    let png = files.iter().find(|f| f.ends_with(".png")).unwrap();
+    let img = image::open(png).unwrap().to_rgba8();
+    let px: Vec<[u8; 4]> = img.pixels().map(|p| p.0).collect();
+    assert!(px.contains(&[0xb1, 0x3e, 0x53, 255]));
+    assert!(
+        !px.contains(&[0x3b, 0x5d, 0xc9, 255]),
+        "the blue was replaced"
+    );
+
+    let v = c.json(
+        "export",
+        json!({"project": "V", "asset": "Held", "format": "png", "variant": "all"}),
+    );
+    assert_eq!(v["files"].as_array().unwrap().len(), 2, "{v}");
+    assert!(c
+        .err(
+            "export",
+            json!({"project": "V", "asset": "Held", "format": "png", "variant": "Gold"})
+        )
+        .contains("no variant 'Gold'"));
+    c.ok(
+        "variants",
+        json!({"project": "V", "character": "Held", "action": "remove", "name": "rot"}),
+    );
+    let v = c.json("variants", json!({"project": "V", "character": "Held"}));
+    assert_eq!(v["variants"].as_array().unwrap().len(), 1);
 }

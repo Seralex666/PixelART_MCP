@@ -82,9 +82,25 @@ Nachbarn, damit die Übergänge nahtlos werden. Export direkt als TileSet für G
 
 ![Links die gemalte Vorlage, in der Mitte der gebaute Kachelsatz, rechts eine Insel daraus](docs/images/autotile.png)
 
+### Drehen ohne Pixelbrei
+
+Figuren, Waffen und Gegenstände lassen sich in jedem Winkel drehen, ohne dass etwas verschwimmt. Es kommen
+keine neuen Farben dazu, Linien bleiben geschlossen, und auf Wunsch dreht sich etwas über alle Frames
+einmal im Kreis, etwa eine geworfene Axt.
+
+![Der Ritter um 0, 15, 30, 45, 90 und 135 Grad gedreht](docs/images/drehen.png)
+
+### Farbvarianten
+
+Rotes und blaues Team, Gold- oder Eis-Version: Eine Farbvariante tauscht Farben und gilt für die Figur mit
+allen Animationen. Gezeichnet wird nur einmal, und jede Änderung ist sofort in allen Varianten. Beim Export
+wählst du die Variante oder gleich alle.
+
+![Der Ritter mit Lauf-Frame im Original und in drei Farbvarianten](docs/images/varianten.png)
+
 ### Claude zeichnet mit
 
-Das Studio ist zugleich ein MCP-Server mit 29 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Das Studio ist zugleich ein MCP-Server mit 31 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
 Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
 die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
 auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden** im Editor.
@@ -103,7 +119,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 29 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 31 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -117,6 +133,7 @@ auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden*
 | 1.2 | Stil-Bibliothek (Comic, Manga, Burgen, 8 Bit, 16 Bit, HQ) und eigene Stile, Einstellungen mit Tabs, Normal Maps | fertig |
 | 1.3 | Effekte (Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie) und Farbzyklen | fertig |
 | 1.4 | Kachel-Modus, Autotile-Sätze aus wenigen Kacheln, Export für Godot und Tiled | fertig |
+| 1.5 | Drehen in jedem Winkel (RotSprite), Drehung im Kreis über die Frames, Farbvarianten für Figuren | fertig |
 
 ## Aufbau
 
@@ -270,6 +287,38 @@ Kachelsatz. Claude benutzt dafür `autotile`.
    legen, die `.tres` als TileSet einer TileMapLayer laden und im Reiter Terrains malen. **Für Tiled
    exportieren** schreibt PNG und `.tsx` mit Wang-Set für den Terrain-Pinsel. Animierte Kacheln laufen in
    beiden mit.
+
+## Drehen
+
+**Drehen…** (Menü Bearbeiten oder Rechtsklick auf ein Asset) dreht mit dem RotSprite-Verfahren: Das Bild wird
+intern achtfach vergrößert, mit geglätteten Treppenstufen gedreht und wieder verkleinert, wobei jeder Pixel
+genau eine vorhandene Farbe bekommt. Darum passt eine gesperrte Palette weiter, und Konturen bleiben
+geschlossen. Claude benutzt dafür `rotate`.
+
+- **Winkel** frei oder per Knopf (±15°, ±45°, ±90°, 180°). Vielfache von 90° sind exakt.
+- **Was:** alle gezeichneten Ebenen oder nur die aktuelle, alle Frames oder nur der aktuelle. Vorlage-Ebenen
+  und automatische Ebenen (Kontur, Licht, Effekte) zeichnen sich danach selbst neu.
+- **Drehpunkt:** die Bildmitte, oder ein Klick in die Vorschau setzt ihn, etwa auf den Griff eines Schwerts.
+- **Leinwand vergrößern** (nur Bilder), damit nichts abgeschnitten wird. Figuren und Animationen behalten
+  ihre Größe.
+- **Über die Frames verteilen:** Frame für Frame ein Stück weiter, mit 360° einmal nahtlos im Kreis. Fehlende
+  Frames entstehen dabei als Kopien.
+
+## Farbvarianten
+
+**Farbvarianten…** (Menü Bearbeiten oder Rechtsklick auf eine Figur oder Animation) verwaltet Skins und
+Teamfarben. Claude benutzt dafür `variants`.
+
+- **+ Variante** legt eine an, mit einem Vorschlag aus gedrehten Farbtönen.
+- Für jede Farbe der Figur wählst du den Ersatz oder setzt ihn **zurück**. **Farbton drehen** dreht alle
+  deutlich bunten Farben auf einmal; Grau, Umriss und Glanzlichter bleiben.
+- Die Vorschau spielt die Figur oder eine Animation im Original und in der Variante nebeneinander ab.
+- **Übernehmen** speichert, **Exportieren…** öffnet den Export gleich mit dieser Variante. Im Export-Dialog
+  gibt es für Figuren und Animationen die Auswahl **Farbvariante** mit „Alle Varianten“. Die Dateien tragen
+  den Namen der Variante, etwa `Ritter_walk_Rot-sheet.png`.
+
+Varianten sind keine Kopien: Sie gelten beim Ansehen und Exportieren. Was du an der Figur oder ihren
+Animationen änderst, steckt sofort in jeder Variante.
 
 ## Licht und Schatten
 
