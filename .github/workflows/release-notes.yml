@@ -1,0 +1,32 @@
+name: Release-Notizen
+
+# Schreibt die Notizen eines vorhandenen Release neu aus docs/releases/<Tag>.md,
+# etwa wenn ein Bildlink korrigiert wurde. Die exe bleibt unverändert.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version des Release, z. B. v1.4.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    name: Notizen aktualisieren
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Notizen schreiben
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! -f "docs/releases/$TAG.md" ]]; then
+            echo "::error::docs/releases/$TAG.md fehlt"
+            exit 1
+          fi
+          gh release edit "$TAG" --notes-file "docs/releases/$TAG.md"
