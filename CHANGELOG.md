@@ -1,5 +1,15 @@
 # Was ist neu
 
+## 1.5.0
+
+- Drehen in jedem Winkel mit RotSprite: keine neuen Farben, geschlossene Linien, gesperrte Paletten passen
+  weiter; frei wählbarer Drehpunkt, Leinwand wächst auf Wunsch mit
+- Drehung im Kreis: über alle Frames verteilt, etwa für eine geworfene Axt oder eine Münze
+- Farbvarianten für Figuren (Skins, Teams), die für alle Animationen gelten und beim Export gewählt werden
+- Neue Dialoge **Drehen…** und **Farbvarianten…**, Auswahl der Variante im Export-Dialog
+- Bilder in den Release-Notizen öffnen sich auch im privaten Repository
+- Für Claude: neue Werkzeuge `rotate` und `variants`, und `export` nimmt `variant`
+
 ## 1.4.0
 
 - Kachel-Modus (Taste T): die Leinwand zeigt die Nachbarkacheln, und Striche über den Rand kommen auf der

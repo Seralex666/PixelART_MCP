@@ -84,6 +84,24 @@ impl ColorVariant {
     }
 }
 
+/// Ob eine Farbe deutlich bunt ist: Grau, fast Schwarz und fast Weiß (etwa
+/// Umriss und Glanzlichter) zählen nicht. Der Farbton-Schieber dreht nur diese.
+pub fn is_colorful(c: Rgba) -> bool {
+    let max = c.r.max(c.g).max(c.b) as f32 / 255.0;
+    let min = c.r.min(c.g).min(c.b) as f32 / 255.0;
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if !(0.15..=0.92).contains(&l) || d < 1e-6 {
+        return false;
+    }
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
+    s >= 0.25
+}
+
 /// Dreht den Farbton einer Farbe, Helligkeit und Sättigung bleiben.
 pub fn hue_shift(c: Rgba, degrees: f32) -> Rgba {
     let (r, g, b) = (c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0);
@@ -224,6 +242,14 @@ mod tests {
         assert!(c.set_variant(ColorVariant::new("  ")).is_err());
         assert!(c.remove_variant("grün"));
         assert!(!c.remove_variant("grün"));
+    }
+
+    #[test]
+    fn only_clearly_colorful_colors_count() {
+        assert!(is_colorful(Rgba::rgb(59, 93, 201)));
+        assert!(!is_colorful(Rgba::rgb(26, 28, 44)), "outline");
+        assert!(!is_colorful(Rgba::rgb(244, 244, 244)));
+        assert!(!is_colorful(Rgba::rgb(120, 125, 130)));
     }
 
     #[test]

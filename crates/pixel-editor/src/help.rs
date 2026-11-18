@@ -161,6 +161,7 @@ So arbeitest du damit:
 9. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
 10. Für Leuchten, Blitze, Explosionen, Spiegelungen im Wasser, Funken, Rauch, Magie und Farbzyklen (fließendes Wasser, Feuer, Lava) nimmst du effects, statt sie Frame für Frame zu malen. Jeder Effekt liegt auf einer eigenen Ebene und läuft über alle Frames; mit frames wird aus einem Standbild eine Schleife.
 11. Für Böden, Wasser und Wände in Spielen legst du mit autotile eine Vorlage an, malst den Block aus 2 × 2 Kacheln und die Kachel mit den Innenecken auf die Ebene "Terrain" und baust daraus den ganzen Satz. export mit format godot oder tiled schreibt ihn für die Engine.
+12. Drehen geht mit rotate in jedem Winkel ohne neue Farben; spin mit 360 lässt etwas über die Frames einmal im Kreis drehen. Für Teamfarben oder Skins legst du mit variants Farbvarianten der Figur an, statt sie zu kopieren, und exportierst sie mit variant.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             r#"You are connected to my PixelArt Studio through the MCP server "{name}". I see live in the editor what you draw.
@@ -177,6 +178,7 @@ How to work with it:
 9. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
 10. For glow, lightning, explosions, reflections in water, sparks, smoke, magic and color cycling (flowing water, fire, lava) use effects instead of painting them frame by frame. Each effect sits on its own layer and runs over all frames; frames turns a still image into a loop.
 11. For floors, water and walls in games, create a template with autotile, paint the 2 × 2 block and the inner corner tile on the layer "Terrain" and build the whole set from it. export with format godot or tiled writes it for the engine.
+12. rotate turns by any angle without new colors; spin with 360 turns something once around over the frames. For team colors or skins create color variants of the character with variants instead of copying it, and export them with variant.
 
 Work in small steps and check every intermediate result with view before you continue drawing."#
         )

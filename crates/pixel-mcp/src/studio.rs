@@ -568,7 +568,7 @@ pub struct VariantsParams {
     pub name: Option<String>,
     /// set: replacement colors as {"#from": "#to"}, e.g. {"#3b5dc9": "#b13e53"}. Pixels keep their own opacity. Map a color to itself to drop its replacement.
     pub colors: Option<BTreeMap<String, String>>,
-    /// set: turn the hue of these colors by `hue` degrees, keeping lightness and saturation (quick team colors). Default with `hue`: every color of the character except grays.
+    /// set: turn the hue of these colors by `hue` degrees, keeping lightness and saturation (quick team colors). Default with `hue`: every clearly colorful color of the character (not grays, outline black or highlights).
     pub hue_colors: Option<Vec<String>>,
     /// set: hue turn in degrees for `hue_colors`, e.g. 120 or -90.
     pub hue: Option<f32>,
@@ -3471,7 +3471,7 @@ impl Studio {
                         None => colors
                             .iter()
                             .copied()
-                            .filter(|c| variants::hue_shift(*c, 90.0) != *c)
+                            .filter(|c| variants::is_colorful(*c))
                             .collect(),
                     };
                     v.shift_hue(&list, deg);

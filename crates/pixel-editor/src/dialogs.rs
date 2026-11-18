@@ -37,6 +37,8 @@ pub enum Dialog {
     Normal(Box<NormalForm>),
     Effects(Box<crate::fx_dialog::FxForm>),
     Autotile(Box<crate::tile_dialog::TileForm>),
+    Rotate(Box<crate::rotate_dialog::RotateForm>),
+    Variants(Box<crate::variant_dialog::VariantForm>),
     DeleteProject { name: String, exports: bool },
     ReplaceColor(ReplaceForm),
     Resize(ResizeForm),
@@ -213,6 +215,8 @@ pub struct ExportForm {
     pub note: Option<String>,
     /// Ob ffmpeg für WebM da ist. Wird erst gesucht, wenn WebM gewählt ist.
     pub ffmpeg: Option<bool>,
+    /// Farbvariante der Figur: `None` die Originalfarben, `Some("")` alle Varianten.
+    pub variant: Option<String>,
 }
 
 impl Default for ExportForm {
@@ -227,6 +231,7 @@ impl Default for ExportForm {
             written: Vec::new(),
             note: None,
             ffmpeg: None,
+            variant: None,
         }
     }
 }
@@ -261,6 +266,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Normal(form) => crate::normal_dialog::show(app, ui, form),
             Dialog::Effects(form) => crate::fx_dialog::show(app, ui, form),
             Dialog::Autotile(form) => crate::tile_dialog::show(app, ui, form),
+            Dialog::Rotate(form) => crate::rotate_dialog::show(app, ui, form),
+            Dialog::Variants(form) => crate::variant_dialog::show(app, ui, form),
             Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
             Dialog::ReplaceColor(form) => replace_color(app, ui, form),
             Dialog::Resize(form) => resize(app, ui, form),
@@ -936,6 +943,33 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
             }
         }
     }
+    let variants: Vec<pixel_core::variants::ColorVariant> = doc
+        .character_of(id)
+        .map(|c| doc.variants(c).to_vec())
+        .unwrap_or_default();
+    if !variants.is_empty() {
+        section(ui, tr("Farbvariante", "Color variant"));
+        let label = |v: &Option<String>| match v.as_deref() {
+            None => tr("Originalfarben", "Original colors").to_string(),
+            Some("") => tr("Alle Varianten", "All variants").to_string(),
+            Some(n) => n.to_string(),
+        };
+        egui::ComboBox::from_id_salt("export-variant")
+            .selected_text(label(&f.variant))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut f.variant, None, label(&None));
+                for v in &variants {
+                    ui.selectable_value(&mut f.variant, Some(v.name.clone()), v.name.clone());
+                }
+                ui.selectable_value(
+                    &mut f.variant,
+                    Some(String::new()),
+                    label(&Some(String::new())),
+                );
+            });
+    } else {
+        f.variant = None;
+    }
     if f.kind == ExportKind::Jpg {
         section(ui, "JPG");
         ui.horizontal(|ui| {
@@ -999,7 +1033,38 @@ fn export(app: &mut App, ui: &mut egui::Ui, f: &mut ExportForm) -> Outcome {
         f.ffmpeg = None;
         f.note = None;
         f.written.clear();
-        match doc.export(id, format, frame, f.scale) {
+        let done = match f.variant.as_deref() {
+            None => doc.export(id, format, frame, f.scale),
+            Some(name) => {
+                let mut all: Option<pixel_core::workspace::Exported> = None;
+                let mut result = Ok(());
+                for v in variants
+                    .iter()
+                    .filter(|v| name.is_empty() || v.name == name)
+                {
+                    match doc.export_variant(id, v, format, frame, f.scale) {
+                        Ok(out) => match &mut all {
+                            Some(a) => a.files.extend(out.files),
+                            None => all = Some(out),
+                        },
+                        Err(err) => {
+                            result = Err(err);
+                            break;
+                        }
+                    }
+                }
+                result.and_then(|()| {
+                    all.ok_or_else(|| {
+                        tr(
+                            "Die Variante gibt es nicht mehr",
+                            "The variant no longer exists",
+                        )
+                        .to_string()
+                    })
+                })
+            }
+        };
+        match done {
             Ok(out) => {
                 app.dialog_error = None;
                 if let Some(info) = out.gif.filter(|info| !info.exact) {
