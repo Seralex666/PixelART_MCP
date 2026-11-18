@@ -24,6 +24,7 @@ pub mod effects;
 pub mod error;
 pub mod export;
 pub mod expr;
+pub mod fx;
 pub mod import;
 pub mod lang;
 pub mod layer;

@@ -77,6 +77,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `get_studio_info` | Arbeitsordner, Projekte, Vorlagen, Paletten, Animationsarten |
 | `create_project`, `get_project` | Projekt anlegen, Überblick samt Konstanz-Prüfung und Hinweisen auf Versehen (verirrte Pixel, Lücken im Umriss, Einzelfarben, Kachelränder) |
 | `set_style` | Stil des Projekts: Palette, Lichtrichtung, Umrissfarbe, Notizen; mit `style` ein ganzer Stil aus der Bibliothek |
+| `effects` | Effekte auf eigenen Ebenen, die über die Frames laufen: Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie und Farbzyklen (`preset` water, fire, lava); `frames` macht aus einem Standbild eine Schleife; `list`, `remove`, `freeze` |
 | `styles` | Stil-Bibliothek: feste Stile (8 Bit, 16 Bit, HQ Pixel-Art, Comic, Manga, Burgen) und eigene auflisten, lesen, speichern und löschen |
 | `create_character` | Figur mit fester Größe und gesperrter Palette |
 | `create_animation` | Animation einer Figur; jeder Frame startet als Kopie der Grundpose |

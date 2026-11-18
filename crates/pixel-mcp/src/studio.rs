@@ -9,6 +9,7 @@ use pixel_core::contour::{self, AutoOutline};
 use pixel_core::draw::{self, Target};
 use pixel_core::effects::{self, Area, Flow, Mask, Patch, Pattern, Selection};
 use pixel_core::expr::Expr;
+use pixel_core::fx::{self, AutoEffect, EffectKind};
 use pixel_core::import::{self, Grid, NewColors, Picture, Shrink};
 use pixel_core::light;
 use pixel_core::lint::{self, Checks, Finding};
@@ -505,6 +506,72 @@ pub struct NormalMapOpts {
     pub directx: Option<bool>,
 }
 
+/// Parameters of the `effects` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct EffectsParams {
+    /// Project name.
+    pub project: String,
+    /// Name or id of an image, an animation or a character (its base pose).
+    pub asset: String,
+    /// "add" (default: add an effect, or change the one on `layer`), "list" (the effects of the asset), "remove" (delete an effect with its layer) or "freeze" (keep its layer as a normal layer you can edit by hand, no longer redrawn).
+    pub action: Option<String>,
+    /// Effect type for "add": "glow", "lightning", "explosion", "reflection", "sparks", "smoke", "magic" or "color_cycle". Not needed to change an existing effect named by `layer`.
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
+    /// Layer of the effect. For "add" a new name (default: the type, e.g. "glow", "glow 2") or the layer of an existing effect to change it. For "remove"/"freeze" the effect to remove (or give `type` when there is only one of it).
+    pub layer: Option<String>,
+    /// Make sure the asset has at least this many frames (2 to 64) by repeating its frames, so a still image can glow, spark or flow. Effects loop over all frames. Not for a character's base pose (use an animation).
+    pub frames: Option<u32>,
+    /// Main color: glow color, lightning core color, reflection water color. Default per type.
+    pub color: Option<String>,
+    /// Color list. glow: glow only around pixels of these colors (eyes, a blade, a lamp) instead of around the whole figure. explosion/sparks/smoke/magic: color ramp from start to end of life. color_cycle: the ramp that cycles, in order.
+    pub colors: Option<Vec<String>>,
+    /// color_cycle: a ready ramp "water", "fire" or "lava" instead of `colors`; paint with these colors (see the reply) and they flow.
+    pub preset: Option<String>,
+    /// glow: reach in pixels, 1 to 8 (default 3). explosion: radius of the fireball, 2 to 256 (default half the canvas).
+    pub radius: Option<u32>,
+    /// glow: the glow shrinks by this many pixels and grows back over the loop (0 = steady, default 1; smaller than radius).
+    pub pulse: Option<u32>,
+    /// glow: dithered instead of semi-transparent (always dithered at 8 and 16 bit). Default false.
+    pub dither: Option<bool>,
+    /// lightning: start point [x, y] in canvas pixels (default near the top).
+    pub from: Option<[f32; 2]>,
+    /// lightning: end point [x, y] (default near the bottom).
+    pub to: Option<[f32; 2]>,
+    /// explosion: center [x, y]. sparks/smoke/magic: where the particles come from [x, y]. Defaults: center / lower middle.
+    pub at: Option<[f32; 2]>,
+    /// lightning: color of the 1-pixel glow around the bolt, or "none". Default light blue.
+    pub glow_color: Option<String>,
+    /// lightning: side branches, 0 to 8 (default 2).
+    pub branches: Option<u32>,
+    /// lightning: off in some frames (default true).
+    pub flicker: Option<bool>,
+    /// explosion: first frame (default 0).
+    pub start: Option<u32>,
+    /// explosion: frames it lasts (default 0 = until the last frame).
+    pub length: Option<u32>,
+    /// reflection: first row of the water (default: right below the lowest pixel of the figure).
+    pub line: Option<u32>,
+    /// reflection: how strongly tinted towards `color`, 0 to 100 percent (default 35).
+    pub mix: Option<u8>,
+    /// reflection: opacity 0 to 255 (default 170).
+    pub opacity: Option<u8>,
+    /// reflection: how far waves shift the rows, 0 to 8 pixels (default 1).
+    pub wave: Option<u32>,
+    /// reflection on an image: make the canvas taller when the reflection does not fit (default true). Animations and characters keep their size.
+    pub grow: Option<bool>,
+    /// sparks/smoke/magic: half width of the source in pixels (magic: also half height).
+    pub spread: Option<u32>,
+    /// sparks/smoke/magic: number of particles, 1 to 300.
+    pub count: Option<u32>,
+    /// sparks/smoke/magic: how far particles travel, 0.1 to 5 (default 1). color_cycle: frames per step, 1 to 16 (default 1).
+    pub speed: Option<f32>,
+    /// color_cycle: cycle the other way (default false).
+    pub reverse: Option<bool>,
+    /// Random seed: another number gives other sparks, bolts and explosions. Default 0.
+    pub seed: Option<u64>,
+}
+
 /// Parameters of the `styles` tool.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct StylesParams {
@@ -633,6 +700,8 @@ impl Studio {
                 "name": s.name,
                 "description": s.description,
             })).collect::<Vec<_>>(),
+            "effects": fx::EffectKind::IDS,
+            "color_cycle_presets": fx::CYCLE_PRESETS,
             "shapes": Shape::ALL.iter().map(|s| s.id()).collect::<Vec<_>>(),
             "custom_shapes": self.ws.custom_shapes().iter().map(|s| json!({
                 "name": s.name,
@@ -708,6 +777,9 @@ impl Studio {
             }
             if let Some(l) = s.auto_light() {
                 v["auto_light"] = light_json(l);
+            }
+            if !s.effects().is_empty() {
+                v["effects"] = json!(s.effects());
             }
             let refs: Vec<usize> = (0..s.layer_count())
                 .filter(|&i| s.is_reference(i))
@@ -1908,6 +1980,12 @@ impl Studio {
                 s.layer_names()[l]
             ));
         }
+        if s.is_effect_layer(l) {
+            return Err(format!(
+                "layer {l} ('{}') holds an effect and is redrawn after every change. Draw on another layer, or call effects with action \"freeze\" to keep it as a normal layer you can edit.",
+                s.layer_names()[l]
+            ));
+        }
 
         // Jeden Eintrag von per_frame seinem Frame zuordnen.
         let mut extras: HashMap<usize, &PerFrame> = HashMap::new();
@@ -3051,6 +3129,382 @@ impl Studio {
         })
     }
 
+    // ---------------------------------------------------------------- Effekte
+
+    /// Effekte über die Frames: einrichten, ändern, auflisten, entfernen.
+    pub fn effects(&self, a: &EffectsParams) -> Res {
+        let action = a
+            .action
+            .as_deref()
+            .unwrap_or("add")
+            .trim()
+            .to_ascii_lowercase();
+        if !matches!(action.as_str(), "add" | "list" | "remove" | "freeze") {
+            return Err(format!(
+                "unknown action '{action}', use \"add\", \"list\", \"remove\" or \"freeze\""
+            ));
+        }
+        let (_lock, mut p) = self.load_locked(&a.project)?;
+        let r = Self::resolve(&p, &a.asset)?;
+        let name = Self::asset_name(&p, r);
+        let before = Self::sprite(&p, r)?.clone();
+        if action == "list" {
+            return Ok(Reply::json(json!({
+                "asset": name,
+                "frames": before.frames().len(),
+                "effects": before.effects(),
+                "layers": before.layer_names(),
+                "types": EffectKind::IDS,
+            })));
+        }
+        let wanted_type = a.kind.as_deref().map(|t| t.trim().to_ascii_lowercase());
+        // Die Ebene des gemeinten Effekts: per Name oder, wenn eindeutig, per Art.
+        let existing = match (&a.layer, &wanted_type) {
+            (Some(l), _) => before.effect(l).map(|e| e.layer.clone()),
+            (None, Some(t)) if action != "add" => {
+                let same: Vec<&AutoEffect> = before
+                    .effects()
+                    .iter()
+                    .filter(|e| e.kind.id() == t)
+                    .collect();
+                match same.as_slice() {
+                    [one] => Some(one.layer.clone()),
+                    [] => None,
+                    _ => {
+                        return Err(format!(
+                            "'{name}' has several {t} effects; name one with `layer`: {}",
+                            same.iter()
+                                .map(|e| e.layer.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    }
+                }
+            }
+            _ => None,
+        };
+        if action != "add" {
+            let Some(layer) = existing else {
+                return Err(format!(
+                    "no such effect on '{name}'. Effects: {}",
+                    list_or_none(before.effects().iter().map(|e| e.layer.as_str()))
+                ));
+            };
+            let keep = action == "freeze";
+            let s = Self::sprite_mut(&mut p, r)?;
+            s.remove_effect(&layer, keep).map_err(e)?;
+            s.refresh_outline().map_err(e)?;
+            let after = s.clone();
+            let frames: Vec<usize> = (0..after.frames().len().min(16)).collect();
+            let png = render_plain(&after, &frames, None)?;
+            self.save(&a.project, &mut p)?;
+            self.remember(&a.project, r, before, after)?;
+            return Ok(Reply {
+                text: if keep {
+                    format!("The effect on layer '{layer}' of '{name}' is now a normal layer: it stays as it is and can be edited, but no longer follows changes.")
+                } else {
+                    format!("Removed the effect '{layer}' and its layer from '{name}'.")
+                },
+                image_png: Some(png),
+            });
+        }
+
+        // Hinzufügen oder ändern.
+        let character = matches!(r, AssetRef::Character(_));
+        let mut s = before.clone();
+        let mut notes: Vec<String> = Vec::new();
+        if let Some(n) = a.frames {
+            if character && n > 1 {
+                return Err("a character's base pose has one frame; add moving effects to one of its animations (or to an image)".into());
+            }
+            if !(1..=fx::MAX_FRAMES as u32).contains(&n) {
+                return Err(format!("`frames` must be 1 to {}", fx::MAX_FRAMES));
+            }
+            let added = s.ensure_frames(n as usize).map_err(e)?;
+            if added > 0 {
+                notes.push(format!(
+                    "Added {added} frames (copies of the existing ones) so the effect can move."
+                ));
+            }
+        }
+        let (w, h) = (s.width(), s.height());
+        let mut spec = match &existing {
+            Some(l) => {
+                let old = s.effect(l).cloned().ok_or("effect vanished")?;
+                match &wanted_type {
+                    Some(t) if t != old.kind.id() => AutoEffect {
+                        kind: EffectKind::default_for(t, w, h).ok_or_else(|| unknown_effect(t))?,
+                        ..old
+                    },
+                    _ => old,
+                }
+            }
+            None => {
+                let t = wanted_type
+                    .as_deref()
+                    .ok_or_else(|| format!("`add` needs `type`: {}", EffectKind::IDS.join(", ")))?;
+                let kind = EffectKind::default_for(t, w, h).ok_or_else(|| unknown_effect(t))?;
+                let layer = match &a.layer {
+                    Some(l) if !l.trim().is_empty() => l.trim().to_string(),
+                    _ => s.free_layer_name(&kind.id().replace('_', " ")),
+                };
+                AutoEffect {
+                    layer,
+                    kind,
+                    seed: 0,
+                }
+            }
+        };
+        if let Some(seed) = a.seed {
+            spec.seed = seed;
+        }
+        let colors = |v: &Option<Vec<String>>| -> Res<Option<Vec<Rgba>>> {
+            v.as_ref()
+                .map(|v| v.iter().map(|c| parse_color(c)).collect::<Res<Vec<_>>>())
+                .transpose()
+        };
+        let pt = |v: Option<[f32; 2]>| v.map(|[x, y]| (x, y));
+        let mut unused: Vec<&str> = Vec::new();
+        let mut check_unused = |used: &[&str]| {
+            let given = [
+                ("color", a.color.is_some()),
+                ("colors", a.colors.is_some()),
+                ("preset", a.preset.is_some()),
+                ("radius", a.radius.is_some()),
+                ("pulse", a.pulse.is_some()),
+                ("dither", a.dither.is_some()),
+                ("from", a.from.is_some()),
+                ("to", a.to.is_some()),
+                ("at", a.at.is_some()),
+                ("glow_color", a.glow_color.is_some()),
+                ("branches", a.branches.is_some()),
+                ("flicker", a.flicker.is_some()),
+                ("start", a.start.is_some()),
+                ("length", a.length.is_some()),
+                ("line", a.line.is_some()),
+                ("mix", a.mix.is_some()),
+                ("opacity", a.opacity.is_some()),
+                ("wave", a.wave.is_some()),
+                ("grow", a.grow.is_some()),
+                ("spread", a.spread.is_some()),
+                ("count", a.count.is_some()),
+                ("speed", a.speed.is_some()),
+                ("reverse", a.reverse.is_some()),
+            ];
+            for (k, set) in given {
+                if set && !used.contains(&k) {
+                    unused.push(k);
+                }
+            }
+        };
+        let mut grow_to: Option<u32> = None;
+        match &mut spec.kind {
+            EffectKind::Glow {
+                color,
+                radius,
+                pulse,
+                colors: only,
+                dither,
+            } => {
+                check_unused(&["color", "colors", "radius", "pulse", "dither"]);
+                if let Some(c) = &a.color {
+                    *color = parse_color(c)?;
+                }
+                *radius = a.radius.unwrap_or(*radius);
+                *pulse = a.pulse.unwrap_or((*pulse).min(radius.saturating_sub(1)));
+                if let Some(c) = colors(&a.colors)? {
+                    *only = c;
+                }
+                *dither = a.dither.unwrap_or(*dither);
+            }
+            EffectKind::Lightning {
+                from,
+                to,
+                color,
+                glow,
+                branches,
+                flicker,
+            } => {
+                check_unused(&["color", "from", "to", "glow_color", "branches", "flicker"]);
+                *from = pt(a.from).unwrap_or(*from);
+                *to = pt(a.to).unwrap_or(*to);
+                if let Some(c) = &a.color {
+                    *color = parse_color(c)?;
+                }
+                if let Some(g) = &a.glow_color {
+                    *glow = match g.trim().to_ascii_lowercase().as_str() {
+                        "none" | "" => None,
+                        _ => Some(parse_color(g)?),
+                    };
+                }
+                *branches = a.branches.unwrap_or(*branches);
+                *flicker = a.flicker.unwrap_or(*flicker);
+            }
+            EffectKind::Explosion {
+                at,
+                radius,
+                start,
+                length,
+                colors: ramp,
+            } => {
+                check_unused(&["at", "radius", "start", "length", "colors"]);
+                *at = pt(a.at).unwrap_or(*at);
+                *radius = a.radius.unwrap_or(*radius);
+                *start = a.start.unwrap_or(*start);
+                *length = a.length.unwrap_or(*length);
+                if let Some(c) = colors(&a.colors)? {
+                    *ramp = c;
+                }
+                if s.frames().len() == 1 {
+                    notes.push("With one frame you see a single moment of the explosion; give `frames` (e.g. 8) for the whole blast.".into());
+                }
+            }
+            EffectKind::Reflection {
+                line,
+                color,
+                mix,
+                opacity,
+                wave,
+            } => {
+                check_unused(&["line", "color", "mix", "opacity", "wave", "grow"]);
+                if a.line.is_some() {
+                    *line = a.line;
+                }
+                if let Some(c) = &a.color {
+                    *color = parse_color(c)?;
+                }
+                *mix = a.mix.unwrap_or(*mix);
+                *opacity = a.opacity.unwrap_or(*opacity);
+                *wave = a.wave.unwrap_or(*wave);
+                // Passt das Spiegelbild nicht, wird ein Bild nach unten größer.
+                if let Some(need) = s.reflection_height(*line) {
+                    if need > h {
+                        let image = matches!(r, AssetRef::Image(_));
+                        if image && a.grow.unwrap_or(true) {
+                            grow_to = Some(need.min(pixel_core::MAX_SIZE));
+                        } else {
+                            notes.push(format!(
+                                "The canvas is {h} pixels high but the whole reflection needs {need}; it is cut off.{}",
+                                if image { "" } else { " Make the canvas taller (resize_canvas) for the whole reflection." }
+                            ));
+                        }
+                    }
+                }
+            }
+            EffectKind::Particles {
+                at,
+                spread,
+                count,
+                speed,
+                colors: ramp,
+                ..
+            } => {
+                check_unused(&["at", "spread", "count", "speed", "colors"]);
+                *at = pt(a.at).unwrap_or(*at);
+                *spread = a.spread.unwrap_or(*spread);
+                *count = a.count.unwrap_or(*count);
+                *speed = a.speed.unwrap_or(*speed);
+                if let Some(c) = colors(&a.colors)? {
+                    *ramp = c;
+                }
+            }
+            EffectKind::ColorCycle {
+                colors: ramp,
+                speed,
+                reverse,
+            } => {
+                check_unused(&["colors", "preset", "speed", "reverse"]);
+                match (colors(&a.colors)?, &a.preset) {
+                    (Some(_), Some(_)) => {
+                        return Err("give either `colors` or `preset`, not both".into())
+                    }
+                    (Some(c), None) => *ramp = c,
+                    (None, Some(name)) => {
+                        *ramp = fx::cycle_preset(name).ok_or_else(|| {
+                            format!(
+                                "unknown preset '{name}', use {}",
+                                fx::CYCLE_PRESETS.join(", ")
+                            )
+                        })?
+                    }
+                    (None, None) if existing.is_none() => {
+                        return Err("color_cycle needs `colors` (the ramp, in order, colors that are in the picture) or `preset` (water, fire, lava)".into())
+                    }
+                    (None, None) => {}
+                }
+                if let Some(v) = a.speed {
+                    if v.fract() != 0.0 || !(1.0..=16.0).contains(&v) {
+                        return Err(
+                            "for color_cycle `speed` is frames per step, a whole number 1 to 16"
+                                .into(),
+                        );
+                    }
+                    *speed = v as u32;
+                }
+                *reverse = a.reverse.unwrap_or(*reverse);
+                let used = s.used_colors();
+                let ramp_now: Vec<Rgba> = ramp.iter().map(|&c| s.conform(c)).collect();
+                if !ramp_now.iter().any(|c| used.contains(c)) {
+                    notes.push(format!(
+                        "None of the cycle colors are in the picture yet. Paint the area that should flow with them: {}.",
+                        ramp_now.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+        if !unused.is_empty() {
+            notes.push(format!(
+                "Ignored for {}: {}.",
+                spec.kind.id(),
+                unused.join(", ")
+            ));
+        }
+        if let Some(new_h) = grow_to {
+            s.resize_canvas(w, new_h, 0, 0).map_err(e)?;
+            notes.push(format!(
+                "The canvas grew from {w}×{h} to {w}×{new_h} so the reflection fits."
+            ));
+        }
+        s.set_effect(spec.clone()).map_err(e)?;
+        s.refresh_outline().map_err(e)?;
+        if s.frames().len() == 1 && spec.kind.animates() {
+            notes.push("There is only one frame, so nothing moves yet: call again with `frames` (e.g. 8) or use an animation.".into());
+        }
+        if s.palette.locked {
+            notes.push(
+                "The palette is locked, so the effect uses the nearest palette colors.".into(),
+            );
+        }
+        let after = s.clone();
+        *Self::sprite_mut(&mut p, r)? = s;
+        let frames: Vec<usize> = (0..after.frames().len().min(16)).collect();
+        let png = render_plain(&after, &frames, None)?;
+        self.save(&a.project, &mut p)?;
+        self.remember(&a.project, r, before, after.clone())?;
+        let verb = if existing.is_some() {
+            "Changed"
+        } else {
+            "Added"
+        };
+        let mut text = format!(
+            "{verb} the {} effect on layer '{}' of '{name}' ({} frames). It is redrawn after every change in every frame; keep drawing on the other layers. Layers bottom to top: {}. Settings: {}",
+            spec.kind.id(),
+            spec.layer,
+            after.frames().len(),
+            after.layer_names().join(", "),
+            serde_json::to_string(&spec).unwrap_or_default(),
+        );
+        for n in notes {
+            text.push(' ');
+            text.push_str(&n);
+        }
+        text.push_str(" `undo` takes this back.");
+        Ok(Reply {
+            text,
+            image_png: Some(png),
+        })
+    }
+
     // ---------------------------------------------------------------- Export
 
     #[allow(clippy::too_many_arguments)]
@@ -3263,6 +3717,22 @@ fn preset_json(st: &StylePreset) -> Value {
 }
 
 /// Der Name einer Richtung, wie ihn der Stil speichert.
+fn unknown_effect(t: &str) -> String {
+    format!(
+        "unknown effect type '{t}', use {}",
+        EffectKind::IDS.join(", ")
+    )
+}
+
+fn list_or_none<'a>(it: impl Iterator<Item = &'a str>) -> String {
+    let v: Vec<&str> = it.collect();
+    if v.is_empty() {
+        "none".into()
+    } else {
+        v.join(", ")
+    }
+}
+
 fn after_frames(p: &Project, r: AssetRef) -> usize {
     Studio::sprite(p, r).map_or(1, |s| s.frames().len())
 }

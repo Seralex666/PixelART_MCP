@@ -18,6 +18,8 @@ pub enum Icon {
     Outline,
     /// Knopf „Licht…“.
     Light,
+    /// Knopf „Effekte…“.
+    Effects,
     /// Spiegeln links und rechts.
     MirrorX,
     /// Spiegeln oben und unten.
@@ -31,6 +33,7 @@ impl Icon {
             Icon::Brush,
             Icon::Outline,
             Icon::Light,
+            Icon::Effects,
             Icon::MirrorX,
             Icon::MirrorY,
         ]);
@@ -75,6 +78,24 @@ fn rows(icon: Icon) -> Vec<String> {
             "...y........y...",
             "..y....yy....y..",
             ".......yy.......",
+            "................",
+        ]),
+        Icon::Effects => lines(&[
+            "................",
+            "....c...........",
+            "....c.......y...",
+            "..ccecc....yyy..",
+            "....c.....yywyy.",
+            "....c......yyy..",
+            "............y...",
+            "......#.........",
+            ".....#p#........",
+            "....#ppp#....c..",
+            "...#ppwpp#..cec.",
+            "....#ppp#....c..",
+            ".....#p#........",
+            "......#.........",
+            "................",
             "................",
         ]),
         Icon::Outline => lines(&[

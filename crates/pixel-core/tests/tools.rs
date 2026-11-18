@@ -395,3 +395,41 @@ fn own_styles_are_kept_in_the_save_folder_and_built_in_ones_stay_fixed() {
     assert!(ws.style("Sumpf").is_none());
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn effects_keep_out_of_outline_and_light_and_stay_in_place() {
+    use pixel_core::contour::AutoOutline;
+    use pixel_core::fx::{AutoEffect, EffectKind};
+    let mut s = sprite(32, 32);
+    draw::rect(&mut s, Target::new(0, 0), 12, 8, 8, 14, c("#4060c0"), true).unwrap();
+    s.ensure_frames(6).unwrap();
+    s.set_auto_outline(AutoOutline::new("outline")).unwrap();
+    let outline = s.outline_layer().unwrap();
+    let plain = s.layer(0, outline).unwrap().clone();
+    for id in ["sparks", "glow", "color_cycle"] {
+        let mut e = AutoEffect::new(EffectKind::default_for(id, 32, 32).unwrap());
+        e.layer = id.into();
+        s.set_effect(e).unwrap();
+    }
+    s.set_auto_light(pixel_core::light::AutoLight::new((-20.0, -20.0)))
+        .unwrap();
+    s.refresh_outline().unwrap();
+    let outline = s.outline_layer().unwrap();
+    // Die Farben dürfen sich durch das Licht ändern, die Stellen nicht.
+    let spots = |px: &[Rgba]| px.iter().map(|p| p.a > 0).collect::<Vec<_>>();
+    assert_eq!(
+        spots(s.layer(0, outline).unwrap().pixels()),
+        spots(plain.pixels()),
+        "sparks and glow get no outline"
+    );
+    let names = s.layer_names();
+    let at = |n: &str| names.iter().position(|x| x == n).unwrap();
+    assert_eq!(at("glow"), 0, "glow behind everything");
+    assert_eq!(
+        at("sparks"),
+        names.len() - 1,
+        "sparks stay on top after the light"
+    );
+    assert!(at("color_cycle") < at(s.auto_light().unwrap().shadow_layer.as_str()));
+    assert!(s.is_auto_layer(at("sparks")) && !s.is_auto_layer(at("Ebene 1")));
+}

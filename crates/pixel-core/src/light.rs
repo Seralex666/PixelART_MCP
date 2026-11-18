@@ -293,6 +293,7 @@ impl Sprite {
             }
         }
         self.light = Some(Box::new(spec));
+        self.order_effect_layers()?;
         self.refresh_light()?;
         Ok(())
     }
@@ -330,10 +331,11 @@ impl Sprite {
             return Ok(true);
         };
         let cast = spec.cast.as_ref().and_then(|c| self.layer_index(&c.layer));
-        let skip: Vec<usize> = [Some(lit), Some(dark), cast, self.outline_layer()]
+        let mut skip: Vec<usize> = [Some(lit), Some(dark), cast, self.outline_layer()]
             .into_iter()
             .flatten()
             .collect();
+        skip.extend((0..self.layer_count()).filter(|&l| self.is_effect_layer(l)));
         let frames = self.frames().len();
         let (w, h) = (self.width() as usize, self.height() as usize);
         let contents: Vec<Vec<Rgba>> = (0..frames)
@@ -364,7 +366,7 @@ impl Sprite {
         Ok(changed)
     }
 
-    fn put(&mut self, frame: usize, layer: usize, pixels: Vec<Rgba>) -> Result<bool> {
+    pub(crate) fn put(&mut self, frame: usize, layer: usize, pixels: Vec<Rgba>) -> Result<bool> {
         let pixels: Vec<Rgba> = pixels.into_iter().map(|c| self.conform(c)).collect();
         let l = self.layer_mut(frame, layer)?;
         if l.pixels() == pixels.as_slice() {
@@ -387,7 +389,7 @@ fn darkest(s: &Sprite) -> Rgba {
 }
 
 /// Was beleuchtet wird: alle sichtbaren Ebenen außer `skip` und Vorlagen, übereinander.
-fn content(s: &Sprite, frame: usize, skip: &[usize]) -> Result<Vec<Rgba>> {
+pub(crate) fn content(s: &Sprite, frame: usize, skip: &[usize]) -> Result<Vec<Rgba>> {
     let mut out = vec![Rgba::TRANSPARENT; (s.width() * s.height()) as usize];
     for (i, l) in s.frame(frame)?.layers.iter().enumerate() {
         if skip.contains(&i) || !l.visible || l.opacity == 0 || l.reference {

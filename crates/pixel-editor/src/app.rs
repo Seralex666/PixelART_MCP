@@ -181,6 +181,7 @@ impl App {
             Ok("outline") => app.outline_dialog(),
             Ok("light") => app.light_dialog(),
             Ok("normal") => app.normal_dialog(),
+            Ok("effects") => app.fx_dialog(),
             Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
             Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
             Ok("shape") => app.open_dialog(Dialog::SaveShape {
@@ -840,6 +841,12 @@ impl App {
                     self.light_dialog();
                 }
                 if ui
+                    .add_enabled(has_sel, egui::Button::new(tr("Effekte…", "Effects…")))
+                    .clicked()
+                {
+                    self.fx_dialog();
+                }
+                if ui
                     .add_enabled(
                         has_sel,
                         egui::Button::new(tr("Farbe ersetzen…", "Replace color…")),
@@ -1197,6 +1204,11 @@ impl App {
                     self.light_dialog();
                     ui.close();
                 }
+                if ui.button(tr("Effekte…", "Effects…")).clicked() {
+                    self.select(a.id);
+                    self.fx_dialog();
+                    ui.close();
+                }
                 if ui.button(tr("Umbenennen…", "Rename…")).clicked() {
                     self.open_dialog(Dialog::Rename {
                         id: a.id,
@@ -1259,6 +1271,13 @@ impl App {
         let Some(id) = self.sel else { return };
         if let Some(form) = LightForm::new(self, id) {
             self.open_dialog(Dialog::Light(Box::new(form)));
+        }
+    }
+
+    pub fn fx_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = crate::fx_dialog::FxForm::new(self, id) {
+            self.open_dialog(Dialog::Effects(Box::new(form)));
         }
     }
 
@@ -1383,6 +1402,7 @@ impl App {
         let auto = s.outline_layer();
         let refs: Vec<bool> = (0..s.layer_count()).map(|i| s.is_reference(i)).collect();
         let lights: Vec<bool> = (0..s.layer_count()).map(|i| s.is_light_layer(i)).collect();
+        let effects: Vec<bool> = (0..s.layer_count()).map(|i| s.is_effect_layer(i)).collect();
         let layers: Vec<(String, bool)> = s
             .frame(self.frame)
             .map(|f| {
@@ -1457,6 +1477,11 @@ impl App {
                 Some(tr("automatische Kontur", "automatic outline"))
             } else if lights.get(i).copied().unwrap_or(false) {
                 Some(tr("automatisches Licht", "automatic light"))
+            } else if effects.get(i).copied().unwrap_or(false) {
+                Some(tr(
+                    "Effekt, läuft über die Frames",
+                    "effect, runs over the frames",
+                ))
             } else if refs.get(i).copied().unwrap_or(false) {
                 Some(tr(
                     "Vorlage, nicht im Bild",
@@ -1577,12 +1602,14 @@ impl App {
                     .find(|name| s.layer_index(name).is_none())
                     .unwrap_or_default();
                 let i = s.add_layer(name);
-                match s.outline_layer() {
-                    Some(top) if top + 1 == i => {
+                // Unter die automatischen Ebenen ganz oben (Kontur, Licht, Effekte).
+                let top = (0..i).rev().take_while(|&l| s.is_auto_layer(l)).last();
+                match top {
+                    Some(top) => {
                         s.move_layer(i, top).map_err(|e| e.to_string())?;
                         Ok(top)
                     }
-                    _ => Ok(i),
+                    None => Ok(i),
                 }
             }) {
                 self.layer = i;

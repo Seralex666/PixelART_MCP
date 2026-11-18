@@ -1,8 +1,8 @@
 //! MCP-Anbindung: Parameter-Typen und Werkzeug-Definitionen. Die Logik liegt in `studio`.
 
 use crate::studio::{
-    DrawOp, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs, PerFrame, PixelateArgs, Reply, Res,
-    Studio, StyleArgs, StylesParams, ViewOptions,
+    DrawOp, EffectsParams, ImportArgs, LightArgs, NormalMapOpts, OutlineArgs, PerFrame,
+    PixelateArgs, Reply, Res, Studio, StyleArgs, StylesParams, ViewOptions,
 };
 use base64::Engine;
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
@@ -32,6 +32,7 @@ Consistency rules:
 - To reuse a character in another project use copy_character; it stays pixel-identical.
 
 Styles: when the user names a style ("in manga style", "8 bit"), look it up with styles(action: "get") or pass it as `style` to set_style, create_image or create_character, and follow its rules, palette, shades and outline exactly. Own styles can be saved with styles(action: "save").
+Effects: for glow, lightning, an explosion, a reflection in water, sparks, smoke, magic sparkles or color cycling (flowing water, flickering fire, lava) use the effects tool rather than drawing them frame by frame. Each effect sits on its own layer, loops over the frames and follows every change; `frames` turns a still image into a loop first. For color_cycle paint the flowing area with the ramp colors (a `preset` like "water" names them) and the colors move.
 
 Pixel art craft: keep outlines 1 pixel wide, use few colors (3 to 5 shades per material), avoid single stray pixels, light from one direction, and keep the silhouette readable at 1× size."##;
 
@@ -866,6 +867,14 @@ impl PixelServer {
                 cast_color: a.cast_color.as_deref(),
             })
         })
+    }
+
+    #[tool(
+        description = "Effects that run over the frames of an image, an animation or a character's base pose, each on its own layer and redrawn after every change, like the automatic outline: \"glow\" (a pulsing halo behind the figure, or with `colors` only around glowing parts like eyes or a blade), \"lightning\" (a jagged flickering bolt from `from` to `to` with branches), \"explosion\" (flash, fireball, debris and smoke around `at`, played once), \"reflection\" (a tinted mirror image in water below the figure with moving waves), \"sparks\", \"smoke\" and \"magic\" (looping particles from `at`) and \"color_cycle\" (palette animation: pixels of the given ramp colors shift one color per step, for flowing water, flickering fire, glowing lava; `preset` gives ready ramps to paint with). Use `frames` to turn a still image into a loop first. Calling again with the effect's `layer` changes only the options given; action \"list\", \"remove\" or \"freeze\". Returns a preview of the frames.",
+        annotations(title = "Effects and color cycling", destructive_hint = false)
+    )]
+    fn effects(&self, Parameters(a): Parameters<EffectsParams>) -> CallToolResult {
+        self.run(|s| s.effects(&a))
     }
 
     #[tool(

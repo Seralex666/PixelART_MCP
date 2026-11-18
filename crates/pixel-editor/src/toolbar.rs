@@ -117,6 +117,25 @@ impl App {
             {
                 self.light_dialog();
             }
+            let has_fx = self.sprite().is_some_and(|s| !s.effects().is_empty());
+            let tex = self.icons.icon(ui.ctx(), Icon::Effects);
+            if ui
+                .add_enabled(
+                    self.sel.is_some(),
+                    egui::Button::image_and_text(
+                        (tex, egui::vec2(ICON, ICON)),
+                        tr("Effekte…", "Effects…"),
+                    )
+                    .selected(has_fx),
+                )
+                .on_hover_text(tr(
+                    "Leuchten, Blitz, Explosion, Spiegelung, Funken, Rauch, Magie und Farbzyklen über die Frames",
+                    "Glow, lightning, explosion, reflection, sparks, smoke, magic and color cycling over the frames",
+                ))
+                .clicked()
+            {
+                self.fx_dialog();
+            }
             ui.separator();
 
             if ui

@@ -162,6 +162,7 @@ fn lists_all_tools_with_schemas() {
         "export",
         "set_light",
         "styles",
+        "effects",
         "import_image",
         "undo",
         "set_style",
@@ -2090,4 +2091,111 @@ fn normal_maps_are_exported_next_to_the_colors() {
         .unwrap()
         .ends_with("Stein-01_n.png"));
     assert!(dir.join("Stein-01.png").exists());
+}
+
+#[test]
+fn effects_loop_over_the_frames_on_their_own_layers() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "F"}));
+    c.ok(
+        "create_image",
+        json!({"project": "F", "name": "Fee", "width": 16, "height": 16}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "F", "asset": "Fee",
+               "ops": [{"op": "rect", "x": 5, "y": 4, "w": 6, "h": 8, "color": "#6080e0", "filled": true}]}),
+    );
+    let r = c.ok(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "type": "glow", "frames": 6, "color": "#ffe060"}),
+    );
+    assert!(r.image.is_some(), "a preview comes back");
+    assert!(r.text.contains("Added 5 frames"), "{}", r.text);
+    let list = c.json(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "action": "list"}),
+    );
+    assert_eq!(list["frames"], 6);
+    assert_eq!(list["effects"][0]["type"], "glow");
+    assert_eq!(list["effects"][0]["layer"], "glow");
+    assert_eq!(list["layers"][0], "glow", "the glow sits behind the figure");
+
+    // Effect layers are drawn by the effect, not by hand.
+    let err = c.err(
+        "draw",
+        json!({"project": "F", "asset": "Fee", "layer": "glow",
+               "ops": [{"op": "rect", "x": 0, "y": 0, "w": 1, "h": 1, "color": "#ffffff", "filled": true}]}),
+    );
+    assert!(err.contains("holds an effect"), "{err}");
+
+    // A reflection that does not fit makes an image taller.
+    let r = c.ok(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "type": "reflection", "wave": 1}),
+    );
+    assert!(
+        r.text.contains("canvas grew from 16×16 to 16×20"),
+        "{}",
+        r.text
+    );
+
+    // Color cycles need their ramp and say when the picture lacks it.
+    let err = c.err(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "type": "color_cycle"}),
+    );
+    assert!(err.contains("`colors`"), "{err}");
+    let r = c.ok(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "type": "color_cycle", "preset": "water", "speed": 2}),
+    );
+    assert!(r.text.contains("None of the cycle colors"), "{}", r.text);
+
+    // Changing an effect keeps the rest of its settings; unknown options are named.
+    let r = c.ok(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "layer": "glow", "radius": 5, "count": 3}),
+    );
+    assert!(r.text.starts_with("Changed the glow effect"), "{}", r.text);
+    assert!(
+        r.text.contains("\"radius\":5") && r.text.contains("#ffe060"),
+        "{}",
+        r.text
+    );
+    assert!(r.text.contains("Ignored for glow: count"), "{}", r.text);
+    let err = c.err(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "type": "fireworks"}),
+    );
+    assert!(err.contains("unknown effect type"), "{err}");
+
+    // Remove, then undo brings it back.
+    c.ok(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "action": "remove", "type": "glow"}),
+    );
+    let list = c.json(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "action": "list"}),
+    );
+    assert_eq!(list["effects"].as_array().unwrap().len(), 2);
+    assert!(!list["layers"].to_string().contains("\"glow\""));
+    c.ok("undo", json!({"project": "F"}));
+    let list = c.json(
+        "effects",
+        json!({"project": "F", "asset": "Fee", "action": "list"}),
+    );
+    assert_eq!(list["effects"].as_array().unwrap().len(), 3);
+
+    // A character's base pose stays one frame.
+    c.ok(
+        "create_character",
+        json!({"project": "F", "name": "Held", "width": 16, "height": 16, "palette": ["#203040", "#e0a060"]}),
+    );
+    let err = c.err(
+        "effects",
+        json!({"project": "F", "asset": "Held", "type": "sparks", "frames": 8}),
+    );
+    assert!(err.contains("base pose has one frame"), "{err}");
 }
