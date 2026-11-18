@@ -1,7 +1,7 @@
 //! Das Hauptfenster: Zustand des Editors und die Leisten rund um die Leinwand.
 
 use crate::canvas;
-use crate::dialogs::{self, Dialog, ExportForm, NewAnimation, NewSprite, SettingsForm};
+use crate::dialogs::{self, Dialog, ExportForm, NewAnimation, NewSprite};
 use crate::doc::{AssetEntry, AssetId, AssetKind, Doc, Res};
 use crate::help;
 use crate::icons::Icons;
@@ -10,6 +10,7 @@ use crate::light_dialog::LightForm;
 use crate::outline_dialog::OutlineForm;
 use crate::selection::FloatKey;
 use crate::settings::Settings;
+use crate::settings_dialog::{SettingsForm, SettingsTab};
 use crate::tools::{Brush, Lifted, ShapeChoice, Stroke, Tool};
 use eframe::egui::{self, Color32, Key, RichText, Sense, StrokeKind};
 use pixel_core::draw::{self, Target};
@@ -164,12 +165,22 @@ impl App {
         };
         app.open_latest(project);
         match std::env::var("PIXELART_SHOT_DIALOG").as_deref() {
-            Ok("connect") => app.dialog = Dialog::Connect,
+            Ok("connect") => {
+                app.dialog = Dialog::Settings(Box::new(SettingsForm::at(&app, SettingsTab::Claude)))
+            }
+            Ok("styles") => {
+                app.dialog = Dialog::Settings(Box::new(SettingsForm::at(&app, SettingsTab::Styles)))
+            }
+            Ok("tips") => {
+                app.dialog = Dialog::Settings(Box::new(SettingsForm::at(&app, SettingsTab::Tips)))
+            }
+            Ok("about") => app.dialog = Dialog::About,
             Ok("export") => app.dialog = Dialog::Export(ExportForm::default()),
-            Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::new(true)),
-            Ok("settings") => app.dialog = Dialog::Settings(SettingsForm::new(&app)),
+            Ok("character") => app.dialog = Dialog::NewSprite(NewSprite::for_project(true, &app)),
+            Ok("settings") => app.dialog = Dialog::Settings(Box::new(SettingsForm::new(&app))),
             Ok("outline") => app.outline_dialog(),
             Ok("light") => app.light_dialog(),
+            Ok("normal") => app.normal_dialog(),
             Ok("resize") => app.open_dialog(Dialog::Resize(dialogs::ResizeForm::new(&app))),
             Ok("replace") => app.open_dialog(Dialog::ReplaceColor(dialogs::ReplaceForm::new(&app))),
             Ok("shape") => app.open_dialog(Dialog::SaveShape {
@@ -672,7 +683,7 @@ impl App {
                     )
                     .clicked()
                 {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(true, self)));
                 }
                 if ui
                     .add_enabled(
@@ -687,7 +698,7 @@ impl App {
                     .add_enabled(has_doc, egui::Button::new(tr("Neues Bild…", "New image…")))
                     .clicked()
                 {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(false, self)));
                 }
                 ui.separator();
                 if ui
@@ -707,6 +718,16 @@ impl App {
                     .clicked()
                 {
                     self.open_dialog(Dialog::Export(ExportForm::default()));
+                }
+                if ui
+                    .add_enabled(has_sel, egui::Button::new(tr("Normal Map…", "Normal map…")))
+                    .on_hover_text(tr(
+                        "Normal Maps für Licht in Spiel-Engines wie Godot und Unity",
+                        "Normal maps for lighting in game engines like Godot and Unity",
+                    ))
+                    .clicked()
+                {
+                    self.normal_dialog();
                 }
                 if ui
                     .add_enabled(
@@ -731,7 +752,7 @@ impl App {
                 }
                 if ui.button(tr("Einstellungen…", "Settings…")).clicked() {
                     let form = SettingsForm::new(self);
-                    self.open_dialog(Dialog::Settings(form));
+                    self.open_dialog(Dialog::Settings(Box::new(form)));
                 }
                 ui.separator();
                 if ui.button(tr("Beenden", "Quit")).clicked() {
@@ -888,7 +909,8 @@ impl App {
                     .button(tr("Mit Claude verbinden…", "Connect to Claude…"))
                     .clicked()
                 {
-                    self.open_dialog(Dialog::Connect);
+                    let form = SettingsForm::at(self, SettingsTab::Claude);
+                    self.open_dialog(Dialog::Settings(Box::new(form)));
                 }
                 if ui
                     .button(tr("Tastenkürzel", "Keyboard shortcuts"))
@@ -903,46 +925,6 @@ impl App {
                     self.open_dialog(Dialog::About);
                 }
             });
-
-            ui.separator();
-            ui.label(tr("Projekt:", "Project:"));
-            let current = self
-                .doc
-                .as_ref()
-                .map_or(tr("(keins)", "(none)").to_string(), |d| {
-                    d.name().to_string()
-                });
-            let mut open = None;
-            let mut delete = None;
-            egui::ComboBox::from_id_salt("project")
-                .selected_text(current.clone())
-                .show_ui(ui, |ui| {
-                    for name in &self.projects {
-                        let resp = ui
-                            .selectable_label(*name == current, name)
-                            .on_hover_text(tr("Rechtsklick zum Löschen", "Right-click to delete"));
-                        if resp.clicked() {
-                            open = Some(name.clone());
-                        }
-                        resp.context_menu(|ui| {
-                            if ui.button(tr("Löschen…", "Delete…")).clicked() {
-                                delete = Some(name.clone());
-                                ui.close();
-                            }
-                        });
-                    }
-                });
-            if let Some(name) = open {
-                if name != current {
-                    self.open_project(&name);
-                }
-            }
-            if let Some(name) = delete {
-                self.open_dialog(Dialog::DeleteProject {
-                    name,
-                    exports: false,
-                });
-            }
         });
     }
 
@@ -1015,9 +997,58 @@ impl App {
 
     // ------------------------------------------------------------ Assets
 
+    /// Projektauswahl oben links über der Liste der Figuren und Bilder.
+    /// Rechtsklick auf ein Projekt bietet Löschen an.
+    fn project_picker(&mut self, ui: &mut egui::Ui) {
+        ui.weak(tr("Projekt", "Project"));
+        let current = self
+            .doc
+            .as_ref()
+            .map_or(tr("(keins)", "(none)").to_string(), |d| {
+                d.name().to_string()
+            });
+        let mut open = None;
+        let mut delete = None;
+        egui::ComboBox::from_id_salt("project")
+            .selected_text(RichText::new(current.clone()).strong())
+            .width(ui.available_width())
+            .show_ui(ui, |ui| {
+                for name in &self.projects {
+                    let resp = ui
+                        .selectable_label(*name == current, name)
+                        .on_hover_text(tr("Rechtsklick zum Löschen", "Right-click to delete"));
+                    if resp.clicked() {
+                        open = Some(name.clone());
+                    }
+                    resp.context_menu(|ui| {
+                        if ui.button(tr("Löschen…", "Delete…")).clicked() {
+                            delete = Some(name.clone());
+                            ui.close();
+                        }
+                    });
+                }
+            });
+        if let Some(name) = open {
+            if name != current {
+                self.open_project(&name);
+            }
+        }
+        if let Some(name) = delete {
+            self.open_dialog(Dialog::DeleteProject {
+                name,
+                exports: false,
+            });
+        }
+        ui.add_space(4.0);
+        ui.separator();
+    }
+
     fn asset_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.spacing_mut().button_padding = egui::vec2(8.0, 5.0);
+        if !self.projects.is_empty() {
+            self.project_picker(ui);
+        }
         if self.doc.is_none() {
             ui.label(tr("Noch kein Projekt geöffnet.", "No project open yet."));
             ui.add_space(4.0);
@@ -1039,7 +1070,7 @@ impl App {
                 let width = ui.available_width();
                 let wide = |text: &str| egui::Button::new(text).min_size(egui::vec2(width, 0.0));
                 if ui.add(wide(tr("+ Figur", "+ Character"))).clicked() {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(true)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(true, self)));
                 }
                 if has_character
                     && ui
@@ -1053,7 +1084,7 @@ impl App {
                     self.new_animation_dialog(None);
                 }
                 if ui.add(wide(tr("+ Bild", "+ Image"))).clicked() {
-                    self.open_dialog(Dialog::NewSprite(NewSprite::new(false)));
+                    self.open_dialog(Dialog::NewSprite(NewSprite::for_project(false, self)));
                 }
                 if ui
                     .add(wide(tr("Bild importieren…", "Import image…")))
@@ -1178,6 +1209,11 @@ impl App {
                     self.open_dialog(Dialog::Export(ExportForm::default()));
                     ui.close();
                 }
+                if ui.button(tr("Normal Map…", "Normal map…")).clicked() {
+                    self.select(a.id);
+                    self.normal_dialog();
+                    ui.close();
+                }
                 if ui.button(tr("Löschen…", "Delete…")).clicked() {
                     self.open_dialog(Dialog::Delete(a.id));
                     ui.close();
@@ -1223,6 +1259,13 @@ impl App {
         let Some(id) = self.sel else { return };
         if let Some(form) = LightForm::new(self, id) {
             self.open_dialog(Dialog::Light(Box::new(form)));
+        }
+    }
+
+    pub fn normal_dialog(&mut self) {
+        let Some(id) = self.sel else { return };
+        if let Some(form) = crate::normal_dialog::NormalForm::new(self, id) {
+            self.open_dialog(Dialog::Normal(Box::new(form)));
         }
     }
 

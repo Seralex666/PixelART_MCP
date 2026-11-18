@@ -51,12 +51,27 @@ Schatten auf den Boden, der vom Licht wegfällt. Wie die Kontur folgt alles jede
 
 ![Der Dialog Licht und Schatten mit Lichtpfad und Schlagschatten](docs/images/licht.png)
 
+### Stile: Manga, Comic, 8 Bit und eigene
+
+Eine Stil-Bibliothek mit Comic, Manga, Burgen, 8 Bit, 16 Bit und HQ Pixel-Art. Jeder Stil legt Palette,
+Farbtiefe, Größen, Umriss, Schattierung und Regeln fest. Sag Claude einfach „im Stil Manga“, dann hält es sich
+genau daran. Eigene Stile legst du in den Einstellungen an, sie gelten in allen Projekten.
+
+![Die Stil-Bibliothek in den Einstellungen](docs/images/stile.png)
+
+### Normal Maps für Licht im Spiel
+
+Aus jedem Bild und jeder Animation entsteht auf Knopfdruck eine Normal Map, mit der Godot oder Unity deine
+Pixel-Art live beleuchten. In der Vorschau folgt eine Lampe der Maus.
+
+![Normal Map mit Lampe, die der Maus folgt](docs/images/normalmap.png)
+
 ### Claude zeichnet mit
 
-Das Studio ist zugleich ein MCP-Server mit 26 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
+Das Studio ist zugleich ein MCP-Server mit 27 Werkzeugen. Claude legt Figuren an, zeichnet mit Formen,
 Verläufen, Licht und Schatten, wandelt Fotos um und prüft das Ergebnis, alles in denselben Projektdateien,
 die du im Editor offen hast. Der Editor zeigt Claudes Änderungen nach kurzer Zeit, und Rückgängig nimmt sie
-auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor.
+auch wieder zurück. Einrichten: **Datei › Einstellungen › Claude verbinden** im Editor.
 
 ## Ziele
 
@@ -72,7 +87,7 @@ auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor
 | Schritt | Inhalt | Status |
 |---|---|---|
 | 1 | `pixel-core`: Datenmodell, Zeichenwerkzeuge, Projektformat, PNG/JPG/Sheet-Export | fertig |
-| 2 | `pixel-mcp`: MCP-Server mit 26 Werkzeugen für Claude und andere MCP-Clients | fertig |
+| 2 | `pixel-mcp`: MCP-Server mit 27 Werkzeugen für Claude und andere MCP-Clients | fertig |
 | 3 | `pixel-editor`: Editor mit Leinwand, Werkzeugen, Ebenen, Timeline, Export und Live-Abgleich mit Claude | fertig |
 | 4 | GIF- und WebM-Export, indizierte PNGs | fertig |
 | 5 | Import von PNG, JPG, GIF und Spritesheets im Editor und über MCP | fertig |
@@ -83,6 +98,7 @@ auch wieder zurück. Einrichten: **Hilfe › Mit Claude verbinden…** im Editor
 | 10 | Formen und eigene Formen, Sprühdose, Aufhellen/Abdunkeln, Auswahl, Spiegeln, Pixel-perfekt, Farbe ersetzen, Leinwandgröße, Paletten mit 32 und 64 Farben | fertig |
 | 1.0 Beta | Fotos und Zeichnungen in Pixel-Art umwandeln, Vorlage-Ebene zum Nachzeichnen, Feature-Übersicht | fertig |
 | 1.1 | Licht und Schatten, die über die Frames wandern, Schlagschatten am Boden | fertig |
+| 1.2 | Stil-Bibliothek (Comic, Manga, Burgen, 8 Bit, 16 Bit, HQ) und eigene Stile, Einstellungen mit Tabs, Normal Maps | fertig |
 
 ## Aufbau
 
@@ -186,6 +202,14 @@ zeichnest oder Claude. Claude benutzt dafür `set_outline`. Die Kontur ist freiw
 - **Festschreiben** macht aus der Kontur eine normale Ebene zum Nachbessern, **Entfernen** löscht sie.
   Neue Animationen einer Figur übernehmen ihre Kontur.
 
+## Normal Maps
+
+Über **Datei › Normal Map…** (oder Rechtsklick auf ein Asset) entsteht aus jedem Frame eine Normal Map. Die Form
+kommt aus dem Rand der Figur (Wölbung und Stärke einstellbar), auf Wunsch tragen helle und dunkle Farben Details bei.
+Die Vorschau beleuchtet das Bild mit einer Lampe, die der Maus folgt. Exportiert wird als PNG je Frame oder als
+Spritesheet, mit demselben Namen wie das Farbbild und `_n` vor der Endung, in OpenGL-Art (wie Godot und Unity sie
+erwarten; DirectX-Art auf Wunsch). Claude benutzt dafür `export` mit `normal_map`.
+
 ## Licht und Schatten
 
 Über **Licht…** (Werkzeugleiste, Menü Bearbeiten oder Rechtsklick auf ein Asset) bekommt ein Bild, eine
@@ -205,6 +229,10 @@ Ebenen und wird nach jeder Änderung in allen Frames neu gezeichnet.
 
 ## Stil, Paletten und Prüf-Hinweise
 
+- **Stil-Bibliothek** (`styles`): feste Stile (8 Bit, 16 Bit, HQ Pixel-Art, Comic, Manga, Burgen) und eigene im
+  Speicherordner unter `styles`. Ein Stil bringt Palette, Farbtiefe, Größen, Umriss, Schattierung und Regeln mit;
+  `create_image`, `create_character` und `set_style` nehmen ihn mit `style`, etwa `"style": "manga"`. Im Editor
+  stehen die Stile unter Datei › Einstellungen › Stile, dort legst du auch eigene an.
 - **Projekt-Stil** (`set_style`): Palette, Lichtrichtung, Umrissfarbe und Notizen für ein ganzes Projekt.
   Neue Bilder und Figuren starten mit der Palette, `shade` und `outline` nehmen Licht und Umrissfarbe von
   dort, wenn ein Aufruf sie nicht nennt. Alte Projekte ohne Stil laden wie bisher.
@@ -277,7 +305,7 @@ Hand, oder du legst `ffmpeg.exe` neben das Programm. Gesucht wird in dieser Reih
 
 ## Mit Claude verbinden
 
-Im Editor unter **Hilfe › Mit Claude verbinden…** stehen alle Angaben mit den Pfaden deines Rechners,
+Im Editor unter **Datei › Einstellungen › Claude verbinden** (oder Hilfe › Mit Claude verbinden…) stehen alle Angaben mit den Pfaden deines Rechners,
 dazu ein fertiger Prompt, mit dem Claude die Verbindung selbst einrichtet. Dieselbe Anleitung zum
 Nachlesen: [docs/MCP-EINRICHTUNG.md](docs/MCP-EINRICHTUNG.md).
 

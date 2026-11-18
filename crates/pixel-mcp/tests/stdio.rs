@@ -117,6 +117,12 @@ impl Client {
         );
         r.text
     }
+
+    fn json(&mut self, tool: &str, args: Value) -> Value {
+        let r = self.ok(tool, args);
+        serde_json::from_str(&r.text)
+            .unwrap_or_else(|_| panic!("{tool} returned no JSON: {}", r.text))
+    }
 }
 
 impl Drop for Client {
@@ -155,6 +161,7 @@ fn lists_all_tools_with_schemas() {
         "add_character_colors",
         "export",
         "set_light",
+        "styles",
         "import_image",
         "undo",
         "set_style",
@@ -1960,4 +1967,127 @@ fn light_follows_a_path_over_the_frames() {
     );
     let r = c.ok("view", json!({"project": "L", "asset": "Ball"}));
     assert!(r.text.contains("layers: Ebene 1."), "{}", r.text);
+}
+
+#[test]
+fn styles_come_from_the_library_by_name_and_own_ones_can_be_saved() {
+    let mut c = Client::start();
+    let list = c.ok("styles", json!({}));
+    for name in [
+        "8 Bit",
+        "16 Bit",
+        "HQ Pixel Art",
+        "Comic",
+        "Manga",
+        "Castles",
+    ] {
+        assert!(list.text.contains(name), "{name}: {}", list.text);
+    }
+    let manga = c.json("styles", json!({"action": "get", "name": "manga"}));
+    assert_eq!(manga["name"], "Manga");
+    assert_eq!(manga["outline_color"], "#000000");
+    assert!(manga["rules"].as_array().unwrap().len() >= 3);
+
+    // A new image in a style gets its palette, depth and usual size.
+    c.ok("create_project", json!({"project": "S"}));
+    let r = c.ok(
+        "create_image",
+        json!({"project": "S", "name": "Held", "style": "8bit"}),
+    );
+    assert!(r.text.contains("(16×16, 8 bit)"), "{}", r.text);
+    assert!(r.text.contains("Style '8 Bit'"), "{}", r.text);
+    let ch = c.json(
+        "create_character",
+        json!({"project": "S", "name": "Ritter", "width": 32, "height": 32, "style": "Burgen"}),
+    );
+    assert_eq!(ch["style_guide"]["name"], "Castles");
+    assert_eq!(ch["color_depth_bits"], 16);
+
+    // The whole project in one style: get_project shows the guide.
+    c.ok("set_style", json!({"project": "S", "style": "Comic"}));
+    let p = c.json("get_project", json!({"project": "S"}));
+    assert_eq!(p["style"]["style"], "Comic");
+    assert_eq!(p["style_guide"]["outline_width"], 2);
+
+    // Own styles: based on a built-in one, changed, used and deleted.
+    let own = c.json(
+        "styles",
+        json!({"action": "save", "name": "Sumpf", "based_on": "16 bit",
+               "palette": ["#1a2a1a", "#3a5a2a", "#7a9a4a", "#5a4a2a"],
+               "rules": ["muddy greens and browns"], "shades": 3}),
+    );
+    assert_eq!(own["built_in"], false);
+    assert_eq!(own["outline"], "selective");
+    let got = c.json("styles", json!({"action": "get", "name": "sumpf"}));
+    assert_eq!(got["palette"].as_array().unwrap().len(), 4);
+    assert_eq!(got["rules"][0], "muddy greens and browns");
+    let err = c.err("styles", json!({"action": "save", "name": "Manga"}));
+    assert!(err.contains("built-in"), "{err}");
+    let err = c.err(
+        "create_image",
+        json!({"project": "S", "name": "X", "style": "Aquarell"}),
+    );
+    assert!(err.contains("Styles: 8 Bit"), "{err}");
+    c.ok("styles", json!({"action": "delete", "name": "Sumpf"}));
+    let err = c.err("styles", json!({"action": "get", "name": "Sumpf"}));
+    assert!(err.contains("unknown style"), "{err}");
+}
+
+#[test]
+fn normal_maps_are_exported_next_to_the_colors() {
+    let mut c = Client::start();
+    c.ok("create_project", json!({"project": "N"}));
+    c.ok(
+        "create_image",
+        json!({"project": "N", "name": "Stein", "width": 12, "height": 12, "frames": 2,
+               "palette": ["#404050", "#808090"]}),
+    );
+    c.ok(
+        "draw",
+        json!({"project": "N", "asset": "Stein", "frame": "all",
+               "ops": [{"op": "rect", "x": 2, "y": 2, "w": 8, "h": 8, "color": "#808090", "filled": true}]}),
+    );
+    let r = c.ok(
+        "export",
+        json!({"project": "N", "asset": "Stein", "format": "sheet", "normal_map": {"bevel": 2}}),
+    );
+    assert!(r.image.is_some(), "a preview comes back");
+    let v: Value = serde_json::from_str(&r.text).unwrap();
+    let file = v["normal_map_files"][0].as_str().unwrap();
+    assert!(file.ends_with("Stein-sheet_n.png"), "{file}");
+    let img = image::open(file).unwrap().to_rgba8();
+    assert_eq!(img.dimensions(), (24, 12), "both frames in the sheet");
+    let left = img.get_pixel(2, 6);
+    let right = img.get_pixel(9, 6);
+    assert!(left[0] < 100 && right[0] > 156, "{left:?} {right:?}");
+    assert_eq!(img.get_pixel(0, 0)[3], 0);
+    let err = c.err(
+        "export",
+        json!({"project": "N", "asset": "Stein", "format": "gif", "normal_map": {}}),
+    );
+    assert!(err.contains("png or sheet"), "{err}");
+
+    // Wrong options write nothing at all.
+    let dir = std::path::Path::new(file).parent().unwrap().to_path_buf();
+    let err = c.err(
+        "export",
+        json!({"project": "N", "asset": "Stein", "format": "png", "normal_map": {"bevel": 0}}),
+    );
+    assert!(err.contains("bevel"), "{err}");
+    assert!(!dir.join("Stein-00.png").exists());
+    // One frame gives one normal map, named like its color file.
+    let one: Value = serde_json::from_str(
+        &c.ok(
+            "export",
+            json!({"project": "N", "asset": "Stein", "format": "png", "frame": 1, "normal_map": {}}),
+        )
+        .text,
+    )
+    .unwrap();
+    assert_eq!(one["normal_map_files"].as_array().unwrap().len(), 1);
+    assert!(one["normal_map_files"][0]
+        .as_str()
+        .unwrap()
+        .ends_with("Stein-01_n.png"));
+    assert!(dir.join("Stein-01.png").exists());
 }

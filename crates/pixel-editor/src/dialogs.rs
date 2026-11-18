@@ -6,11 +6,13 @@ use crate::doc::{AssetId, AssetKind, Res};
 use crate::help::{self, ConnectInfo};
 use crate::import_dialog::{self, ImportForm};
 use crate::light_dialog::LightForm;
+use crate::normal_dialog::NormalForm;
 use crate::outline_dialog::OutlineForm;
+use crate::settings_dialog::SettingsForm;
 use crate::tools::Tool;
 use eframe::egui::{self, RichText};
 use pixel_core::export::MAX_SCALE;
-use pixel_core::lang::{tr, Lang};
+use pixel_core::lang::tr;
 use pixel_core::trf;
 use pixel_core::workspace::ExportFormat;
 use pixel_core::{AnimationKind, ColorDepth, Palette, Rgba, MAX_SIZE, TEMPLATES};
@@ -27,31 +29,16 @@ pub enum Dialog {
     Delete(AssetId),
     Export(ExportForm),
     Import(Box<ImportForm>),
-    Connect,
     Shortcuts,
     About,
-    Settings(SettingsForm),
+    Settings(Box<SettingsForm>),
     Outline(Box<OutlineForm>),
     Light(Box<LightForm>),
+    Normal(Box<NormalForm>),
     DeleteProject { name: String, exports: bool },
     ReplaceColor(ReplaceForm),
     Resize(ResizeForm),
     SaveShape { name: String },
-}
-
-/// Formular für Datei → Einstellungen.
-pub struct SettingsForm {
-    pub home: String,
-    pub lang: Lang,
-}
-
-impl SettingsForm {
-    pub fn new(app: &App) -> Self {
-        Self {
-            home: app.ws.home().display().to_string(),
-            lang: pixel_core::lang::get(),
-        }
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -141,6 +128,28 @@ impl NewSprite {
             image_colors: None,
             image_max: 32,
         }
+    }
+
+    /// Wie [`NewSprite::new`], aber mit dem Stil des Projekts: dessen Palette und,
+    /// wenn er aus der Bibliothek stammt, Farbtiefe und übliche Größe.
+    pub fn for_project(character: bool, app: &App) -> Self {
+        let mut form = Self::new(character);
+        let Some(doc) = &app.doc else {
+            return form;
+        };
+        let style = &doc.project().style;
+        if !style.palette.is_empty() {
+            form.palette = PalettePreset::Style;
+        }
+        if let Some(preset) = style.preset.as_deref().and_then(|n| app.ws.style(n)) {
+            form.bits = preset.color_depth;
+            if let Some([w, h]) = preset.sizes.first().copied() {
+                form.template = None;
+                form.width = w;
+                form.height = h;
+            }
+        }
+        form
     }
 }
 
@@ -242,12 +251,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             Dialog::Delete(id) => delete(app, ui, *id),
             Dialog::Export(form) => export(app, ui, form),
             Dialog::Import(form) => import_dialog::show(app, ui, form),
-            Dialog::Connect => connect(app, ui),
             Dialog::Shortcuts => shortcuts(ui),
-            Dialog::About => about(app, ui),
-            Dialog::Settings(form) => settings(app, ui, form),
+            Dialog::About => about(ui),
+            Dialog::Settings(form) => crate::settings_dialog::show(app, ui, form),
             Dialog::Outline(form) => crate::outline_dialog::show(app, ui, form),
             Dialog::Light(form) => crate::light_dialog::show(app, ui, form),
+            Dialog::Normal(form) => crate::normal_dialog::show(app, ui, form),
             Dialog::DeleteProject { name, exports } => delete_project(app, ui, name, exports),
             Dialog::ReplaceColor(form) => replace_color(app, ui, form),
             Dialog::Resize(form) => resize(app, ui, form),
@@ -1031,11 +1040,10 @@ fn copy_block(app: &mut App, ui: &mut egui::Ui, text: &str, button: &str, rows: 
     );
 }
 
-fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
-    ui.set_width(640.0);
+/// Der Inhalt des Tabs „Claude verbinden“ in den Einstellungen.
+pub(crate) fn connect_info(app: &mut App, ui: &mut egui::Ui) {
     let project = app.doc.as_ref().map(|d| d.name().to_string());
     let info = ConnectInfo::detect(app.ws.home(), project.as_deref());
-    ui.heading(tr("Mit Claude verbinden", "Connect to Claude"));
     ui.label(tr("Claude zeichnet über einen MCP-Server, und der steckt in diesem Programm: Mit der Angabe „--mcp“ gestartet, öffnet es kein Fenster, sondern arbeitet für Claude. Claude startet es so von selbst, sobald es einmal eingetragen ist. Beide arbeiten im selben Arbeitsordner. Deshalb siehst du hier nach kurzer Zeit, was Claude zeichnet, und Claude sieht, was du zeichnest.", "Claude draws through an MCP server, and that server is built into this program: started with \"--mcp\" it opens no window but works for Claude. Claude starts it like that by itself once it is set up. Both work in the same workspace folder, so you see here shortly what Claude draws, and Claude sees what you draw."));
     ui.add_space(6.0);
     egui::Grid::new("connect-facts")
@@ -1057,7 +1065,7 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
     ui.add_space(6.0);
 
     egui::ScrollArea::vertical()
-        .max_height(430.0)
+        .max_height(360.0)
         .show(ui, |ui| {
             egui::CollapsingHeader::new(tr("1. Am einfachsten: Claude richtet es selbst ein", "1. Easiest: Claude sets it up by itself"))
                 .default_open(true)
@@ -1091,75 +1099,6 @@ fn connect(app: &mut App, ui: &mut egui::Ui) -> Outcome {
                     copy_block(app, ui, &info.usage_prompt(), tr("Prompt kopieren", "Copy prompt"), 8);
                 });
         });
-    ui.add_space(8.0);
-    if ui.button(tr("Schließen", "Close")).clicked() {
-        return Outcome::Close;
-    }
-    Outcome::Keep
-}
-
-fn settings(app: &mut App, ui: &mut egui::Ui, f: &mut SettingsForm) -> Outcome {
-    ui.set_width(520.0);
-    ui.heading(tr("Einstellungen", "Settings"));
-
-    section(ui, tr("Speicherordner", "Save folder"));
-    ui.label(tr(
-        "Hier liegen deine Projekte, und hierhin wird exportiert.",
-        "Your projects live here, and exports are written here.",
-    ));
-    ui.horizontal(|ui| {
-        ui.add(egui::TextEdit::singleline(&mut f.home).desired_width(360.0));
-        if ui.button(tr("Durchsuchen…", "Browse…")).clicked() {
-            let mut dialog =
-                rfd::FileDialog::new().set_title(tr("Speicherordner wählen", "Choose save folder"));
-            let current = PathBuf::from(f.home.trim());
-            if current.is_dir() {
-                dialog = dialog.set_directory(&current);
-            }
-            if let Some(dir) = dialog.pick_folder() {
-                f.home = dir.display().to_string();
-            }
-        }
-    });
-    let changed = std::path::Path::new(f.home.trim()) != app.ws.home();
-    if changed {
-        ui.weak(tr(
-            "Nach dem Wechsel öffnet sich das zuletzt bearbeitete Projekt im neuen Ordner. Claude arbeitet weiter im alten Ordner, bis du die Verbindung neu einträgst (Hilfe › Mit Claude verbinden).",
-            "After switching, the most recently edited project in the new folder opens. Claude keeps working in the old folder until you set up the connection again (Help › Connect to Claude).",
-        ));
-    }
-    if std::env::var_os("PIXELART_HOME").is_some_and(|v| !v.is_empty()) {
-        ui.colored_label(
-            ui.visuals().warn_fg_color,
-            tr(
-                "Die Umgebungsvariable PIXELART_HOME ist gesetzt. Sie gilt beim nächsten Start vor dieser Einstellung.",
-                "The environment variable PIXELART_HOME is set. At the next start it takes precedence over this setting.",
-            ),
-        );
-    }
-
-    section(ui, tr("Sprache", "Language"));
-    ui.horizontal(|ui| {
-        for lang in Lang::ALL {
-            ui.radio_value(&mut f.lang, lang, lang.name());
-        }
-    });
-    ui.weak(tr(
-        "Gilt sofort für das ganze Programm. Claude bekommt seine Werkzeuge immer auf Englisch.",
-        "Applies right away to the whole program. Claude always gets its tools in English.",
-    ));
-
-    let (ok, cancel) = buttons(ui, tr("Übernehmen", "Apply"), !f.home.trim().is_empty());
-    if cancel {
-        return Outcome::Close;
-    }
-    if !ok {
-        return Outcome::Keep;
-    }
-    let result = app.apply_settings(PathBuf::from(f.home.trim()), f.lang);
-    finish(app, result, |app, ()| {
-        app.info(tr("Einstellungen gespeichert", "Settings saved"));
-    })
 }
 
 fn shortcuts(ui: &mut egui::Ui) -> Outcome {
@@ -1244,28 +1183,58 @@ fn shortcuts(ui: &mut egui::Ui) -> Outcome {
     Outcome::Keep
 }
 
-fn about(app: &mut App, ui: &mut egui::Ui) -> Outcome {
-    ui.heading("PixelArt Studio");
-    ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-    ui.add_space(6.0);
+/// Spendenseite des Studios.
+pub const KOFI_URL: &str = "https://ko-fi.com/seralex44892";
+
+fn about(ui: &mut egui::Ui) -> Outcome {
+    ui.set_width(380.0);
+    ui.horizontal(|ui| {
+        heart(ui, 6.0);
+        ui.add_space(8.0);
+        ui.vertical(|ui| {
+            ui.heading("PixelArt Studio");
+            ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
+        });
+    });
+    ui.add_space(8.0);
     ui.label(tr(
         "Ein Editor für echte Pixel-Art, den auch Claude über MCP bedienen kann.",
         "An editor for real pixel art that Claude can also use through MCP.",
     ));
-    ui.label(tr(
-        "Gespeichert wird automatisch nach jeder Änderung.",
-        "Everything is saved automatically after each change.",
-    ));
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.label(tr("Arbeitsordner:", "Workspace folder:"));
-        ui.monospace(app.ws.home().display().to_string());
-    });
     ui.add_space(8.0);
+    ui.label(RichText::new(tr("Donationware", "Donationware")).strong());
+    ui.label(tr(
+        "Das Studio ist kostenlos. Wenn es dir gefällt, freue ich mich über eine Unterstützung auf Ko-fi.",
+        "The studio is free. If you like it, I'm happy about your support on Ko-fi.",
+    ));
+    ui.hyperlink_to(tr("Auf Ko-fi unterstützen", "Support on Ko-fi"), KOFI_URL);
+    ui.add_space(10.0);
     if ui.button(tr("Schließen", "Close")).clicked() {
         return Outcome::Close;
     }
     Outcome::Keep
+}
+
+/// Das Pixel-Herz des Programmsymbols, `cell` Punkte pro Pixel.
+fn heart(ui: &mut egui::Ui, cell: f32) {
+    const ART: [&str; 7] = [
+        ".##..##.", "########", "########", "########", ".######.", "..####..", "...##...",
+    ];
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(8.0 * cell, 7.0 * cell), egui::Sense::hover());
+    let color = egui::Color32::from_rgb(230, 60, 90);
+    for (y, row) in ART.iter().enumerate() {
+        for (x, ch) in row.bytes().enumerate() {
+            if ch == b'#' {
+                let min = rect.min + egui::vec2(x as f32 * cell, y as f32 * cell);
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_size(min, egui::vec2(cell, cell)),
+                    0.0,
+                    color,
+                );
+            }
+        }
+    }
 }
 
 /// Eine Reihe kleiner Farbfelder als Vorschau einer Palette.

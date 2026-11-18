@@ -363,3 +363,35 @@ fn light_and_outline_work_together_and_the_ground_shadow_gets_no_outline() {
     let back: Sprite = serde_json::from_str(&json).unwrap();
     assert_eq!(back.auto_light(), s.auto_light());
 }
+
+#[test]
+fn own_styles_are_kept_in_the_save_folder_and_built_in_ones_stay_fixed() {
+    use pixel_core::stylebook::StylePreset;
+    use pixel_core::workspace::Workspace;
+    let dir = std::env::temp_dir().join(format!("pixel-styles-{}", uuid::Uuid::new_v4()));
+    let ws = Workspace::open(&dir).unwrap();
+    assert_eq!(ws.styles().len(), 6);
+    assert!(ws.style("8bit").unwrap().builtin);
+
+    let mut own = StylePreset::new("Sumpf");
+    own.rules = vec!["grün und braun".into()];
+    ws.save_style(&own).unwrap();
+    let back = ws.style("sumpf").unwrap();
+    assert!(!back.builtin);
+    assert_eq!(back.rules, own.rules);
+    assert_eq!(ws.styles().len(), 7);
+    // Gleicher Name in anderer Schreibweise ersetzt den alten Stil.
+    own.name = "SUMPF".into();
+    ws.save_style(&own).unwrap();
+    assert_eq!(ws.styles().len(), 7);
+    // Feste Stile lassen sich nicht überschreiben.
+    assert!(ws.save_style(&StylePreset::new("Manga")).is_err());
+    // Ein Stil fürs Projekt: Palette, Licht und Umriss kommen mit, der Name wird gemerkt.
+    let mut style = Style::default();
+    ws.style("comic").unwrap().apply_to(&mut style);
+    assert_eq!(style.outline, Some(Rgba::rgb(0, 0, 0)));
+    assert_eq!(style.preset.as_deref(), Some("Comic"));
+    assert!(ws.delete_style("sumpf").unwrap());
+    assert!(ws.style("Sumpf").is_none());
+    std::fs::remove_dir_all(dir).ok();
+}

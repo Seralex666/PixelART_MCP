@@ -4,7 +4,7 @@ Editor und MCP-Server sind dieselbe Datei: `pixelart-studio.exe`. Per Doppelklic
 Mit der Angabe `--mcp` gestartet, öffnet sie kein Fenster, sondern arbeitet als MCP-Server für Claude.
 Sie braucht keine Installation. Claude startet sie so von selbst, sobald sie eingetragen ist.
 
-**Am einfachsten:** Im Editor unter **Hilfe › Mit Claude verbinden…** stehen
+**Am einfachsten:** Im Editor unter **Datei › Einstellungen › Claude verbinden** (auch über Hilfe › Mit Claude verbinden…) stehen
 alle Angaben schon mit den Pfaden deines Rechners, jeweils mit einem Knopf zum Kopieren. Dort gibt es
 auch einen fertigen Prompt, mit dem Claude die Verbindung selbst einrichtet. Diese Seite beschreibt
 dasselbe zum Nachlesen.
@@ -55,7 +55,7 @@ claude mcp add --scope user pixelart -- "C:\Users\DEINNAME\Desktop\PixelArt Stud
 ## Claude richtet es selbst ein
 
 Wo Claude auf deinem Rechner Befehle ausführen oder Dateien bearbeiten darf (zum Beispiel in Claude
-Code), kannst du die Einrichtung abgeben: Im Editor unter **Hilfe › Mit Claude verbinden…** den Prompt
+Code), kannst du die Einrichtung abgeben: Im Editor unter **Datei › Einstellungen › Claude verbinden** den Prompt
 aus Abschnitt 1 kopieren und an Claude schicken. Er nennt Programm, Argumente, den Befehl für Claude
 Code, den Eintrag für Claude Desktop und wie Claude das Ergebnis prüft.
 
@@ -76,7 +76,8 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 |---|---|
 | `get_studio_info` | Arbeitsordner, Projekte, Vorlagen, Paletten, Animationsarten |
 | `create_project`, `get_project` | Projekt anlegen, Überblick samt Konstanz-Prüfung und Hinweisen auf Versehen (verirrte Pixel, Lücken im Umriss, Einzelfarben, Kachelränder) |
-| `set_style` | Stil des Projekts: Palette, Lichtrichtung, Umrissfarbe, Notizen |
+| `set_style` | Stil des Projekts: Palette, Lichtrichtung, Umrissfarbe, Notizen; mit `style` ein ganzer Stil aus der Bibliothek |
+| `styles` | Stil-Bibliothek: feste Stile (8 Bit, 16 Bit, HQ Pixel-Art, Comic, Manga, Burgen) und eigene auflisten, lesen, speichern und löschen |
 | `create_character` | Figur mit fester Größe und gesperrter Palette |
 | `create_animation` | Animation einer Figur; jeder Frame startet als Kopie der Grundpose |
 | `create_image` | Freies Bild (Tile, Item, Szene) aus Vorlage oder mit eigener Größe, gleich mit Ebenen und Frames |
@@ -94,7 +95,7 @@ Für Rechner ohne Bildschirm lässt sich der Server auch als eigenes kleines Pro
 | `set_light` | Licht und Schatten auf eigenen Ebenen, die jeder Änderung folgen; die Lichtquelle kann über die Frames wandern (`from`/`to` oder `path`), dazu auf Wunsch ein Schlagschatten am Boden |
 | `copy_character` | Figur samt Animationen unverändert in ein anderes Projekt übernehmen |
 | `import_image` | PNG, JPG oder GIF (auch Spritesheets) als Bild, Figur oder Animation ins Projekt holen; mit `pixelate` Fotos und Zeichnungen in Pixel-Art umwandeln, mit `as: "reference"` als Vorlage-Ebene zum Nachzeichnen |
-| `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video |
+| `export` | PNG (auch mit Palette), JPG, Spritesheet mit JSON-Metadaten, animiertes GIF oder WebM-Video; mit `normal_map` auch Normal Maps für Licht im Spiel |
 | `delete_asset` | Figur, Animation oder Bild löschen |
 | `delete_project` | Ganzes Projekt löschen, auf Wunsch samt Exporten; der Name muss zur Sicherheit wiederholt werden |
 

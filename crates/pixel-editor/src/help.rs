@@ -156,8 +156,9 @@ So arbeitest du damit:
 4. Freie Bilder wie Tiles, Items oder Szenen legst du mit create_image an (höchstens 1024×1024, Farbtiefe 8, 16 oder 32 Bit).
 5. Gezeichnet wird mit draw. Neben Pixeln, Formen und dem Textraster (grid) gibt es Techniken für mehr Tiefe: outline, shade, gradient, dither, noise, stamp und shader (Formel je Pixel). Ein Aufruf kann mehrere Frames zeichnen (frame: "all", Unterschiede über per_frame). Sieh dir das Ergebnis mit view an (grid und zoom_region helfen beim genauen Hinsehen), lies exakte Pixel mit get_pixels und nimm Fehlgriffe mit undo zurück.
 6. Braucht eine Figur eine weitere Farbe, nimm sie mit add_character_colors in ihre Palette auf. Mit set_style legst du Palette, Lichtrichtung und Umrissfarbe für das ganze Projekt fest, palette_from_image liest die Farben aus einer Vorlage, reduce_colors bringt ein Asset auf weniger Farben. get_project nennt Hinweise auf typische Versehen wie verirrte Pixel oder Lücken im Umriss.
-7. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner.
-8. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
+7. Nenne ich einen Stil wie Manga, Comic, 8 Bit, 16 Bit, HQ Pixel-Art oder Burgen (oder einen eigenen), hol ihn mit styles und halte dich genau an Palette, Umriss, Schattierung und Regeln; create_image, create_character und set_style nehmen ihn mit `style`.
+8. Mit export schreibst du PNG, JPG, ein Spritesheet, ein animiertes GIF oder ein WebM-Video in den Ordner "exports" im Arbeitsordner; mit normal_map kommen Normal Maps für Licht im Spiel dazu.
+9. Vorhandene Dateien (PNG, JPG, GIF, auch Spritesheets) holst du mit import_image als Bild, Figur oder Animation ins Projekt.
 
 Arbeite in kleinen Schritten und kontrolliere jedes Zwischenergebnis mit view, bevor du weiterzeichnest."#,
             r#"You are connected to my PixelArt Studio through the MCP server "{name}". I see live in the editor what you draw.
@@ -169,8 +170,9 @@ How to work with it:
 4. Create free images such as tiles, items or scenes with create_image (at most 1024×1024, color depth 8, 16 or 32 bit).
 5. Draw with draw. Besides pixels, shapes and the text grid (grid) there are techniques for more depth: outline, shade, gradient, dither, noise, stamp and shader (a formula per pixel). One call can draw several frames (frame: "all", differences via per_frame). Look at the result with view (grid and zoom_region help to look closely), read exact pixels with get_pixels and take back mistakes with undo.
 6. If a character needs another color, add it to its palette with add_character_colors. set_style sets palette, light direction and outline color for the whole project, palette_from_image reads the colors from a reference, reduce_colors brings an asset down to fewer colors. get_project gives hints on typical slips such as stray pixels or gaps in an outline.
-7. export writes PNG, JPG, a sprite sheet, an animated GIF or a WebM video into the folder "exports" in the workspace folder.
-8. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
+7. When I name a style such as manga, comic, 8 bit, 16 bit, HQ pixel art or castles (or an own one), get it with styles and follow its palette, outline, shading and rules exactly; create_image, create_character and set_style take it as `style`.
+8. export writes PNG, JPG, a sprite sheet, an animated GIF or a WebM video into the folder "exports" in the workspace folder; with normal_map it adds normal maps for lighting in games.
+9. import_image brings existing files (PNG, JPG, GIF, also sprite sheets) into the project as an image, a character or an animation.
 
 Work in small steps and check every intermediate result with view before you continue drawing."#
         )

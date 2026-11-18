@@ -12,10 +12,12 @@ use pixel_core::expr::Expr;
 use pixel_core::import::{self, Grid, NewColors, Picture, Shrink};
 use pixel_core::light;
 use pixel_core::lint::{self, Checks, Finding};
+use pixel_core::normalmap::{self, NormalOptions};
 use pixel_core::pixelate::{self, Background, Dither, Outline, Pixelate};
 use pixel_core::project::{CharacterBundle, Style};
 use pixel_core::quant;
 use pixel_core::shapes::{self, CustomShape, Shape};
+use pixel_core::stylebook::{self, OutlineRule, StylePreset};
 use pixel_core::workspace::{
     self, ExportFormat, NameClash, ProjectLock, ProjectNameError, Workspace,
 };
@@ -481,12 +483,68 @@ pub struct OutlineArgs<'a> {
 /// Angaben für [`Studio::set_style`]. Was fehlt, bleibt, wie es ist.
 #[derive(Default)]
 pub struct StyleArgs<'a> {
+    pub style: Option<&'a str>,
     pub palette_preset: Option<&'a str>,
     pub palette: Option<&'a [String]>,
     pub light_dir: Option<&'a str>,
     pub outline_color: Option<&'a str>,
     pub notes: Option<&'a str>,
     pub clear: bool,
+}
+
+/// Options of `export` for a normal map.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct NormalMapOpts {
+    /// How many pixels wide the rim curves (1 to 16). Default 3. Larger reads rounder.
+    pub bevel: Option<u32>,
+    /// How steep the curve looks, 0.1 to 5. Default 1.
+    pub strength: Option<f32>,
+    /// How much light and dark colors add fine detail, 0 to 1. Default 0.3.
+    pub detail: Option<f32>,
+    /// true: green flipped (DirectX convention). Default false: OpenGL convention as Godot and Unity expect.
+    pub directx: Option<bool>,
+}
+
+/// Parameters of the `styles` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct StylesParams {
+    /// "list" (default): all styles with their descriptions. "get": everything about one style,
+    /// including palette and rules. "save": create or change an own style. "delete": remove an own style.
+    pub action: Option<String>,
+    /// Style name, e.g. "Manga", "8 Bit", "Castles" or an own style. Needed for get, save and delete.
+    pub name: Option<String>,
+    /// save: start from a copy of this style (built-in or own), then apply the other fields.
+    pub based_on: Option<String>,
+    /// save: take palette, light direction, outline color and notes from this project's style.
+    pub from_project: Option<String>,
+    /// save: what the style is for and how it looks (up to 500 characters).
+    pub description: Option<String>,
+    /// save: the style's colors, e.g. ["#1a1c2c", "#5d275d"].
+    pub palette: Option<Vec<String>>,
+    /// save: a palette preset from get_studio_info instead of `palette`.
+    pub palette_preset: Option<String>,
+    /// save: color depth for new images, 8, 16 or 32.
+    pub color_depth_bits: Option<u8>,
+    /// save: recommended sizes as [width, height], the usual one first.
+    pub sizes: Option<Vec<[u32; 2]>>,
+    /// save: at most this many colors per sprite; 0 removes the limit.
+    pub colors_per_sprite: Option<u32>,
+    /// save: "none", "black", "dark" (darkest palette color) or "selective".
+    pub outline: Option<String>,
+    /// save: outline width 1 to 4.
+    pub outline_width: Option<u8>,
+    /// save: shades per color from shadow to light, 1 to 8.
+    pub shades: Option<u8>,
+    /// save: whether dithering belongs to the style.
+    pub dithering: Option<bool>,
+    /// save: whether shadows shift to cooler and lights to warmer hues.
+    pub hue_shift: Option<bool>,
+    /// save: whether hand-placed anti-aliasing is allowed.
+    pub anti_alias: Option<bool>,
+    /// save: where the light comes from, e.g. "top-left"; "none" removes it.
+    pub light_dir: Option<String>,
+    /// save: rules in words for everyone drawing in this style (replaces the old ones).
+    pub rules: Option<Vec<String>>,
 }
 
 impl Studio {
@@ -571,6 +629,10 @@ impl Studio {
                 "gray8": "8 grays",
                 "gray16": "16 grays",
             },
+            "styles": self.ws.styles().iter().map(|s| json!({
+                "name": s.name,
+                "description": s.description,
+            })).collect::<Vec<_>>(),
             "shapes": Shape::ALL.iter().map(|s| s.id()).collect::<Vec<_>>(),
             "custom_shapes": self.ws.custom_shapes().iter().map(|s| json!({
                 "name": s.name,
@@ -697,26 +759,172 @@ impl Studio {
         });
         if !p.style.is_empty() {
             overview["style"] = style_json(&p.style);
+            if let Some(st) = self.project_preset(&p) {
+                overview["style_guide"] = preset_json(&st);
+            }
         }
         Ok(Reply::json(overview))
     }
 
+    /// Sucht einen Stil der Bibliothek, mit einer hilfreichen Meldung, wenn es ihn nicht gibt.
+    fn find_style(&self, name: &str) -> Res<StylePreset> {
+        self.ws.style(name).ok_or_else(|| {
+            let names: Vec<String> = self.ws.styles().into_iter().map(|s| s.name).collect();
+            format!("unknown style '{name}'. Styles: {}", names.join(", "))
+        })
+    }
+
+    /// Der Stil der Bibliothek, auf dem der Projekt-Stil beruht.
+    fn project_preset(&self, p: &Project) -> Option<StylePreset> {
+        p.style.preset.as_deref().and_then(|n| self.ws.style(n))
+    }
+
+    /// Die Stil-Bibliothek: auflisten, lesen, eigene speichern und löschen.
+    pub fn styles(&self, a: &StylesParams) -> Res {
+        let action = a
+            .action
+            .as_deref()
+            .unwrap_or("list")
+            .trim()
+            .to_ascii_lowercase();
+        let name = || {
+            a.name
+                .as_deref()
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .ok_or_else(|| format!("`{action}` needs `name`"))
+        };
+        match action.as_str() {
+            "list" => Ok(Reply::json(json!({
+                "styles": self.ws.styles().iter().map(|s| json!({
+                    "name": s.name,
+                    "built_in": s.builtin,
+                    "description": s.description,
+                })).collect::<Vec<_>>(),
+                "note": "Use styles(action: \"get\") for the palette and rules of one style. set_style(style) gives a whole project a style, create_image and create_character take `style` too.",
+            }))),
+            "get" => Ok(Reply::json(preset_json(&self.find_style(name()?)?))),
+            "delete" => {
+                let n = name()?;
+                if stylebook::find(&stylebook::builtin(), n).is_some() {
+                    return Err(format!("'{n}' is a built-in style and cannot be deleted"));
+                }
+                if self.ws.delete_style(n).map_err(e)? {
+                    Ok(Reply::text(format!("Deleted the style '{n}'.")))
+                } else {
+                    Err(format!("there is no own style '{n}'"))
+                }
+            }
+            "save" => {
+                let n = name()?;
+                let mut st = match (&a.based_on, &a.from_project) {
+                    (Some(_), Some(_)) => {
+                        return Err("give `based_on` or `from_project`, not both".into())
+                    }
+                    (Some(base), None) => {
+                        let mut st = self.find_style(base)?;
+                        st.name = n.to_string();
+                        st.builtin = false;
+                        st.id = "";
+                        st
+                    }
+                    (None, Some(project)) => {
+                        let p = self.load(project)?;
+                        StylePreset::from_project(n, &p.style)
+                    }
+                    (None, None) => self
+                        .ws
+                        .style(n)
+                        .filter(|s| !s.builtin)
+                        .unwrap_or_else(|| StylePreset::new(n)),
+                };
+                st.name = n.to_string();
+                if let Some(d) = &a.description {
+                    st.description = d.trim().to_string();
+                }
+                if a.palette.is_some() || a.palette_preset.is_some() {
+                    st.palette = Self::palette(
+                        a.palette_preset.as_deref(),
+                        a.palette.as_deref(),
+                        ColorDepth::Rgba32,
+                    )?
+                    .colors;
+                }
+                if let Some(bits) = a.color_depth_bits {
+                    st.color_depth = bits;
+                }
+                if let Some(sizes) = &a.sizes {
+                    st.sizes = sizes.clone();
+                }
+                if let Some(n) = a.colors_per_sprite {
+                    st.colors_per_sprite = (n > 0).then_some(n);
+                }
+                if let Some(o) = &a.outline {
+                    st.outline = OutlineRule::parse(o).ok_or_else(|| {
+                        format!("`outline` must be none, black, dark or selective, got '{o}'")
+                    })?;
+                }
+                if let Some(w) = a.outline_width {
+                    st.outline_width = w;
+                }
+                if let Some(n) = a.shades {
+                    st.shades = n;
+                }
+                if let Some(b) = a.dithering {
+                    st.dithering = b;
+                }
+                if let Some(b) = a.hue_shift {
+                    st.hue_shift = b;
+                }
+                if let Some(b) = a.anti_alias {
+                    st.anti_alias = b;
+                }
+                if let Some(dir) = &a.light_dir {
+                    st.light_dir = if dir.trim().eq_ignore_ascii_case("none") {
+                        None
+                    } else {
+                        Some(direction_name(parse_direction(dir, "light_dir")?).to_string())
+                    };
+                }
+                if let Some(rules) = &a.rules {
+                    st.rules = rules
+                        .iter()
+                        .map(|r| r.trim().to_string())
+                        .filter(|r| !r.is_empty())
+                        .collect();
+                }
+                let path = self.ws.save_style(&st).map_err(e)?;
+                let mut v = preset_json(&st);
+                v["saved_to"] = json!(path.display().to_string());
+                Ok(Reply::json(v))
+            }
+            other => Err(format!(
+                "unknown action '{other}', use list, get, save or delete"
+            )),
+        }
+    }
+
     /// Legt den Stil des Projekts fest: Palette, Lichtrichtung, Umrissfarbe, Notizen.
     pub fn set_style(&self, project: &str, a: &StyleArgs) -> Res {
-        let nothing = a.palette_preset.is_none()
+        let nothing = a.style.is_none()
+            && a.palette_preset.is_none()
             && a.palette.is_none()
             && a.light_dir.is_none()
             && a.outline_color.is_none()
             && a.notes.is_none();
         if nothing && !a.clear {
             return Err(
-                "give at least one of `palette`, `palette_preset`, `light_dir`, `outline_color`, `notes` or `clear`"
+                "give at least one of `style`, `palette`, `palette_preset`, `light_dir`, `outline_color`, `notes` or `clear`"
                     .into(),
             );
         }
         let (_lock, mut p) = self.load_locked(project)?;
         if a.clear {
             p.style = Style::default();
+        }
+        let preset = a.style.map(|name| self.find_style(name)).transpose()?;
+        if let Some(st) = &preset {
+            st.apply_to(&mut p.style);
         }
         if a.palette_preset.is_some() || a.palette.is_some() {
             p.style.palette =
@@ -754,12 +962,54 @@ impl Studio {
             )));
         }
         let mut v = style_json(&p.style);
+        if let Some(st) = self.project_preset(&p) {
+            v["style_guide"] = preset_json(&st);
+        }
         v["note"] = json!("Used from now on: create_image and create_character start with this palette unless they name one, `shade` takes this light direction unless it gives `light_dir`, `outline` takes this color unless it gives `color`, and the outline hints of view and get_project check against it. Existing assets are not changed.");
         Ok(Reply::json(v))
     }
 
     /// Die Palette für ein neues Asset: die genannte, sonst die des Projekt-Stils,
     /// sonst die Standardpalette. `true`, wenn sie aus dem Stil kommt.
+    /// Der Stil für ein neues Asset: der genannte, sonst der des Projekts.
+    fn new_asset_style(&self, p: &Project, style: Option<&str>) -> Res<Option<StylePreset>> {
+        match style {
+            Some(name) => self.find_style(name).map(Some),
+            None => Ok(self.project_preset(p)),
+        }
+    }
+
+    /// Größe eines neuen Assets; ohne Angabe die übliche Größe des Stils.
+    fn size_for_new(
+        template_id: Option<&str>,
+        width: Option<u32>,
+        height: Option<u32>,
+        style: Option<&StylePreset>,
+    ) -> Res<(u32, u32)> {
+        if template_id.is_none() && width.is_none() && height.is_none() {
+            if let Some([w, h]) = style.and_then(|s| s.sizes.first().copied()) {
+                return Ok((w, h));
+            }
+        }
+        Self::size(template_id, width, height)
+    }
+
+    /// Wie [`Self::palette_for_new`], aber ein ausdrücklich genannter Stil bringt seine Palette mit.
+    fn palette_for_new_styled(
+        p: &Project,
+        preset: Option<&str>,
+        colors: Option<&[String]>,
+        depth: ColorDepth,
+        style: Option<&StylePreset>,
+    ) -> Res<(Palette, bool)> {
+        if let (None, None, Some(st)) = (preset, colors, style) {
+            let mut pal = Palette::new(st.name.clone(), st.palette.clone());
+            pal.conform_to(depth);
+            return Ok((pal, false));
+        }
+        Self::palette_for_new(p, preset, colors, depth)
+    }
+
     fn palette_for_new(
         p: &Project,
         preset: Option<&str>,
@@ -933,19 +1183,34 @@ impl Studio {
         depth_bits: Option<u8>,
         palette_preset: Option<&str>,
         palette: Option<&[String]>,
+        style: Option<&str>,
         layers: Option<&[String]>,
         frames: Option<usize>,
     ) -> Res {
         let (_lock, mut p) = self.load_locked(project)?;
         let name = Self::check_new_name(&p, name)?;
-        let (w, h) = Self::size(template_id, width, height)?;
-        let depth = Self::depth(depth_bits)?;
-        let (pal, from_style) = Self::palette_for_new(&p, palette_preset, palette, depth)?;
-        let style_note = if from_style {
+        let st = self.new_asset_style(&p, style)?;
+        let (w, h) = Self::size_for_new(template_id, width, height, st.as_ref())?;
+        let depth = Self::depth(depth_bits.or(st.as_ref().map(|s| s.color_depth)))?;
+        let (pal, from_style) = Self::palette_for_new_styled(
+            &p,
+            palette_preset,
+            palette,
+            depth,
+            style.and(st.as_ref()),
+        )?;
+        let mut style_note = if from_style {
             format!(" Palette: project style ({} colors).", pal.len())
         } else {
             String::new()
         };
+        if let Some(st) = &st {
+            style_note.push_str(&format!(
+                "\n\nStyle '{}' – follow it while drawing:\n{}",
+                st.name,
+                serde_json::to_string_pretty(&preset_json(st)).unwrap_or_default()
+            ));
+        }
         let mut sprite = Sprite::new(w, h, depth, pal).map_err(e)?;
         Self::name_layers(&mut sprite, layers)?;
         let frames = frames.unwrap_or(1);
@@ -1002,13 +1267,21 @@ impl Studio {
         depth_bits: Option<u8>,
         palette_preset: Option<&str>,
         palette: Option<&[String]>,
+        style: Option<&str>,
         layers: Option<&[String]>,
     ) -> Res {
         let (_lock, mut p) = self.load_locked(project)?;
         let name = Self::check_new_name(&p, name)?;
-        let (w, h) = Self::size(template_id, width, height)?;
-        let depth = Self::depth(depth_bits)?;
-        let (pal, from_style) = Self::palette_for_new(&p, palette_preset, palette, depth)?;
+        let st = self.new_asset_style(&p, style)?;
+        let (w, h) = Self::size_for_new(template_id, width, height, st.as_ref())?;
+        let depth = Self::depth(depth_bits.or(st.as_ref().map(|s| s.color_depth)))?;
+        let (pal, from_style) = Self::palette_for_new_styled(
+            &p,
+            palette_preset,
+            palette,
+            depth,
+            style.and(st.as_ref()),
+        )?;
         if pal.is_empty() {
             return Err("a character needs a palette with at least one color".into());
         }
@@ -1026,6 +1299,13 @@ impl Studio {
         });
         if from_style {
             info["palette_source"] = json!("project style");
+        }
+        if let Some(st) = &st {
+            info["style_guide"] = preset_json(st);
+            info["style_note"] = json!(format!(
+                "Draw this character in the style '{}': follow its rules, shades and outline.",
+                st.name
+            ));
         }
         p.add_character(ch);
         self.save(project, &mut p)?;
@@ -2784,6 +3064,7 @@ impl Studio {
         columns: Option<u32>,
         background: Option<&str>,
         quality: Option<u8>,
+        normal_map: Option<&NormalMapOpts>,
     ) -> Res {
         let p = self.load(project)?;
         let r = Self::resolve(&p, asset)?;
@@ -2826,6 +3107,20 @@ impl Studio {
         if format.is_whole_animation() && frame.is_some() {
             return Err("this format always contains all frames, omit `frame`".into());
         }
+        if normal_map.is_some() && !matches!(format, ExportFormat::Png | ExportFormat::Sheet { .. })
+        {
+            return Err("normal maps are exported as png or sheet only".into());
+        }
+        // Erst alles prüfen, dann schreiben: Falsche Angaben sollen keine halben Exporte hinterlassen.
+        let normal_options = normal_map.map(|nm| NormalOptions {
+            bevel: nm.bevel.unwrap_or(3),
+            strength: nm.strength.unwrap_or(1.0),
+            detail: nm.detail.unwrap_or(0.3),
+            flip_green: nm.directx.unwrap_or(false),
+        });
+        if let Some(o) = &normal_options {
+            o.check().map_err(e)?;
+        }
         let name = Self::asset_name(&p, r);
         let out = self
             .ws
@@ -2854,8 +3149,55 @@ impl Studio {
         if matches!(format, ExportFormat::WebM) {
             reply["note"] = json!("Video compression can shift colors by one or two steps. Use sheet, png or gif for exact pixels.");
         }
-        Ok(Reply::json(reply))
+        let Some(o) = normal_options else {
+            return Ok(Reply::json(reply));
+        };
+        let files = self
+            .ws
+            .export_normals(project, &name, s, &o, format, frame, scale)
+            .map_err(e)?;
+        reply["normal_map_files"] = json!(files);
+        reply["normal_map_note"] = json!(format!(
+            "Normal maps ({} convention) next to the color files, with the suffix _n. Godot: put them into the normal_map of a CanvasTexture; Unity: add them as secondary texture _NormalMap of the sprite. Preview: left lit from the top left, right the normal map.",
+            if o.flip_green { "DirectX" } else { "OpenGL" }
+        ));
+        let png = normal_preview(s, frame.unwrap_or(0), &o).map_err(e)?;
+        Ok(Reply {
+            text: serde_json::to_string_pretty(&reply).unwrap_or_default(),
+            image_png: Some(png),
+        })
     }
+}
+
+/// Vorschau einer Normal Map: links das Bild mit Licht von oben links, rechts die Normal Map.
+/// Ist das Bild für beide nebeneinander zu breit, zeigt sie nur das beleuchtete Bild.
+fn normal_preview(s: &Sprite, frame: usize, o: &NormalOptions) -> pixel_core::Result<Vec<u8>> {
+    let (w, h) = (s.width() as usize, s.height() as usize);
+    let color = s.composite(frame)?;
+    let map = normalmap::normal_map(&color, w, h, o);
+    let lamp = (-(w as f32) * 0.3, -(h as f32) * 0.3, w.max(h) as f32 * 0.8);
+    let shaded = normalmap::lit(&color, &map, w, lamp, 0.35, o.flip_green);
+    let gap = 2;
+    if w * 2 + gap > pixel_core::MAX_SIZE as usize {
+        let mut out = Sprite::new(w as u32, h as u32, ColorDepth::Rgba32, Palette::default())?;
+        out.layer_mut(0, 0)?.replace_pixels(shaded)?;
+        return export::frame_png(&out, 0, 1);
+    }
+    let width = w * 2 + gap;
+    let mut both = vec![Rgba::TRANSPARENT; width * h];
+    for y in 0..h {
+        both[y * width..y * width + w].copy_from_slice(&shaded[y * w..(y + 1) * w]);
+        both[y * width + w + gap..(y + 1) * width].copy_from_slice(&map[y * w..(y + 1) * w]);
+    }
+    let mut out = Sprite::new(
+        width as u32,
+        h as u32,
+        ColorDepth::Rgba32,
+        Palette::default(),
+    )?;
+    out.layer_mut(0, 0)?.replace_pixels(both)?;
+    let scale = (512 / width.max(h)).clamp(1, 16) as u32;
+    export::frame_png(&out, 0, scale)
 }
 
 // -------------------------------------------------------------------- Helfer
@@ -2884,6 +3226,38 @@ fn style_json(style: &Style) -> Value {
     }
     if !style.notes.is_empty() {
         v["notes"] = json!(style.notes);
+    }
+    if let Some(name) = &style.preset {
+        v["style"] = json!(name);
+    }
+    v
+}
+
+/// Alles über einen Stil der Bibliothek, so wie Claude ihn zum Zeichnen braucht.
+fn preset_json(st: &StylePreset) -> Value {
+    let mut v = json!({
+        "name": st.name,
+        "built_in": st.builtin,
+        "description": st.description,
+        "palette": st.palette,
+        "color_depth_bits": st.color_depth,
+        "sizes": st.sizes,
+        "outline": st.outline.id(),
+        "outline_width": st.outline_width,
+        "shades": st.shades,
+        "dithering": st.dithering,
+        "hue_shift": st.hue_shift,
+        "anti_alias": st.anti_alias,
+        "rules": st.rules,
+    });
+    if let Some(n) = st.colors_per_sprite {
+        v["colors_per_sprite"] = json!(n);
+    }
+    if let Some(c) = st.outline_color() {
+        v["outline_color"] = json!(c);
+    }
+    if let Some(dir) = &st.light_dir {
+        v["light_dir"] = json!(dir);
     }
     v
 }

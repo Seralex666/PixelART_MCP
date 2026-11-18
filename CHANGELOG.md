@@ -1,5 +1,14 @@
 # Was ist neu
 
+## 1.2.0
+
+- Stil-Bibliothek: Comic, Manga, Burgen, 8 Bit, 16 Bit und HQ Pixel-Art mit Palette, Größen, Umriss,
+  Schattierung und Regeln; eigene Stile anlegen und speichern
+- Für Claude: neues Werkzeug `styles`, und `create_image`, `create_character` und `set_style` nehmen `style`
+- Einstellungen mit Tabs: Allgemein, Claude verbinden, Stile und Tipps
+- Normal Maps für Licht in Godot und Unity, mit Vorschau und Lampe; für Claude über `export`
+- Projektauswahl links über der Liste, neuer Über-Dialog mit Version und Ko-fi-Link
+
 ## 1.1.0
 
 - Licht und Schatten auf eigenen Ebenen, die jeder Änderung folgen, für Bilder, Animationen und Figuren

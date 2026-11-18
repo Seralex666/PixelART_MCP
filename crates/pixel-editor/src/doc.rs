@@ -114,6 +114,8 @@ enum Change {
         color: Rgba,
     },
     Remove(AssetId),
+    /// Der Stil des Projekts wurde ersetzt.
+    Style(Box<pixel_core::Style>),
     /// Mehrere Änderungen, die zusammengehören, in dieser Reihenfolge.
     Batch(Vec<Change>),
 }
@@ -715,6 +717,13 @@ impl Doc {
         self.commit(Change::Looping { animation, looping })
     }
 
+    /// Ersetzt den Stil des Projekts (Palette für neue Bilder, Licht, Umriss, Stil der Bibliothek).
+    pub fn set_style(&mut self, style: pixel_core::Style) -> Res {
+        self.poll(None);
+        self.project.style = style.clone();
+        self.commit(Change::Style(Box::new(style)))
+    }
+
     /// Löscht ein Asset. Mit einer Figur verschwinden auch ihre Animationen.
     pub fn delete(&mut self, id: AssetId) -> Res {
         self.poll(None);
@@ -827,6 +836,24 @@ impl Doc {
             .export(&self.name, name, sprite, format, frame, scale)
             .map_err(e)
     }
+
+    /// Exportiert die Normal Maps eines Assets neben seine Farbbilder.
+    pub fn export_normals(
+        &self,
+        id: AssetId,
+        options: &pixel_core::normalmap::NormalOptions,
+        format: ExportFormat,
+        scale: u32,
+    ) -> Res<Vec<std::path::PathBuf>> {
+        let sprite = self.sprite(id).ok_or(tr(
+            "Das Asset gibt es nicht mehr",
+            "The asset no longer exists",
+        ))?;
+        let name = self.asset_name(id).unwrap_or("unnamed");
+        self.ws
+            .export_normals(&self.name, name, sprite, options, format, None, scale)
+            .map_err(e)
+    }
 }
 
 fn set_name(p: &mut Project, id: AssetId, name: &str) -> pixel_core::Result<()> {
@@ -877,6 +904,7 @@ fn replay(change: &Change, disk: &mut Project, ours: &Project) -> Option<String>
             drop(disk.add_character_colors(*character, &[*color]));
         }
         Change::Remove(id) => remove(disk, *id),
+        Change::Style(style) => disk.style = (**style).clone(),
         Change::Batch(changes) => {
             let notices: Vec<String> = changes
                 .iter()
