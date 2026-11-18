@@ -18,8 +18,10 @@ use pixel_core::normalmap::{self, NormalOptions};
 use pixel_core::pixelate::{self, Background, Dither, Outline, Pixelate};
 use pixel_core::project::{CharacterBundle, Style};
 use pixel_core::quant;
+use pixel_core::rotate::RotateOptions;
 use pixel_core::shapes::{self, CustomShape, Shape};
 use pixel_core::stylebook::{self, OutlineRule, StylePreset};
+use pixel_core::variants::{self, ColorVariant};
 use pixel_core::workspace::{
     self, ExportFormat, NameClash, ProjectLock, ProjectNameError, TileEngine, Workspace,
 };
@@ -528,6 +530,50 @@ pub struct AutotileParams {
     pub palette_preset: Option<String>,
     /// preview: another number gives another sample map. Default 1.
     pub seed: Option<u64>,
+}
+
+/// Parameters of the `rotate` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct RotateParams {
+    /// Project name.
+    pub project: String,
+    /// Name or id of an image, an animation or a character (its base pose).
+    pub asset: String,
+    /// Angle in degrees, clockwise. Any angle works; multiples of 90 are exact. With `spin` the total turn over all frames (360 = one full turn).
+    pub angle: f32,
+    /// Only this layer (index or name). Default: every drawn layer; guide layers and automatic layers (outline, light, effects) are skipped because they redraw themselves.
+    pub layer: Option<Value>,
+    /// Only this frame (0-based). Default: all frames.
+    pub frame: Option<usize>,
+    /// Pivot pixel [x, y]. Default: the center of the canvas.
+    pub pivot: Option<[u32; 2]>,
+    /// Images only: grow the canvas so that nothing is cut off. Characters and animations keep their size.
+    pub expand: Option<bool>,
+    /// Spread the turn over the frames: frame i turns by angle·i/frames, e.g. a spinning axe or coin with angle 360. Needs all frames.
+    pub spin: Option<bool>,
+    /// With spin: make sure the asset has at least this many frames (2 to 64) by repeating its frames. Not for a character's base pose.
+    pub frames: Option<u32>,
+}
+
+/// Parameters of the `variants` tool.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct VariantsParams {
+    /// Project name.
+    pub project: String,
+    /// Name or id of a character, or one of its animations (the variants belong to the character).
+    pub character: String,
+    /// "list" (default: variants and the character's colors), "set" (create or change the variant `name`), "remove" or "preview" (the character and the first frame of each animation in the original colors and in every variant).
+    pub action: Option<String>,
+    /// Variant name, e.g. "red team", "ice", "gold".
+    pub name: Option<String>,
+    /// set: replacement colors as {"#from": "#to"}, e.g. {"#3b5dc9": "#b13e53"}. Pixels keep their own opacity. Map a color to itself to drop its replacement.
+    pub colors: Option<BTreeMap<String, String>>,
+    /// set: turn the hue of these colors by `hue` degrees, keeping lightness and saturation (quick team colors). Default with `hue`: every color of the character except grays.
+    pub hue_colors: Option<Vec<String>>,
+    /// set: hue turn in degrees for `hue_colors`, e.g. 120 or -90.
+    pub hue: Option<f32>,
+    /// set: start the variant from scratch instead of changing the existing one.
+    pub replace: Option<bool>,
 }
 
 /// Parameters of the `effects` tool.
@@ -3284,6 +3330,236 @@ impl Studio {
     // ---------------------------------------------------------------- Effekte
 
     /// Effekte über die Frames: einrichten, ändern, auflisten, entfernen.
+    pub fn rotate(&self, a: &RotateParams) -> Res {
+        let (_lock, mut p) = self.load_locked(&a.project)?;
+        let r = Self::resolve(&p, &a.asset)?;
+        let name = Self::asset_name(&p, r);
+        let before = Self::sprite(&p, r)?.clone();
+        let expand = a.expand.unwrap_or(false);
+        let spin = a.spin.unwrap_or(false);
+        if expand && !matches!(r, AssetRef::Image(_)) {
+            return Err("characters and animations keep their size; leave out `expand` (or resize the canvas first with resize_canvas)".into());
+        }
+        if a.frames.is_some() && !spin {
+            return Err("`frames` goes with `spin`".into());
+        }
+        if a.frames.is_some() && matches!(r, AssetRef::Character(_)) {
+            return Err(
+                "a character's base pose keeps its frames; spin an animation or an image".into(),
+            );
+        }
+        if let Some(n) = a.frames {
+            if !(2..=64).contains(&n) {
+                return Err("`frames` must be 2 to 64".into());
+            }
+        }
+        let mut o = RotateOptions::new(a.angle);
+        o.layer = match &a.layer {
+            Some(l) => Some(Self::layer_index(&before, Some(l))?),
+            None => None,
+        };
+        o.frame = match a.frame {
+            Some(_) => Some(Self::frame_index(&before, a.frame)?),
+            None => None,
+        };
+        o.pivot = a.pivot.map(|[x, y]| (x, y));
+        o.expand = expand;
+        o.spin = spin;
+        o.frames = a.frames.map(|n| n as usize);
+        let s = Self::sprite_mut(&mut p, r)?;
+        s.rotate(&o).map_err(e)?;
+        let after = s.clone();
+        let frames: Vec<usize> = match o.frame {
+            Some(f) => vec![f],
+            None => (0..after.frames().len()).collect(),
+        };
+        let (png, _) = render(&after, &frames, None, &ViewOptions::default())?;
+        self.save(&a.project, &mut p)?;
+        self.remember(&a.project, r, before.clone(), after.clone())?;
+        let layers = match o.layer {
+            Some(l) => format!("layer '{}'", after.layer_names()[l]),
+            None => "all drawn layers".to_string(),
+        };
+        let how = if spin {
+            format!(
+                "spun by {}° over {} frames ({}° per frame)",
+                a.angle,
+                after.frames().len(),
+                a.angle / after.frames().len() as f32
+            )
+        } else {
+            format!("rotated by {}°", a.angle)
+        };
+        let mut text = format!(
+            "'{name}' {how} with RotSprite, {layers}, {}. No new colors; outline, light and effects were redrawn.",
+            match frames.as_slice() {
+                [f] if after.frames().len() > 1 => format!("frame {f}"),
+                [_] => "the only frame".to_string(),
+                _ => format!("all {} frames", frames.len()),
+            }
+        );
+        if (after.width(), after.height()) != (before.width(), before.height()) {
+            text += &format!(
+                " The canvas grew from {}×{} to {}×{}.",
+                before.width(),
+                before.height(),
+                after.width(),
+                after.height()
+            );
+        }
+        Ok(Reply {
+            text,
+            image_png: Some(png),
+        })
+    }
+
+    pub fn variants(&self, a: &VariantsParams) -> Res {
+        let action = a
+            .action
+            .as_deref()
+            .unwrap_or("list")
+            .trim()
+            .to_ascii_lowercase();
+        let (_lock, mut p) = self.load_locked(&a.project)?;
+        let r = Self::resolve(&p, &a.character)?;
+        let ch = Self::character_of(&p, r)
+            .ok_or(
+                "color variants belong to characters; give a character or one of its animations",
+            )?
+            .clone();
+        let colors = ch.base.used_colors();
+        let describe = |c: &Character| -> Value {
+            json!(c
+                .variants
+                .iter()
+                .map(|v| json!({
+                    "name": v.name,
+                    "colors": v
+                        .colors
+                        .iter()
+                        .map(|(f, t)| (f.to_string(), Value::String(t.to_string())))
+                        .collect::<serde_json::Map<_, _>>(),
+                }))
+                .collect::<Vec<_>>())
+        };
+        match action.as_str() {
+            "list" => Ok(Reply::json(json!({
+                "character": ch.name,
+                "colors": colors.iter().map(|c| c.to_string()).collect::<Vec<_>>(),
+                "variants": describe(&ch),
+                "note": "Variants apply to the character and all its animations when previewing and exporting (export with `variant`); drawing on the character keeps every variant up to date.",
+            }))),
+            "set" => {
+                let name = a.name.as_deref().ok_or("`set` needs `name`")?;
+                let mut v = match ch.variant(name) {
+                    Some(old) if !a.replace.unwrap_or(false) => old.clone(),
+                    _ => ColorVariant::new(name.trim()),
+                };
+                v.name = name.trim().to_string();
+                if a.colors.is_none() && a.hue.is_none() {
+                    return Err("`set` needs `colors` ({\"#from\": \"#to\"}) or `hue`".into());
+                }
+                if a.hue_colors.is_some() && a.hue.is_none() {
+                    return Err("`hue_colors` goes with `hue` (degrees)".into());
+                }
+                if let Some(deg) = a.hue {
+                    let list = match &a.hue_colors {
+                        Some(list) => list
+                            .iter()
+                            .map(|c| parse_color(c))
+                            .collect::<Res<Vec<_>>>()?,
+                        None => colors
+                            .iter()
+                            .copied()
+                            .filter(|c| variants::hue_shift(*c, 90.0) != *c)
+                            .collect(),
+                    };
+                    v.shift_hue(&list, deg);
+                }
+                let mut unused = Vec::new();
+                for (from, to) in a.colors.iter().flatten() {
+                    let (f, t) = (parse_color(from)?, parse_color(to)?);
+                    if !colors.iter().any(|c| (c.r, c.g, c.b) == (f.r, f.g, f.b)) {
+                        unused.push(from.clone());
+                    }
+                    v.set(f, t);
+                }
+                let id = ch.id;
+                let vname = v.name.clone();
+                p.character_mut(id).map_err(e)?.set_variant(v).map_err(e)?;
+                self.save(&a.project, &mut p)?;
+                let ch = p.character(id).map_err(e)?;
+                let png = variants_preview(&p, ch, Some(&vname))?;
+                let mut text = format!(
+                    "Variant '{vname}' of '{}' saved. It applies to the character and all its animations; export with `variant`.",
+                    ch.name
+                );
+                if !unused.is_empty() {
+                    text += &format!(
+                        " Note: {} not used by the character (its colors: {}).",
+                        unused.join(", "),
+                        colors
+                            .iter()
+                            .map(|c| c.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                Ok(Reply {
+                    text,
+                    image_png: Some(png),
+                })
+            }
+            "remove" => {
+                let name = a.name.as_deref().ok_or("`remove` needs `name`")?;
+                let id = ch.id;
+                if !p.character_mut(id).map_err(e)?.remove_variant(name) {
+                    return Err(format!(
+                        "'{}' has no variant '{name}'. Variants: {}",
+                        ch.name,
+                        variant_names(&ch)
+                    ));
+                }
+                self.save(&a.project, &mut p)?;
+                Ok(Reply::text(format!(
+                    "Removed the variant '{name}' of '{}'.",
+                    ch.name
+                )))
+            }
+            "preview" => {
+                if ch.variants.is_empty() {
+                    return Err(format!(
+                        "'{}' has no color variants yet; create one with action \"set\"",
+                        ch.name
+                    ));
+                }
+                if let Some(n) = a.name.as_deref() {
+                    if ch.variant(n).is_none() {
+                        return Err(format!(
+                            "'{}' has no variant '{n}'. Variants: {}",
+                            ch.name,
+                            variant_names(&ch)
+                        ));
+                    }
+                }
+                let png = variants_preview(&p, &ch, a.name.as_deref())?;
+                Ok(Reply {
+                    text: format!(
+                        "Rows: original, then {}. Columns: base pose, then the first frame of each animation.",
+                        match a.name.as_deref() {
+                            Some(n) => format!("'{n}'"),
+                            None => variant_names(&ch),
+                        }
+                    ),
+                    image_png: Some(png),
+                })
+            }
+            other => Err(format!(
+                "unknown action '{other}', use list, set, remove or preview"
+            )),
+        }
+    }
+
     pub fn effects(&self, a: &EffectsParams) -> Res {
         let action = a
             .action
@@ -3671,10 +3947,102 @@ impl Studio {
         background: Option<&str>,
         quality: Option<u8>,
         normal_map: Option<&NormalMapOpts>,
+        variant: Option<&str>,
     ) -> Res {
         let p = self.load(project)?;
         let r = Self::resolve(&p, asset)?;
         let s = Self::sprite(&p, r)?;
+        let name = Self::asset_name(&p, r);
+        let Some(wanted) = variant.map(str::trim).filter(|v| !v.is_empty()) else {
+            return self.export_sprite(
+                project, &p, r, &name, s, format, frame, scale, columns, background, quality,
+                normal_map,
+            );
+        };
+        let character = Self::character_of(&p, r).ok_or(
+            "color variants belong to characters; `variant` works for a character or one of its animations",
+        )?;
+        let variants: Vec<&ColorVariant> = if wanted.eq_ignore_ascii_case("all") {
+            character.variants.iter().collect()
+        } else {
+            vec![character.variant(wanted).ok_or_else(|| {
+                format!(
+                    "'{}' has no variant '{wanted}'. Variants: {}",
+                    character.name,
+                    variant_names(character)
+                )
+            })?]
+        };
+        if variants.is_empty() {
+            return Err(format!(
+                "'{}' has no color variants yet; create one with the tool variants",
+                character.name
+            ));
+        }
+        let mut files = Vec::new();
+        let mut last = None;
+        for v in variants {
+            let turned = v.apply(s);
+            let reply = self.export_sprite(
+                project,
+                &p,
+                r,
+                &format!("{name} {}", v.name),
+                &turned,
+                format,
+                frame,
+                scale,
+                columns,
+                background,
+                quality,
+                normal_map,
+            )?;
+            let mut value: Value = serde_json::from_str(&reply.text).map_err(e)?;
+            for key in ["files", "normal_map_files"] {
+                if let Some(Value::Array(list)) = value.get_mut(key).map(Value::take) {
+                    files.extend(list);
+                }
+            }
+            last = Some((value, reply.image_png));
+        }
+        let (mut value, image) = last.unwrap_or_default();
+        value["files"] = Value::Array(files);
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("normal_map_files");
+            obj.remove("sheet");
+        }
+        Ok(Reply {
+            text: serde_json::to_string_pretty(&value).unwrap_or_default(),
+            image_png: image,
+        })
+    }
+
+    /// Die Figur zu einer Figur oder Animation.
+    fn character_of(p: &Project, r: AssetRef) -> Option<&Character> {
+        let id = match r {
+            AssetRef::Character(id) => id,
+            AssetRef::Animation(id) => p.animation(id).ok()?.character_id,
+            AssetRef::Image(_) => return None,
+        };
+        p.character(id).ok()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn export_sprite(
+        &self,
+        project: &str,
+        p: &Project,
+        r: AssetRef,
+        name: &str,
+        s: &Sprite,
+        format: &str,
+        frame: Option<usize>,
+        scale: Option<u32>,
+        columns: Option<u32>,
+        background: Option<&str>,
+        quality: Option<u8>,
+        normal_map: Option<&NormalMapOpts>,
+    ) -> Res {
         let scale = scale.unwrap_or(1);
         if !(1..=export::MAX_SCALE).contains(&scale) {
             return Err(format!("scale must be 1 to {}", export::MAX_SCALE));
@@ -3692,10 +4060,9 @@ impl Studio {
             if normal_map.is_some() {
                 return Err("normal maps are exported as png or sheet only".into());
             }
-            let name = Self::asset_name(&p, r);
             let files = self
                 .ws
-                .export_tileset(project, &name, s, engine, frame, scale)
+                .export_tileset(project, name, s, engine, frame, scale)
                 .map_err(e)?;
             let animated = frame.is_none() && s.frames().len() > 1;
             let note = match engine {
@@ -3756,10 +4123,9 @@ impl Studio {
         if let Some(o) = &normal_options {
             o.check().map_err(e)?;
         }
-        let name = Self::asset_name(&p, r);
         let out = self
             .ws
-            .export(project, &name, s, format, frame, scale)
+            .export(project, name, s, format, frame, scale)
             .map_err(|err| match err {
                 pixel_core::Error::TooManyColors { found, max } => format!(
                     "png8 holds at most {max} colors, this frame has {found}. Use png instead."
@@ -3789,7 +4155,7 @@ impl Studio {
         };
         let files = self
             .ws
-            .export_normals(project, &name, s, &o, format, frame, scale)
+            .export_normals(project, name, s, &o, format, frame, scale)
             .map_err(e)?;
         reply["normal_map_files"] = json!(files);
         reply["normal_map_note"] = json!(format!(
@@ -3802,6 +4168,77 @@ impl Studio {
             image_png: Some(png),
         })
     }
+}
+
+fn variant_names(c: &Character) -> String {
+    if c.variants.is_empty() {
+        return "none".into();
+    }
+    c.variants
+        .iter()
+        .map(|v| format!("'{}'", v.name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Vorschau der Farbvarianten: je Zeile Original oder Variante, je Spalte die
+/// Grundpose und der erste Frame jeder Animation (höchstens sieben).
+fn variants_preview(p: &Project, c: &Character, only: Option<&str>) -> Res<Vec<u8>> {
+    let mut sprites = vec![&c.base];
+    sprites.extend(p.animations_of(c.id).map(|a| &a.sprite).take(7));
+    let rows: Vec<Option<&ColorVariant>> = std::iter::once(None)
+        .chain(
+            c.variants
+                .iter()
+                .filter(|v| {
+                    only.is_none_or(|n| workspace::name_key(n) == workspace::name_key(&v.name))
+                })
+                .map(Some),
+        )
+        .collect();
+    let (w, h) = (c.base.width(), c.base.height());
+    let gap = 2;
+    let (cw, ch) = (w + gap, h + gap);
+    let iw = cw * sprites.len() as u32 + gap;
+    let ih = ch * rows.len() as u32 + gap;
+    let scale = (640 / iw.max(ih)).clamp(1, 8);
+    let mut img =
+        image::RgbaImage::from_pixel(iw * scale, ih * scale, image::Rgba([44, 48, 60, 255]));
+    for (ri, v) in rows.iter().enumerate() {
+        for (ci, s) in sprites.iter().enumerate() {
+            let turned;
+            let s = match v {
+                Some(v) => {
+                    turned = v.apply(s);
+                    &turned
+                }
+                None => *s,
+            };
+            let px = s.composite(0).map_err(e)?;
+            let (sw, sh) = (s.width().min(w), s.height().min(h));
+            let (ox, oy) = (gap + ci as u32 * cw, gap + ri as u32 * ch);
+            for y in 0..sh {
+                for x in 0..sw {
+                    let c = px[(y * s.width() + x) as usize];
+                    if c.a == 0 {
+                        continue;
+                    }
+                    let bg = image::Rgba([44, 48, 60, 255]);
+                    let a = c.a as u32;
+                    let mix = |f: u8, b: u8| ((f as u32 * a + b as u32 * (255 - a)) / 255) as u8;
+                    let out = image::Rgba([mix(c.r, bg[0]), mix(c.g, bg[1]), mix(c.b, bg[2]), 255]);
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            img.put_pixel((ox + x) * scale + dx, (oy + y) * scale + dy, out);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(e)?;
+    Ok(out.into_inner())
 }
 
 /// Vorschau eines Autotile-Satzes: links der Satz, rechts eine Beispielkarte.

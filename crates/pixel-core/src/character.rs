@@ -20,6 +20,9 @@ pub struct Character {
     pub anchor: (u32, u32),
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Farbvarianten (Skins, Teams), die für die Figur und alle Animationen gelten.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<crate::variants::ColorVariant>,
 }
 
 impl Character {
@@ -73,6 +76,7 @@ impl Character {
             base,
             anchor: (w / 2, h.saturating_sub(1)),
             tags: Vec::new(),
+            variants: Vec::new(),
         }
     }
 
